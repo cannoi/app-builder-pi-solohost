@@ -50,3 +50,20 @@ test('Podman sandbox runner has no host Docker socket dependency', async () => {
   assert.equal(result.status, 'blocked');
   assert.doesNotMatch(String(result.error), /docker\.sock/i);
 });
+
+test('native preview serves index.html and /health without Docker', async () => {
+  const { NativePreview } = await import('../src/runtime/native-preview.js');
+  const root = fs.mkdtempSync('/tmp/paf-native-preview-');
+  fs.mkdirSync(`${root}/public`);
+  fs.writeFileSync(`${root}/public/index.html`, '<html><body>Calculator</body></html>');
+  const preview = new NativePreview({ cfg: {}, log: { warn() {} } });
+  const result = await preview.run({ sourcePath: root, projectSlug: 'calc-preview', timeout: 10, keepRunning: true });
+  assert.equal(result.status, 'passed');
+  assert.equal(result.health, true);
+  assert.ok(result.hostPort);
+  const health = await fetch(`http://127.0.0.1:${result.hostPort}/health`);
+  assert.equal(health.ok, true);
+  const page = await fetch(`http://127.0.0.1:${result.hostPort}/`);
+  assert.match(await page.text(), /Calculator/);
+  await preview.stop({ projectSlug: 'calc-preview' });
+});

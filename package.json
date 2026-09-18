@@ -1,6 +1,6 @@
 {
   "name": "pi-app-factory",
-  "version": "1.4.8",
+  "version": "1.4.9",
   "private": true,
   "type": "module",
   "description": "App Builder — Pi SoloHost. Idea in, working SoloHost app out.",

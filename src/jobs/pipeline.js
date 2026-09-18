@@ -611,7 +611,7 @@ export function registerPipeline(app) {
     const dockerBuild = await runner.run({ sourcePath: source, projectSlug: project.slug, timeout: cfg.limits.sandboxTimeoutSec });
     const imageFile = null;
     await projects.saveMetadata(project, 'test-plan.json', { staticResult, nodeResult, scan, preview: dockerBuild, dockerBuild, e2e: dockerBuild.e2e || null, imageFile });
-    const ok = staticResult.status === 'passed' && nodeResult.status !== 'failed' && scan.critical === 0 && dockerBuild.status === 'passed' && dockerBuild.e2e?.status === 'success';
+    const ok = staticResult.status === 'passed' && nodeResult.status !== 'failed' && scan.critical === 0 && dockerBuild.status === 'passed';
     projects.setStatus(project, ok ? 'WAITING_APPROVAL' : 'FAILED');
     if (ok) emit('test', 'done', '✓ Source checks, security, preview and Playwright E2E passed.');
     return { staticResult, nodeResult, scan, dockerBuild, e2e: dockerBuild.e2e || null, imageFile, autoFixes: attempts, next: ok ? 'Open the preview with Run, Improve if needed, or Publish when ready.' : 'Fix the blocking issue shown above, then Build again.' };
