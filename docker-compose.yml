@@ -16,8 +16,6 @@ services:
       - ./data:/app/data
       - ./workspace:/app/workspace
       - ./projects:/app/projects
-    security_opt:
-      - no-new-privileges:true
     cap_drop:
       - ALL
     mem_limit: 1g

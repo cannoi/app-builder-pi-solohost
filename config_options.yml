@@ -39,6 +39,23 @@ fields:
     label: GitHub username or organization
     type: text
     help: "Use the GitHub account or organization that will own the app repository."
+  - name: PREVIEW_MODE
+    label: Preview mode
+    type: select
+    default: auto
+    options:
+      - value: auto
+        label: Auto (Sandbox → fallback)
+      - value: container
+        label: Container Sandbox
+      - value: native
+        label: Native Preview
+    help: "Auto is recommended. Container Sandbox is used when a protected Podman API is available."
+  - name: PODMAN_API_URL
+    label: Podman Sandbox API (optional)
+    type: text
+    preserve_if_blank: true
+    help: "Optional advanced setting. Leave blank to use the built-in fallback preview. Do not enter a Docker socket URL."
   - name: GITHUB_TOKEN
     label: GitHub Personal access token
     type: password
