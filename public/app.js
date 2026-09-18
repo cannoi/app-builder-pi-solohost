@@ -80,6 +80,19 @@ async function loadStatus() {
     if ($('setProvider')) $('setProvider').value = mode;
   } catch {}
 }
+function rememberProject(id) {
+  try {
+    if (id) localStorage.setItem('paf.projectId', id);
+    else localStorage.removeItem('paf.projectId');
+  } catch {}
+}
+function savedProjectId() {
+  try {
+    const q = new URLSearchParams(location.search).get('p');
+    if (q) return q;
+    return localStorage.getItem('paf.projectId');
+  } catch { return null; }
+}
 async function loadProjects() {
   state.projects = await api('/api/projects');
   const select = $('projectSelect');
@@ -87,7 +100,7 @@ async function loadProjects() {
   select.value = state.projectId || '';
 }
 async function openProject(id, announce = true) {
-  state.projectId = id; await loadProjects();
+  state.projectId = id; rememberProject(id); await loadProjects();
   const p = await api(`/api/projects/${id}`);
   $('chat').innerHTML = '';
   if (p.chat?.length) p.chat.forEach((m) => add(m.role === 'user' ? 'user' : m.role === 'assistant' ? 'ai' : 'system', m.message));
@@ -115,6 +128,7 @@ async function sendMessage() {
 }
 async function quick(action) {
   if (state.busy) return;
+  if (action === 'support') return openSupport();
   if (action === 'docker') return inspectDocker();
   if (action === 'export') {
     if (!state.projectId) { add('ai', 'Create an app first, then tap Zip.'); return; }
@@ -347,10 +361,38 @@ $('closeSettings').onclick = () => $('settings').hidden = true;
 $('saveSettings').onclick = saveSettings;
 if ($('aiSelect')) $('aiSelect').onchange = () => applyAiNow($('aiSelect').value);
 if ($('setProvider')) $('setProvider').onchange = () => applyAiNow($('setProvider').value);
-$('projectSelect').onchange = async () => { if (state.busy) return; state.projectId = $('projectSelect').value || null; if (state.projectId) await openProject(state.projectId); else renderWelcome(); };
+$('projectSelect').onchange = async () => { if (state.busy) return; state.projectId = $('projectSelect').value || null; if (state.projectId) await openProject(state.projectId); else { rememberProject(null); renderWelcome(); } };
 $('jumpDown').onclick = () => { $('chat').scrollTop = $('chat').scrollHeight; $('jumpDown').hidden = true; };
 $('chat').addEventListener('scroll', maybeJump);
 setBusy(false, 'Ready');
 $('chat').addEventListener('click', (e) => { const b = e.target.closest('[data-container]'); if (b) inspectNamedContainer(b.dataset.container); });
 
-Promise.all([loadStatus(), loadProjects(), loadSettings()]).then(() => renderWelcome()).catch(() => renderWelcome());
+function openSupport() {
+  $('supportModal').hidden = false;
+  add('ai', 'Thank you for supporting App Builder — Pi SoloHost. Choose Pi Wallet or MB Bank, copy the details, and send what you can.');
+}
+function bindSupport() {
+  const modal = $('supportModal');
+  if (!modal) return;
+  $('closeSupport').onclick = () => { modal.hidden = true; };
+  modal.querySelectorAll('.supportTab').forEach((tab) => {
+    tab.onclick = () => {
+      modal.querySelectorAll('.supportTab').forEach((x) => x.classList.toggle('on', x === tab));
+      $('supportPi').hidden = tab.dataset.support !== 'pi';
+      $('supportMb').hidden = tab.dataset.support !== 'mb';
+    };
+  });
+  modal.querySelectorAll('[data-copy]').forEach((btn) => {
+    btn.onclick = async () => {
+      try { await navigator.clipboard.writeText(btn.dataset.copy); add('system', 'Copied. Thank you for supporting this project.'); }
+      catch { add('system', btn.dataset.copy); }
+    };
+  });
+}
+bindSupport();
+
+Promise.all([loadStatus(), loadProjects(), loadSettings()]).then(async () => {
+  const id = savedProjectId();
+  if (id && state.projects.some((p) => p.id === id)) await openProject(id, false);
+  else renderWelcome();
+}).catch(() => renderWelcome());

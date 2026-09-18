@@ -203,3 +203,9 @@ test('publish validation blocks secrets and missing Docker files', async () => {
   assert.equal(blocked.ok, false);
 });
 
+
+test('splitUserSteps keeps multi-step requests separate', async () => {
+  const { splitUserSteps } = await import('../src/scripts/ops.js');
+  const steps = splitUserSteps('Change the button color then run the app');
+  assert.equal(steps.length, 2);
+});

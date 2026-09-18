@@ -13,7 +13,7 @@ export function createPreviewHandler({ projects }) {
     const project = projects.get(slug) || projects.list().find((p) => p.slug === slug);
     if (!project) {
       res.writeHead(404, { 'Content-Type': 'text/html; charset=utf-8' });
-      res.end(page('App not found', 'This preview link does not match a Builder project.'));
+      res.end(page('App not found', 'This preview link does not match a Builder project.', null));
       return true;
     }
     const runtime = await projects.readMetadata(project, 'runtime.json', {});
@@ -21,7 +21,7 @@ export function createPreviewHandler({ projects }) {
     const ip = runtime.containerIp;
     if (runtime.status !== 'passed' || (!ip && !port)) {
       res.writeHead(503, { 'Content-Type': 'text/html; charset=utf-8' });
-      res.end(page('App is not running', 'Go back to chat and tap ▶ Run. When it finishes, open this link again.'));
+      res.end(page('App is not running', 'Go back to chat and tap ▶ Run. When it finishes, open this link again.', project));
       return true;
     }
     if (runtime.lastSeenAt !== 'touch') {
@@ -63,7 +63,7 @@ function proxy(req, res, hostname, port, targetPath) {
       const chunks = [];
       up.on('data', (c) => chunks.push(c));
       up.on('end', () => {
-        const html = injectBackBar(Buffer.concat(chunks).toString('utf8'));
+        const html = injectBackBar(Buffer.concat(chunks).toString('utf8'), project);
         const headers = { ...up.headers };
         delete headers['transfer-encoding'];
         headers['content-length'] = Buffer.byteLength(html);
@@ -75,7 +75,7 @@ function proxy(req, res, hostname, port, targetPath) {
     incoming.on('error', () => {
       if (!res.headersSent) {
         res.writeHead(502, { 'Content-Type': 'text/html; charset=utf-8' });
-        res.end(page('Preview lost', 'The app container stopped. Tap ▶ Run in chat and try again.'));
+        res.end(page('Preview lost', 'The app container stopped. Tap ▶ Run in chat and try again.', project));
       }
       resolve();
     });
@@ -83,18 +83,25 @@ function proxy(req, res, hostname, port, targetPath) {
   });
 }
 
-function injectBackBar(html) {
-  const bar = `<div style="position:fixed;top:0;left:0;right:0;z-index:2147483647;display:flex;align-items:center;gap:10px;padding:8px 12px;background:#0e1116;color:#e8eef6;font:600 13px system-ui,sans-serif;border-bottom:1px solid #293241;box-shadow:0 2px 10px #0006" id="__paf-back-bar"><a href="/" style="color:#8b7cff;text-decoration:none;font-weight:700;white-space:nowrap">← Back to Builder</a><span style="opacity:.55;font-weight:400">Test preview</span></div><div style="height:38px" id="__paf-back-spacer"></div>`;
+function builderHome(project) {
+  const id = encodeURIComponent(project?.id || '');
+  return id ? `/?p=${id}` : '/';
+}
+
+function injectBackBar(html, project) {
+  const home = builderHome(project);
+  const bar = `<div style="position:fixed;top:0;left:0;right:0;z-index:2147483647;display:flex;align-items:center;gap:10px;padding:8px 12px;background:#0e1116;color:#e8eef6;font:600 13px system-ui,sans-serif;border-bottom:1px solid #293241;box-shadow:0 2px 10px #0006" id="__paf-back-bar"><a href="${home}" style="color:#8b7cff;text-decoration:none;font-weight:700;white-space:nowrap">← Back to Builder</a><span style="opacity:.55;font-weight:400">Test preview</span></div><div style="height:38px" id="__paf-back-spacer"></div>`;
   if (/<body[^>]*>/i.test(html)) {
     return html.replace(/<body([^>]*)>/i, (m) => `${m}${bar}`);
   }
   return bar + html;
 }
 
-function page(title, body) {
+function page(title, body, project) {
+  const home = builderHome(project);
   return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${title}</title>
 <style>body{font-family:system-ui;background:#0e1116;color:#e8eef6;margin:0;padding:32px}a{color:#8b7cff}</style>
-</head><body><h1>${title}</h1><p>${body}</p><p><a href="/">← Back to App Builder</a></p></body></html>`;
+</head><body><h1>${title}</h1><p>${body}</p><p><a href="${home}">← Back to App Builder</a></p></body></html>`;
 }
 
 export function previewPath(slug) {
