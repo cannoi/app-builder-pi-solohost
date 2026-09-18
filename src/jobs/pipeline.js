@@ -541,7 +541,19 @@ export function registerPipeline(app) {
       jobs.attachProject(job.id, project.id);
     }
     const dest = projects.sourceDir(project.slug);
-    const stack = await importZipBuffer(buf, dest, { replace: true });
+    let stack;
+    try {
+      stack = await importZipBuffer(buf, dest, { replace: true });
+    } catch (err) {
+      // A replacement import is destructive to source, so restore the latest
+      // checkpoint if unpacking/validation fails. New projects have no prior
+      // checkpoint and can simply fail without affecting another project.
+      if (job.payload.projectId) {
+        const latest = snapshots.list(project.id)[0];
+        if (latest?.id) await snapshots.restore(project, latest.id).catch(() => {});
+      }
+      throw err;
+    }
     await projects.saveMetadata(project, 'requirements.json', { ...(await projects.readMetadata(project, 'requirements.json', {})), stack, imported: true, filename: job.payload.filename });
     await projects.saveMetadata(project, 'user-language.json', { language: detectUserLanguage(job.payload.idea || job.payload.filename || 'Imported app'), source: job.payload.idea || job.payload.filename || 'Imported app' });
     projects.setStatus(project, 'READY_TO_BUILD');

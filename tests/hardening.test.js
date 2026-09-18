@@ -42,3 +42,24 @@ test('Gemini selection prefers highest available version >= 2.5', async () => {
   assert.ok(compareGeminiModels('gemini-3.5-flash', 'gemini-2.5-pro') < 0);
   assert.ok(compareGeminiModels('gemini-2.5-flash', 'gemini-2.5-pro') > 0);
 });
+
+
+test('ZIP import replacement removes stale source files', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'paf-import-replace-'));
+  fs.mkdirSync(path.join(root, 'old'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'old', 'stale.txt'), 'stale');
+  const { importZipBuffer } = await import('../src/projects/importer.js');
+  const { writeZip } = await import('../src/utils/zip.js');
+  const src = fs.mkdtempSync(path.join(os.tmpdir(), 'paf-zip-src-'));
+  fs.writeFileSync(path.join(src, 'package.json'), '{}');
+  fs.mkdirSync(path.join(src, 'public'));
+  fs.writeFileSync(path.join(src, 'public', 'index.html'), '<h1>new</h1>');
+  const zip = path.join(os.tmpdir(), `paf-${Date.now()}.zip`);
+  await writeZip(src, zip);
+  await importZipBuffer(fs.readFileSync(zip), root, { replace: true });
+  assert.equal(fs.existsSync(path.join(root, 'old', 'stale.txt')), false);
+  assert.equal(fs.existsSync(path.join(root, 'package.json')), true);
+  fs.rmSync(src, { recursive: true, force: true });
+  fs.rmSync(zip, { force: true });
+  fs.rmSync(root, { recursive: true, force: true });
+});
