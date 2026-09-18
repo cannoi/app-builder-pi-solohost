@@ -1,0 +1,7 @@
+title: "pi-app-factory"
+eyebrow: SoloHost App
+description: "Imported running container: pi-app-factory"
+footer_hint: Ready to run on Pi Desktop SoloHost.
+output_file: .env
+after_save: Saved. Start the app from SoloHost.
+fields: []
