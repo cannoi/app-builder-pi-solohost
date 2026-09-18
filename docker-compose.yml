@@ -1,28 +1,10 @@
+version: '3.8'
+
 services:
-  app-factory:
-    image: ghcr.io/cannoi/app-builder-pi-solohost:latest
-    container_name: pi-app-factory
-    restart: unless-stopped
-    env_file: .env
-    environment:
-      DATA_DIR: /app/data
-      WORKSPACE_DIR: /app/workspace
-      PROJECTS_DIR: /app/projects
-      PREVIEW_MODE: ${PREVIEW_MODE:-auto}
-      PODMAN_API_URL: ${PODMAN_API_URL:-}
+  pi-solohost-builder:
+    build: .
     ports:
-      - "127.0.0.1:18795:8080"
-    volumes:
-      - ./data:/app/data
-      - ./workspace:/app/workspace
-      - ./projects:/app/projects
-    cap_drop:
-      - ALL
-    mem_limit: 1g
-    cpus: "1.0"
-    healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8080/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
-      interval: 20s
-      timeout: 5s
-      retries: 3
-      start_period: 15s
+      - "8080:8080"
+    environment:
+      - PORT=8080
+    restart: always
