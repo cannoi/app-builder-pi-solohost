@@ -3,11 +3,12 @@ import fssync from 'node:fs';
 import path from 'node:path';
 import net from 'node:net';
 import http from 'node:http';
-import { spawn } from 'node:child_process';
+import { spawn, execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { runPlaywrightE2E } from '../testing/playwright.js';
 
 const sleep = promisify(setTimeout);
+const execFileP = promisify(execFile);
 const processes = new Map();
 
 const MIME = {
@@ -53,6 +54,14 @@ export class NativePreview {
     let child = null;
 
     if (hasAppProcess) {
+      // Fix: `Run` used to spawn the app straight away, before any `npm install`
+      // step. A freshly generated project has no node_modules yet, so the child
+      // process crashed immediately and the health check just saw a closed port
+      // (surfaced as a generic "fetch failed"). Install once, only when needed.
+      const deps = await ensureDependencies(sourcePath, pkg);
+      if (deps.error) {
+        return { status: 'failed', runtime: 'native-preview', health: false, error: `Dependency install failed: ${deps.error}` };
+      }
       child = await spawnApp(sourcePath, port, pkg).catch(() => null);
     } else {
       publicDir = await resolvePublicDir(sourcePath);
@@ -182,6 +191,22 @@ async function resolvePublicDir(sourcePath) {
     if (await fs.access(path.join(dir, 'index.html')).then(() => true).catch(() => false)) return dir;
   }
   return null;
+}
+
+async function ensureDependencies(sourcePath, pkg) {
+  const hasDeps = Boolean(pkg?.dependencies && Object.keys(pkg.dependencies).length);
+  if (!hasDeps) return { installed: false };
+  const modulesDir = path.join(sourcePath, 'node_modules');
+  const already = await fs.access(modulesDir).then(() => true).catch(() => false);
+  if (already) return { installed: false };
+  try {
+    await execFileP('npm', ['install', '--omit=dev', '--no-audit', '--no-fund'], {
+      cwd: sourcePath, timeout: 120000, maxBuffer: 4 * 1024 * 1024,
+    });
+    return { installed: true };
+  } catch (err) {
+    return { installed: false, error: String(err.stderr || err.stdout || err.message || err).slice(0, 2000) };
+  }
 }
 
 async function readPackageJson(sourcePath) {
