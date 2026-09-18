@@ -17,6 +17,22 @@ export const GEMINI_MODEL_CANDIDATES = [
   'gemini-3-pro-preview',
 ];
 
+export function geminiVersion(name) {
+  const n = String(name || '').toLowerCase();
+  const m = n.match(/(\d+)\.(\d+)/);
+  if (m) return Number(m[1]) + Number(m[2]) / 10;
+  const major = n.match(/gemini-(\d+)/);
+  return major ? Number(major[1]) : 0;
+}
+
+export function compareGeminiModels(a, b) {
+  const va = geminiVersion(a);
+  const vb = geminiVersion(b);
+  if (vb !== va) return vb - va;
+  const rank = (n) => (/pro/.test(n) ? 3 : /flash/.test(n) && !/lite/.test(n) ? 2 : 1);
+  return rank(String(b)) - rank(String(a));
+}
+
 export class GeminiProvider {
   constructor({ apiKey, model, db = null, log = null }) {
     this.name = 'gemini';
@@ -54,9 +70,9 @@ export class GeminiProvider {
 
   async discover({ force = false } = {}) {
     if (!this.apiKey) throw new Error('Gemini API key is not configured');
-    if (!force) {
-      const sticky = this.getStickyModel();
-      if (sticky) return { model: sticky, sticky: true, candidates: [sticky] };
+    const sticky = this.getStickyModel();
+    if (!force && sticky && geminiVersion(sticky) >= 2.5) {
+      return { model: sticky, sticky: true, candidates: [sticky] };
     }
     const models = await this.listModels();
     const usable = new Set(
@@ -64,12 +80,12 @@ export class GeminiProvider {
         .filter((m) => Array.isArray(m.supportedGenerationMethods) && m.supportedGenerationMethods.includes('generateContent'))
         .map((m) => String(m.name || '').replace(/^models\//, '')),
     );
-    const ordered = GEMINI_MODEL_CANDIDATES.filter((m) => usable.has(m));
-    const fallback = [...usable].sort((a, b) => {
-      const as = /flash-lite/.test(a) ? 0 : /flash/.test(a) ? 1 : 2;
-      const bs = /flash-lite/.test(b) ? 0 : /flash/.test(b) ? 1 : 2;
-      return as - bs || a.length - b.length;
-    });
+    const preferred = [...usable].filter((m) => geminiVersion(m) >= 2.5).sort(compareGeminiModels);
+    const ordered = [
+      ...GEMINI_MODEL_CANDIDATES.filter((m) => usable.has(m) && geminiVersion(m) >= 2.5),
+      ...preferred,
+    ].filter((v, i, a) => a.indexOf(v) === i);
+    const fallback = [...usable].sort(compareGeminiModels);
     const selected = ordered[0] || fallback[0] || null;
     if (!selected) {
       throw new Error('This Gemini key has no generateContent model. Check the key or enable the Generative Language API.');
@@ -80,7 +96,7 @@ export class GeminiProvider {
 
   async ensureModel() {
     const sticky = this.getStickyModel();
-    if (sticky) {
+    if (sticky && geminiVersion(sticky) >= 2.5) {
       this.model = sticky;
       return sticky;
     }

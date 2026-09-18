@@ -1,9 +1,9 @@
 # Changelog
 
-## 1.4.9
+## 1.4.12
 
-- Run preview is an in-process static server. It no longer depends on npm start or Playwright.
-- Playwright is optional and cannot block a working preview.
-- Publish still requires a passing Run (health + preview link).
-- Factory compose stays without docker.sock.
+- Preview always returns a Builder chrome page (back bar + iframe). No empty TCP close.
+- Blank iframe auto-returns to the same project chat.
+- New-app questions wait until every choice is picked, or the user types custom answers.
+- Gemini remembers a working model and prefers version 2.5 or newer.
 

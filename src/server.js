@@ -18,6 +18,14 @@ import { gcDocker, reapIdlePreviews } from './docker/cleanup.js';
 
 const cfg = loadConfig();
 const log = createLogger(cfg.logLevel);
+
+// Failure must not cascade: a single unforeseen bug (e.g. a reference error deep
+// in a raw event-handler callback, outside any request's try/catch) must never
+// take the whole server process down and break every other project/request until
+// a manual restart. Log it and keep serving instead.
+process.on('uncaughtException', (err) => { log.error('Uncaught exception (process kept alive)', { error: err?.message, stack: err?.stack }); });
+process.on('unhandledRejection', (err) => { log.error('Unhandled rejection (process kept alive)', { error: err?.message || String(err) }); });
+
 const db = openDb(cfg.dataDir);
 hydrateSecrets(cfg, db);
 const check = validateConfig(cfg);

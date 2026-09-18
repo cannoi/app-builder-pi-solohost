@@ -203,3 +203,16 @@ test('publish validation blocks secrets and missing Docker files', async () => {
   assert.equal(blocked.ok, false);
 });
 
+
+test('splitUserSteps keeps multi-step requests separate', async () => {
+  const { splitUserSteps } = await import('../src/scripts/ops.js');
+  const steps = splitUserSteps('Change the button color then run the app');
+  assert.equal(steps.length, 2);
+});
+
+test('Gemini prefers models at least 2.5', async () => {
+  const { geminiVersion, compareGeminiModels } = await import('../src/ai/providers/gemini.js');
+  assert.ok(geminiVersion('gemini-2.5-flash') >= 2.5);
+  assert.ok(geminiVersion('gemini-1.5-pro') < 2.5);
+  assert.ok(compareGeminiModels('gemini-2.5-flash', 'gemini-2.5-pro') > 0);
+});
