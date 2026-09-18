@@ -5,7 +5,7 @@
   "type": "module",
   "description": "App Builder — Pi SoloHost. Idea in, working SoloHost app out.",
   "scripts": {
-    "start": "NODE_OPTIONS='--dns-result-order=ipv4first' node src/server.js",
+    "start": "node src/server.js",
     "test": "node --test tests/*.test.js"
   },
   "engines": {

@@ -61,16 +61,3 @@ fields:
     type: password
     preserve_if_blank: true
     help: "For this Builder, use a GitHub Personal access token (classic) with repo, workflow, and write:packages. Create it at https://github.com/settings/tokens/new."
-  # --- FIX fetch failed: ép dùng IPv4 thay vì localhost (tránh IPv6 ::1 trên Node 18+) ---
-  - name: API_URL
-    label: Internal API URL (IPv4)
-    type: text
-    default: "http://127.0.0.1:3000"
-    preserve_if_blank: true
-    help: "Use 127.0.0.1 instead of localhost to avoid IPv6 resolution issues in Node.js 18+."
-  - name: NEXT_PUBLIC_API_URL
-    label: Public API URL (IPv4)
-    type: text
-    default: "http://127.0.0.1:3000"
-    preserve_if_blank: true
-    help: "Use 127.0.0.1 instead of localhost to avoid IPv6 resolution issues in Node.js 18+."
