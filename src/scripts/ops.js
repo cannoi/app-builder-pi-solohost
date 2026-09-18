@@ -8,16 +8,6 @@ export function isQuestion(message) {
     && !/\b(build|sửa ngay|fix now|chạy ngay|publish now|xuất bản ngay)\b/i.test(m);
 }
 
-export function splitUserSteps(message) {
-  const text = String(message || '').trim();
-  if (!text) return [];
-  const numbered = text.split(/\n+/).map((l) => l.replace(/^\s*(?:\d+[\.\)]\s+|[-*]\s+)/, '').trim()).filter(Boolean);
-  if (numbered.length >= 2 && numbered.length <= 6) return numbered;
-  const parts = text.split(/\s+(?:then|after that|sau đó|rồi|and then|và sau đó)\s+/i).map((s) => s.trim()).filter(Boolean);
-  if (parts.length >= 2 && parts.length <= 5) return parts;
-  return [text];
-}
-
 export function inferAction(message) {
   const m = String(message || '').toLowerCase();
   if (isQuestion(m)) return 'reply';
