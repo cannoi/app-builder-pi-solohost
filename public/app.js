@@ -221,7 +221,20 @@ function renderRepoChoices(choices) {
 function addLink(label, href, text) {
   const el = document.createElement('div'); el.className = 'msg ai';
   const p = document.createElement('div'); p.textContent = label; el.appendChild(p);
-  const a = document.createElement('a'); a.href = href; a.target = '_blank'; a.rel = 'noopener'; a.textContent = text || href; a.style.color = '#8b7cff'; a.style.fontWeight = '700';
+  // Fix: many embedded WebViews (including Pi Desktop's) don't support opening a new
+  // tab/window at all — target="_blank" and window.open() silently do nothing when
+  // tapped there. Resolve to an absolute URL (relative "/preview/..." only worked by
+  // accident, and breaks if copied elsewhere) and, on click, try a new tab first;
+  // if the environment blocks/ignores that, fall back to same-tab navigation, which
+  // works everywhere. Desktop-browser users keep normal right-click/long-press.
+  let absolute = href;
+  try { absolute = new URL(href, window.location.origin).href; } catch {}
+  const a = document.createElement('a');
+  a.href = absolute; a.rel = 'noopener'; a.textContent = text || absolute; a.style.color = '#8b7cff'; a.style.fontWeight = '700';
+  a.addEventListener('click', (e) => {
+    const win = window.open(absolute, '_blank');
+    if (win) e.preventDefault();
+  });
   el.appendChild(a);
   $('chat').appendChild(el); $('chat').scrollTop = $('chat').scrollHeight;
 }
