@@ -10,7 +10,7 @@ import { registerPipeline } from './jobs/pipeline.js';
 import { GitHubManager } from './github/manager.js';
 import { ReleaseManager } from './release/manager.js';
 import { BuildRunner } from './docker/runner.js';
-import { Sandbox } from './docker/sandbox.js';
+import { Sandbox } from './sandbox/native.js';
 import { registerRoutes } from './api/routes.js';
 import { createApp, listen } from './http.js';
 import { createPreviewHandler } from './preview.js';
@@ -30,14 +30,14 @@ const ai = new AIGateway({ cfg, db, log });
 const github = new GitHubManager({ cfg, log });
 const releases = new ReleaseManager({ cfg, db, log });
 const runner = new BuildRunner({ cfg, log });
-const sandbox = new Sandbox({ cfg, log, runner });
+const sandbox = new Sandbox({ runner });
 
 const ctx = { cfg, db, log, ai, projects, snapshots, jobs, github, releases, runner, sandbox };
 registerPipeline(ctx);
 const resumed = jobs.resumeInterrupted();
 if (resumed) log.warn('Marked interrupted jobs as failed', { count: resumed });
 
-gcDocker({ cfg, log }).catch((err) => log.warn('startup docker cleanup skipped', { error: String(err.message || err) }));
+gcDocker({ cfg, log }).catch((err) => log.warn('startup preview cleanup skipped', { error: String(err.message || err) }));
 const idleMs = Number(process.env.PREVIEW_IDLE_MS || 15 * 60 * 1000);
 setInterval(() => {
   reapIdlePreviews({ projects, runner, idleMs, log }).catch((err) => log.warn('idle preview cleanup skipped', { error: String(err.message || err) }));
@@ -57,7 +57,7 @@ const server = listen(app, {
 log.info('Listening', {
   version: cfg.version,
   port: cfg.port,
-  engine: 'docker',
+  engine: 'native-preview',
   ai: cfg.ai.provider,
   open: `http://127.0.0.1:${cfg.port}/`,
 });

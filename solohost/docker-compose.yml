@@ -1,6 +1,6 @@
 services:
   app:
-    image: paf-app:pi-app-factory
+    image: ghcr.io/cannoi/app-builder-pi-solohost:latest
     restart: unless-stopped
     labels:
       pi.ui.primary: "true"

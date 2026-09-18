@@ -1,16 +1,14 @@
-# Build Runner
+# Build and Preview Runner
 
-V1 runs the orchestration inside the Builder container while the generated app containers are created through the mounted SoloHost Docker socket.
+The preview flow is:
 
-Before Build or Run is reported as successful, the runner:
+1. Validate the generated source.
+2. Select `Container Sandbox` when `PODMAN_API_URL` is configured and `PREVIEW_MODE` is `auto` or `container`.
+3. Build a temporary preview image through the protected Podman API.
+4. Start a temporary container with CPU/memory limits and a loopback-only port.
+5. Wait for `/health` and run Playwright against the live UI.
+6. Keep the container only for an explicit live Run; test-only runs tear it down.
+7. If `auto` mode cannot use the Container Sandbox, fall back to native preview and report the runtime used.
+8. Never use a host Docker socket.
 
-1. validates the project;
-2. builds the requested image through the SoloHost Docker engine;
-3. verifies the image exists;
-4. provisions a temporary preview container with resource limits;
-5. waits for `/health`;
-6. runs Playwright headless against the preview URL;
-7. captures page title/load metrics and an optional screenshot;
-8. tears down the temporary test container after E2E validation.
-
-The runner uses the mounted Docker socket because Build/Run/Test must create and clean app containers.
+GitHub Actions remains responsible for the final published SoloHost image.

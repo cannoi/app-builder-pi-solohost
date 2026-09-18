@@ -1,7 +1,9 @@
 # Security
 
-App Builder uses a protected rootless Docker socket sandbox instead of the host Docker socket. Generated apps do not receive container-engine credentials.
+App Builder does not receive host Docker daemon credentials and never mounts `/var/run/docker.sock`.
 
-The Builder controller can build and test images through the configured Docker socket. Because that API is powerful, it must not be exposed publicly without strong authentication and transport protection.
+When `PODMAN_API_URL` is configured, preview execution uses the Container Sandbox over its protected Podman HTTP API. Preview containers are temporary, receive CPU/memory limits, publish their UI on a loopback host port, and are removed after non-live tests. Raw shell commands remain blocked.
 
-Generated project scans continue to block secrets, privileged settings and unsafe host mounts. A project that attempts to mount `/var/run/docker.sock` remains a security finding and is not treated as a safe deployment.
+When the Container Sandbox is unavailable, `PREVIEW_MODE=auto` falls back to the built-in native preview so the user can still test the app. Native preview is a process-level safety boundary, not a kernel-level security boundary; it should not be described as a hostile-code sandbox.
+
+Generated applications are scanned for secrets, unsafe Docker settings, and Docker socket references before publication.

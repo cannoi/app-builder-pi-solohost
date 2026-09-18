@@ -1,12 +1,12 @@
-# Sandbox
+# Preview Sandbox
 
-The Builder sandbox uses rootless Docker through its REST API and Playwright for browser validation.
+App Builder supports two preview engines without a host Docker socket:
 
-Security boundaries:
-- The Builder has Docker socket access because it must build, run, test and clean generated app containers.
-- Preview containers are temporary and labeled as Builder sandboxes.
-- Preview containers expose only the app UI port and run with CPU, memory and PID limits.
-- Playwright runs headless and captures page title/load metrics plus an optional screenshot.
-- Containers are stopped and removed after E2E validation.
+1. **Container Sandbox (Podman API)** — selected automatically when `PODMAN_API_URL` is configured. The Builder sends the build context to the protected Podman API, creates a temporary preview container with memory/CPU limits and a loopback-only published port, waits for `/health`, then runs Playwright against the live UI.
+2. **Native Preview fallback** — used when the Container Sandbox is not configured or when `PREVIEW_MODE=auto` cannot complete the container preview. It runs the generated app in a temporary Builder workspace and still performs health + Playwright checks.
 
-Docker socket access is powerful. The Builder runs generated apps with resource limits and cleans temporary containers/images after testing. Do not expose the Docker socket itself to the network.
+`PREVIEW_MODE` values: `auto` (recommended), `container`, or `native`.
+
+The Builder never mounts `/var/run/docker.sock`, does not invoke the host Docker CLI, and does not report preview success without a health check and browser test. Raw shell/container commands remain blocked.
+
+The Container Sandbox endpoint must be a protected Podman service. The Builder does not expose or create a host Docker daemon connection.

@@ -22,7 +22,7 @@ test('single chat builder UI and attachment controls are present', () => {
   assert.match(html, /id="attachBtn"/);
   assert.match(html, /data-action="build"/);
   assert.match(html, /data-action="run"/);
-  assert.match(html, /data-action="docker"/);
+  assert.match(html, /data-action="run"/);
   assert.match(js, /FormData/);
   assert.match(js, /builder_chat|\/api\/chat/);
   assert.match(js, /state\.busy/);
@@ -42,7 +42,7 @@ test('old multi-panel workflow is removed from the main screen', () => {
 });
 
 
-test('Docker access is automatic and no blocking access modal remains', () => {
+test('Native preview requires no Docker access or blocking access modal', () => {
   const html = fs.readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
   const js = fs.readFileSync(new URL('../public/app.js', import.meta.url), 'utf8');
   assert.doesNotMatch(html, /id="dockerAccess"/);
@@ -50,10 +50,10 @@ test('Docker access is automatic and no blocking access modal remains', () => {
   assert.doesNotMatch(js, /needsDockerAccess|showDockerAccess|closeDocker|dockerDone/);
 });
 
-test('Docker app results provide direct chat actions', () => {
+test('Preview results provide a direct test link', () => {
   const js = fs.readFileSync(new URL('../public/app.js', import.meta.url), 'utf8');
-  assert.match(js, /inspectNamedContainer\(c\.name\)/);
-  assert.match(js, /importContainer\(c\.name\)/);
+  assert.match(js, /Open the test UI/);
+  assert.match(js, /previewPath/);
 });
 
 

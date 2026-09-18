@@ -8,7 +8,7 @@ Required path:
 1. Settings: DeepSeek or Gemini key. For Publish: GitHub username + classic token (repo, workflow, write:packages).
 2. Describe the app in the user's language. Questions get answers. Only a clear "create/build this app" starts generation.
 3. Build writes source, Dockerfile, GitHub Actions workflow, made-by badge.
-4. Run builds the Docker image, starts a preview container, checks /health. Open the preview link.
+4. Run starts a safe local preview, checks the app, and opens the preview link. GitHub Actions builds the final Docker image when publishing.
 5. If Run fails, send the error in chat. Improve then Run again.
 6. Publish creates/updates the GitHub repo, uploads files, and prepares docker-compose.yml + config_options.yml. Do not install on SoloHost until the GHCR image exists.
 7. SoloHost pulls a public image. It does not build from source.
@@ -24,11 +24,11 @@ Common errors:
 - DeepSeek 402: no credit. Switch header to Gemini.
 
 Idle cleanup:
-- Preview containers labeled com.pi.app-factory.preview=1 are removed after 15 minutes with no UI use.
+- Preview processes are temporary and are removed after 15 minutes with no UI use.
 
 Never:
 - Put secrets in generated source.
-- Mount docker.sock into generated apps.
+- Never mount or request a host Docker socket.
 - Tell the user to run git commands.
 
 GitHub beginner setup:

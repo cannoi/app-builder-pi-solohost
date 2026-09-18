@@ -1,7 +1,6 @@
 services:
   app-factory:
-    build: .
-    image: pi-app-factory:1.4.8
+    image: ghcr.io/cannoi/app-builder-pi-solohost:latest
     container_name: pi-app-factory
     restart: unless-stopped
     env_file: .env
@@ -9,16 +8,11 @@ services:
       DATA_DIR: /app/data
       WORKSPACE_DIR: /app/workspace
       PROJECTS_DIR: /app/projects
-      DOCKER_MODE: power
+      PREVIEW_MODE: ${PREVIEW_MODE:-auto}
+      PODMAN_API_URL: ${PODMAN_API_URL:-}
     ports:
-      # Factory UI is reachable on the host; generated SoloHost packages still use loopback bindings.
-      # Use 127.0.0.1:18795:8080 instead if you only want local access.
-      - "18795:8080"
-    user: "0:0"
-    group_add:
-      - "0"
+      - "127.0.0.1:18795:8080"
     volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
       - ./data:/app/data
       - ./workspace:/app/workspace
       - ./projects:/app/projects

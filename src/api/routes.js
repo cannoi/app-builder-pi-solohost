@@ -30,8 +30,8 @@ export function registerRoutes(r, app) {
       version: cfg.version,
       ai: (cfg.ai.geminiKey || cfg.ai.deepseekKey) ? 'configured' : 'missing',
       github: github.configured() ? 'configured' : 'optional',
-      engine: 'docker',
-      docker: { mode: cfg.docker?.mode || 'power' },
+      engine: cfg.runtime?.podman?.apiUrl ? 'podman-sandbox' : 'native-preview',
+      preview: { mode: cfg.runtime?.mode || 'auto', containerSandbox: Boolean(cfg.runtime?.podman?.apiUrl), dockerSocket: false },
     });
   });
 

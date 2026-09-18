@@ -64,4 +64,4 @@ The contract also identifies the hosted validation API as the authoritative pre-
 
 Pi Network's September 9, 2026 SoloHost update confirms that Pi Desktop 0.6.3 added a readiness probe and a new SoloHost developer contract for building and troubleshooting apps.
 
-Important distinction: the **Builder's own development/runtime container** may need host Docker access so it can build and test generated apps. That is different from the **generated SoloHost app package**. The generated package must not expose `/var/run/docker.sock` to the app container.
+The Builder does not need host Docker access. The generated SoloHost package still follows the image-only contract: it references a published GHCR image and does not expose host Docker controls.

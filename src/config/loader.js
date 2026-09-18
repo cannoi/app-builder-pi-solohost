@@ -9,7 +9,10 @@ export function loadConfig() {
     logLevel: process.env.LOG_LEVEL || 'info',
     locale: process.env.APP_LOCALE || 'en',
     version: '1.4.8',
-    docker: { mode: process.env.DOCKER_MODE || 'power' },
+    runtime: {
+      mode: process.env.PREVIEW_MODE || 'auto',
+      podman: { apiUrl: process.env.PODMAN_API_URL || '' },
+    },
     ai: {
       provider: process.env.AI_PROVIDER || 'deepseek',
       mode: (process.env.AI_MODE || 'single').toLowerCase() === 'council' ? 'council' : 'single',
@@ -40,7 +43,7 @@ export function publicConfig(cfg) {
     version: cfg.version,
     bind: cfg.bind,
     locale: cfg.locale,
-    engine: { provider: 'docker', mode: cfg.docker.mode, configured: true },
+    engine: { provider: cfg.runtime?.podman?.apiUrl ? 'podman-api' : 'native-preview', mode: cfg.runtime?.mode || 'auto', configured: true, containerSandbox: Boolean(cfg.runtime?.podman?.apiUrl), dockerSocket: false },
     ai: { provider: cfg.ai.provider, mode: cfg.ai.mode, geminiConfigured: Boolean(cfg.ai.geminiKey), deepseekConfigured: Boolean(cfg.ai.deepseekKey), deepseekModel: cfg.ai.deepseekModel },
     github: { configured: Boolean(cfg.github.token && cfg.github.owner), owner: cfg.github.owner || null },
   };

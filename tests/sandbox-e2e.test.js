@@ -50,6 +50,8 @@ test('Podman preview provisioning returns an isolated published port contract', 
   assert.match(requests[0][0], /\/v1\.40\/containers\/create$/);
   assert.equal(requests[0][1].method, 'POST');
   assert.match(requests[0][1].body, /paf-app-demo/);
+  assert.match(requests[0][1].body, /no-new-privileges:true/);
+  assert.match(requests[0][1].body, /CapDrop/);
 });
 
 test('Playwright E2E returns the required raw JSON shape', async () => {

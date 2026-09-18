@@ -158,37 +158,24 @@ export function registerPipeline(app) {
 
   jobs.on('run', async (job, { emit }) => {
     const project = mustProject(job.payload.projectId);
-    emit('docker-build', 'running', 'Building the app image…');
+    emit('run', 'running', 'Starting a safe local preview…');
     projects.setStatus(project, 'BUILDING');
     const sourcePath = projects.sourceDir(project.slug);
-    const built = await runner.buildImage({ sourcePath, projectSlug: project.slug, timeout: cfg.limits.buildTimeoutSec });
-    if (built.status !== 'passed') {
-      await projects.saveMetadata(project, 'runtime.json', { status: 'failed', ...built, updatedAt: new Date().toISOString() });
-      projects.setStatus(project, 'FAILED');
-      return built;
-    }
-    emit('run', 'running', 'Starting a live preview…');
-    const result = await runner.runApp({ sourcePath, projectSlug: project.slug, image: built.image, timeout: cfg.limits.sandboxTimeoutSec, keepRunning: true });
-    let imageFile = null;
-    if (built.status === 'passed' && typeof runner.exportImage === 'function') {
-      const artifactPath = path.join(projects.projectDir(project), 'artifacts', `${project.slug}-image.tar`);
-      imageFile = await runner.exportImage({ image: built.image, destination: artifactPath }).catch(() => null);
-      if (imageFile?.status !== 'passed') imageFile = null;
-    }
+    const result = await runner.runApp({ sourcePath, projectSlug: project.slug, timeout: cfg.limits.sandboxTimeoutSec, keepRunning: true });
     const publicBase = String(process.env.PREVIEW_PUBLIC_BASE_URL || '').replace(/\/$/, '');
     const publicUiUrl = publicBase ? `${publicBase}/preview/${encodeURIComponent(project.slug)}/` : `/preview/${encodeURIComponent(project.slug)}/`;
-    const runtime = { ...result, image: built.image, imageFile, publicUiUrl, lastSeenAt: new Date().toISOString(), nextSteps: result.status === 'passed' ? ['Open the preview', 'Improve with AI if needed', 'Publish when ready'] : ['Fix the reported issue', 'Run again'], updatedAt: new Date().toISOString() };
+    const runtime = { ...result, image: null, imageFile: null, publicUiUrl, lastSeenAt: new Date().toISOString(), nextSteps: result.status === 'passed' ? ['Open the preview', 'Improve with AI if needed', 'Publish when ready'] : ['Fix the reported issue', 'Run again'], updatedAt: new Date().toISOString() };
     await projects.saveMetadata(project, 'runtime.json', runtime);
     const tests = await projects.readMetadata(project, 'test-plan.json', {});
-    await projects.saveMetadata(project, 'test-plan.json', { ...tests, dockerBuild: built, e2e: result.e2e || null });
+    await projects.saveMetadata(project, 'test-plan.json', { ...tests, preview: result, e2e: result.e2e || null });
     if (result.status === 'passed') {
       projects.setStatus(project, 'WAITING_APPROVAL');
-      emit('run', 'done', '✓ App image built, preview tested, and E2E checked. The image file is ready below.');
+      emit('run', 'done', '✓ Preview started and browser check passed.');
     } else {
       projects.setStatus(project, 'FAILED');
       emit('run', 'failed', result.error || 'The app could not start or pass browser testing.');
     }
-    return { ...runtime, downloads: imageFile?.status === 'passed' ? [{ kind: 'image', filename: imageFile.filename, url: `/api/projects/${project.id}/image` }] : [], ui_url: publicUiUrl, next: result.status === 'passed' ? 'Download the Docker-loadable image, import it with docker load -i, or Open Run for a live preview.' : 'Fix the blocking issue, then Run again.' };
+    return { ...runtime, downloads: [], ui_url: publicUiUrl, next: result.status === 'passed' ? 'Open the test link, improve if needed, then Publish.' : 'Fix the blocking issue, then Run again.' };
   });
 
   jobs.on('stop', async (job, { emit }) => {
@@ -214,12 +201,9 @@ export function registerPipeline(app) {
     await writeGeneratedFiles(source, r.json.files);
     const tested = await testAndMaybeFix(projects.get(project.id), emit);
     if (tested.staticResult?.status === 'passed' && tested.nodeResult?.status !== 'failed') {
-      emit('run', 'running', 'Rebuilding and refreshing the preview…');
-      const built = await runner.buildImage({ sourcePath: source, projectSlug: project.slug, timeout: cfg.limits.buildTimeoutSec });
-      if (built.status === 'passed') {
-        const runtime = await runner.runApp({ sourcePath: source, projectSlug: project.slug, image: built.image, timeout: cfg.limits.sandboxTimeoutSec });
-        await projects.saveMetadata(project, 'runtime.json', { ...runtime, updatedAt: new Date().toISOString() });
-      }
+      emit('run', 'running', 'Refreshing the safe preview…');
+      const runtime = await runner.runApp({ sourcePath: source, projectSlug: project.slug, timeout: cfg.limits.sandboxTimeoutSec, keepRunning: true });
+      await projects.saveMetadata(project, 'runtime.json', { ...runtime, image: null, updatedAt: new Date().toISOString() });
     }
     return { feedback, rootCause: r.json.root_cause || '', explanation: r.json.explanation || '', files: r.json.files.map((f) => f.path), tested };
   });
@@ -271,8 +255,6 @@ export function registerPipeline(app) {
       aiDescription = String(desc.json?.description || '').trim();
     } catch { /* deterministic fallback below */ }
     const notes = await releases.prepareNotes(project, source, quality);
-    const runtimeImage = runtime.image;
-    if (!runtimeImage) throw new Error('Release blocked: no tested Docker image is available. Tap Run first.');
     emit('package', 'running', 'Creating the SoloHost package…');
     let githubUrl = null;
     let githubPublish = null;
@@ -320,15 +302,11 @@ export function registerPipeline(app) {
     }
     const owner = githubPublish?.owner || cfg.github.owner || 'YOUR_GITHUB';
     const registryImage = `ghcr.io/${owner}/${project.slug}:${notes.version}`.toLowerCase();
-    let pushedImage = { status: 'skipped', reason: 'GitHub source was published first.' };
+    let pushedImage = { status: 'github-actions', reason: 'The repository workflow builds and publishes the GHCR image. App Builder does not access the host Docker daemon.' };
     let imageVerification = { ok: false };
     if (githubUrl) {
-      emit('docker-publish', 'running', 'Publishing GHCR…');
-      pushedImage = await runner.pushImage({ image: runtimeImage, registryImage, token: cfg.github.token, timeout: cfg.limits.buildTimeoutSec });
-      // The Windows fallback and the GitHub Action are both valid publishing paths.
-      // If the local Docker push fails, do not immediately declare GHCR missing: the
-      // workflow in the repository may still be building the same version tag.
-      const verifyDeadline = Date.now() + 90000;
+      emit('docker-publish', 'running', 'Waiting for GitHub Actions to publish GHCR…');
+      const verifyDeadline = Date.now() + 120000;
       while (Date.now() < verifyDeadline) {
         imageVerification = await github.verifyContainerImage(`${owner}/${project.slug}`, notes.version).catch((err) => ({ ok: false, error: err.message }));
         if (imageVerification.ok) break;
@@ -339,7 +317,7 @@ export function registerPipeline(app) {
         await github.createRelease(project.slug, notes.version, notes.notes).catch((err) => log.warn('GitHub release notes failed', { error: String(err.message || err).replace(/ghp_[A-Za-z0-9]+/g, 'ghp_***') }));
       }
     }
-    const packageInfo = await releases.prepareSoloHost(project, source, imageVerification.ok ? registryImage : runtimeImage, aiDescription);
+    const packageInfo = await releases.prepareSoloHost(project, source, registryImage, aiDescription);
     const validation = await releases.validateSoloHost(source);
     const zip = await createProjectZip({ sourceDir: source, outputDir: path.join(projects.projectDir(project), 'artifacts'), slug: project.slug, kind: 'solohost' }).catch(() => null);
     const imageOk = Boolean(imageVerification.ok);
@@ -361,7 +339,7 @@ export function registerPipeline(app) {
     else if (githubUrl) emit('release', 'done', ghcrNote);
     return {
       status, release: rec, quality, githubUrl, githubPublish, installReady, checklist,
-      image: imageVerification.ok ? registryImage : runtimeImage, imageVerification, soloHostPackage: packageInfo, validation, imageOk,
+      image: registryImage, imageVerification, soloHostPackage: packageInfo, validation, imageOk,
       downloads: [
         zip ? { kind: 'solohost', filename: zip.filename, url: `/api/projects/${project.id}/download?kind=solohost` } : null,
         { kind: 'project', filename: `${project.slug}-source.zip`, url: `/api/projects/${project.id}/download?kind=project` },
@@ -591,7 +569,7 @@ export function registerPipeline(app) {
     }).catch(() => null);
     const tested = await testAndMaybeFix(projects.get(project.id), emit);
     const imageFile = tested.imageFile?.status === 'passed' ? tested.imageFile : null;
-    return { files: written, fallback: usedFallback, tested, e2e: tested.e2e || null, image: tested.dockerBuild?.image || null, imageFile, downloads: imageFile ? [{ kind: 'image', filename: imageFile.filename, url: `/api/projects/${project.id}/image` }] : [], next: imageFile ? 'Download the Docker-loadable image, import it with docker load -i, or Open Run for a live preview.' : tested.next };
+    return { files: written, fallback: usedFallback, tested, e2e: tested.e2e || null, image: null, imageFile: null, downloads: [], next: tested.next };
   }
 
   async function testAndMaybeFix(project, emit) {
@@ -629,19 +607,13 @@ export function registerPipeline(app) {
     emit('security', 'running', 'Looking for secrets and unsafe settings…');
     const scan = await scanProject(source);
     await projects.saveMetadata(project, 'security.json', scan);
-    let dockerBuild = { status: 'skipped', reason: 'Docker sandbox is not available.' };
-    emit('docker-build', 'running', 'Building and testing the app in the Docker sandbox…');
-    dockerBuild = await runner.run({ sourcePath: source, projectSlug: project.slug, timeout: cfg.limits.buildTimeoutSec });
-    let imageFile = null;
-    if (dockerBuild.status === 'passed' && dockerBuild.image && typeof runner.exportImage === 'function') {
-      const artifactPath = path.join(projects.projectDir(project), 'artifacts', `${project.slug}-image.tar`);
-      const exported = await runner.exportImage({ image: dockerBuild.image, destination: artifactPath }).catch(() => null);
-      if (exported?.status === 'passed') imageFile = exported;
-    }
-    await projects.saveMetadata(project, 'test-plan.json', { staticResult, nodeResult, dockerBuild, e2e: dockerBuild.e2e || null, imageFile });
+    emit('preview', 'running', 'Starting a safe preview without host Docker access…');
+    const dockerBuild = await runner.run({ sourcePath: source, projectSlug: project.slug, timeout: cfg.limits.sandboxTimeoutSec });
+    const imageFile = null;
+    await projects.saveMetadata(project, 'test-plan.json', { staticResult, nodeResult, scan, preview: dockerBuild, dockerBuild, e2e: dockerBuild.e2e || null, imageFile });
     const ok = staticResult.status === 'passed' && nodeResult.status !== 'failed' && scan.critical === 0 && dockerBuild.status === 'passed' && dockerBuild.e2e?.status === 'success';
     projects.setStatus(project, ok ? 'WAITING_APPROVAL' : 'FAILED');
-    if (ok) emit('test', 'done', '✓ Build, image, preview and Playwright E2E passed. The image file is ready.');
+    if (ok) emit('test', 'done', '✓ Source checks, security, preview and Playwright E2E passed.');
     return { staticResult, nodeResult, scan, dockerBuild, e2e: dockerBuild.e2e || null, imageFile, autoFixes: attempts, next: ok ? 'Open the preview with Run, Improve if needed, or Publish when ready.' : 'Fix the blocking issue shown above, then Build again.' };
   }
 
@@ -686,12 +658,10 @@ export function registerPipeline(app) {
 
   async function runProject(project, emit) {
     const source = projects.sourceDir(project.slug);
-    const built = await runner.buildImage({ sourcePath: source, projectSlug: project.slug, timeout: cfg.limits.buildTimeoutSec });
-    if (built.status !== 'passed') { await projects.saveMetadata(project, 'runtime.json', { status: 'failed', ...built }); return built; }
-    const runtime = await runner.runApp({ sourcePath: source, projectSlug: project.slug, image: built.image, timeout: cfg.limits.sandboxTimeoutSec });
-    await projects.saveMetadata(project, 'runtime.json', { ...runtime, image: built.image, updatedAt: new Date().toISOString() });
+    const runtime = await runner.runApp({ sourcePath: source, projectSlug: project.slug, timeout: cfg.limits.sandboxTimeoutSec, keepRunning: true });
+    await projects.saveMetadata(project, 'runtime.json', { ...runtime, image: null, updatedAt: new Date().toISOString() });
     const tests = await projects.readMetadata(project, 'test-plan.json', {});
-    await projects.saveMetadata(project, 'test-plan.json', { ...tests, dockerBuild: built });
+    await projects.saveMetadata(project, 'test-plan.json', { ...tests, preview: runtime });
     projects.setStatus(project, runtime.status === 'passed' ? 'WAITING_APPROVAL' : 'FAILED');
     if (runtime.status === 'passed') {
       runtime.previewPath = runtime.previewPath || `/preview/${project.slug}/`;
@@ -791,7 +761,7 @@ async function collectRelevant(source) {
 
 function formatUserBrief({ action, runtime, diagnosis, reply, next, language = 'English' }) {
   const templates = {
-    English: { running: 'App is running.', failed: 'App did not stay up.', finished: 'Action finished.', none: 'none.', needRun: 'a passing Run.', image: 'image built, container started, /health passed.' },
+    English: { running: 'App is running.', failed: 'App did not stay up.', finished: 'Action finished.', none: 'none.', needRun: 'a passing Run.', image: 'safe preview started, health check and browser test passed.' },
     Vietnamese: { running: 'Ứng dụng đang chạy.', failed: 'Ứng dụng chưa chạy ổn định.', finished: 'Đã hoàn tất thao tác.', none: 'không có.', needRun: 'một lần Run thành công.', image: 'đã build image, khởi động container và kiểm tra /health thành công.' },
     Chinese: { running: '应用正在运行。', failed: '应用未能稳定运行。', finished: '操作已完成。', none: '无。', needRun: '一次成功的运行。', image: '镜像已构建，容器已启动，/health 检查通过。' },
     Japanese: { running: 'アプリは実行中です。', failed: 'アプリは安定して起動できませんでした。', finished: '操作が完了しました。', none: 'ありません。', needRun: '成功したRunが必要です。', image: 'イメージをビルドし、コンテナを起動して /health を確認しました。' },
@@ -814,7 +784,7 @@ function briefRun(runtime) {
   return [
     `RESULT: App is running.`,
     `TEST LINK: ${runtime.previewPath || runtime.url}`,
-    `DONE: Docker image built, container started, /health passed.`,
+    `DONE: Safe preview started, health check and browser test passed.`,
     `MISSING: none for a test run.`,
     `NEXT: Open the test link, then tell me what to change. Tap Publish when you are happy.`,
   ].join('\n');

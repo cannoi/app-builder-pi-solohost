@@ -36,7 +36,7 @@
         <div class="quickGroups">
           <div class="group"><span class="groupLabel">Build</span><button data-action="build">✨ Build</button><button data-action="run">▶ Run</button></div>
           <div class="group"><span class="groupLabel">Improve</span><button data-action="improve">✦ Improve</button><button data-action="analyze">🔎 Check</button></div>
-          <div class="group"><span class="groupLabel">More</span><button data-action="docker">🐳 Apps</button><button data-action="export">⬇ Zip</button><button data-action="publish">🚀 Publish</button></div>
+          <div class="group"><span class="groupLabel">More</span><button data-action="analyze">🔎 Check</button><button data-action="export">⬇ Zip</button><button data-action="publish">🚀 Publish</button></div>
         </div>
         <div class="inputRow">
           <button id="attachBtn" class="attach" title="Attach files">📎</button>
@@ -58,7 +58,7 @@
       <label>Gemini API key<input id="setGemini" type="password" autocomplete="off" placeholder="Needed for Council"></label>
       <label>GitHub token <span class="muted">optional</span><input id="setGhToken" type="password" autocomplete="off" placeholder="Personal access token (classic)"><span class="small">Use classic token: <b>repo</b> + <b>workflow</b> + <b>write:packages</b>. Create: github.com/settings/tokens/new</span></label>
       <label>GitHub owner <span class="muted">optional</span><input id="setGhOwner" type="text" placeholder="username or org"></label><div class="info">If GitHub Actions says permission is read-only: Repository → Settings → Actions → General → Workflow permissions → <b>Read and write permissions</b> → Save.</div>
-      <div class="info">Council: one model writes, the other reviews. Trust scores prefer the model that finishes with fewer errors. Docker socket stays on the Builder only.</div>
+      <div class="info">Council: one model writes, the other reviews. Trust scores prefer the model that finishes with fewer errors. No host Docker access is required.</div>
       <button id="saveSettings" class="primary wide">Save</button>
       <p id="settingsState" class="muted"></p>
     </div>
