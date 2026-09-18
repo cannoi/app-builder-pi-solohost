@@ -32,8 +32,10 @@ export function githubSetupGuide() {
       'If an organization policy prevents write access, the GitHub Actions run must be checked for the exact policy error.'
     ],
     ghcr: [
-      'The Docker image must exist at ghcr.io/OWNER/REPOSITORY:VERSION before SoloHost installation.',
-      'The Builder verifies the image tag instead of assuming that a successful source upload means the image exists.'
+      'Public visibility allows SoloHost to pull without login, but it does not grant GitHub Actions permission to push.',
+      'For an existing GHCR package, open Package settings → Manage Actions access and give this repository Write access, or connect the package to the repository.',
+      'The Builder verifies the image tag instead of assuming that a successful source upload means the image exists.',
+      'If the existing package cannot be linked or granted Actions access, remove the old package once and rerun Publish so the workflow can create a repository-linked package.'
     ]
   };
 }

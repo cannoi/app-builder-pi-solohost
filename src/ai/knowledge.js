@@ -17,8 +17,8 @@ Common errors:
 - exportImage / missing runner method: Builder should save the image with docker save; Run must not crash if save fails.
 - GitHub 404 git/trees: empty repo or owner mismatch. Builder uses Contents API fallback and the token account.
 - GitHub 401/403/permission: do not show a generic access error. Explain likely causes in plain language and give the exact next step. For workflow permission problems, tell the user to open Repository Settings → Actions → General → Workflow permissions → Read and write permissions → Save.
-- GitHub Actions/GHCR: a repository can exist while Actions still cannot write packages. Verify workflow permissions and GHCR package visibility separately.
-- GHCR unauthorized: usually means the image/package is private, the image name is wrong, or authentication/permissions are missing. Never claim the app is running until the image pull and health check are actually successful.
+- GitHub Actions/GHCR: a repository can exist while Actions still cannot write an existing package. For an existing public/private GHCR package, the workflow repository must have package Write access under Package settings → Manage Actions access, or the package must be linked to the repository.
+- GHCR unauthorized: usually means the image/package is private, the image name is wrong, or authentication/permissions are missing. Public visibility fixes anonymous pull, not workflow push. Never claim the app is running until the image pull and health check are actually successful.
 - prepareNotes is not a function: release helper missing. Fixed in current Builder.
 - Container dies before listen: missing npm module. Rebuild the image.
 - DeepSeek 402: no credit. Switch header to Gemini.

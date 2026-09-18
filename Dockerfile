@@ -15,6 +15,9 @@ COPY templates ./templates
 COPY docs ./docs
 COPY README.md INSTALL.md CHANGELOG.md ./
 
+# Link the GHCR container package to this repository for GitHub Actions access.
+LABEL org.opencontainers.image.source="https://github.com/cannoi/app-builder-pi-solohost"
+
 # Run as root so SoloHost volume mounts and docker.sock stay usable.
 EXPOSE 8080
 

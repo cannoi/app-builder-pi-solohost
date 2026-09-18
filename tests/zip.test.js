@@ -38,6 +38,8 @@ test('generated apps include a GitHub Actions image workflow', async () => {
   const yml = fs.readFileSync(path.join(dir, '.github/workflows/docker.yml'), 'utf8');
   assert.match(yml, /ghcr.io/);
   assert.match(yml, /docker\/build-push-action/);
+  assert.match(yml, /packages:\s*write/);
+  assert.match(yml, /actions\/checkout@v6/);
 });
 
 test('generated GitHub workflow publishes the exact SoloHost version tag', async () => {
@@ -57,4 +59,17 @@ test('Windows GitHub fallback is bundled and verifies the GHCR image before Solo
   assert.match(script, /Wait-ForContainerImage/);
   assert.match(script, /GHCR image confirmed/);
   assert.match(script, /SOLOHOST INSTALL GUIDE/);
+});
+
+test('Builder image declares the GitHub source label used to link GHCR packages', async () => {
+  const fs = await import('node:fs/promises');
+  const dockerfile = await fs.readFile(new URL('../Dockerfile', import.meta.url), 'utf8');
+  assert.match(dockerfile, /org\.opencontainers\.image\.source=.*github\.com\/cannoi\/app-builder-pi-solohost/);
+});
+
+test('dynamic chat language support remains enabled', async () => {
+  const { detectUserLanguage } = await import('../src/ai/language.js');
+  assert.equal(detectUserLanguage('Hãy giúp tôi sửa lỗi ứng dụng'), 'Vietnamese');
+  assert.equal(detectUserLanguage('帮我修复这个应用'), 'Chinese');
+  assert.equal(detectUserLanguage('Please build this app'), 'English');
 });

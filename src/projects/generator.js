@@ -64,23 +64,34 @@ export function localPlan(idea, analysis) {
 export async function writeGithubWorkflow(root, project = {}) {
   const version = String(project.version || '0.1.0').replace(/[^0-9A-Za-z._-]/g, '-');
   const yml = `name: Build SoloHost image
+
 on:
   push:
   workflow_dispatch:
+
 permissions:
   contents: read
   packages: write
+
 jobs:
   docker:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
     steps:
-      - uses: actions/checkout@v4
-      - uses: docker/login-action@v3
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: \${{ github.actor }}
           password: \${{ secrets.GITHUB_TOKEN }}
-      - uses: docker/metadata-action@v5
+
+      - name: Docker metadata
+        uses: docker/metadata-action@v5
         id: meta
         with:
           images: ghcr.io/\${{ github.repository }}
@@ -89,13 +100,16 @@ jobs:
             type=raw,value=${version}
             type=ref,event=tag
             type=sha,prefix=
-      - uses: docker/build-push-action@v6
+
+      - name: Build and push image
+        uses: docker/build-push-action@v6
         with:
           context: .
           push: true
           tags: \${{ steps.meta.outputs.tags }}
           labels: \${{ steps.meta.outputs.labels }}
 `;
+
   await writeSafeFile(root, '.github/workflows/docker.yml', yml);
   await writeSafeFile(root, '.dockerignore', 'node_modules\n.git\nsolohost\n*.zip\n.env\n');
   return ['.github/workflows/docker.yml'];
