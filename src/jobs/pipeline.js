@@ -735,6 +735,36 @@ export function registerPipeline(app) {
     return p;
   }
 
+  async function runWithRepair(project, emit, userMessage) {
+    emit('run', 'running', 'Starting a safe local preview…');
+    let runtime = await runProject(project, emit);
+    if (runtime.status === 'passed') return runtime;
+    const crash = classifyLogs(`${runtime.error || ''}\n${runtime.logs || ''}`);
+    const diagnosis = await diagnoseSource(projects.sourceDir(project.slug));
+    if (crash?.code === 'registry_unauthorized' || crash?.code === 'github_workflow_permission') {
+      const guide = crash.code === 'github_workflow_permission'
+        ? 'GitHub Actions is read-only. Open GitHub → Repository → Settings → Actions → General → Workflow permissions → Read and write permissions → Save.'
+        : 'The Docker image cannot be downloaded from GHCR. Check that the image name is correct and the GHCR package is public/pullable.';
+      runtime.brief = [`RESULT: Not ready.`, `WHY: ${crash.title}`, `DONE: Identified an access problem outside the app source.`, `MISSING: ${guide}`, `NEXT: ${guide}`].join('\n');
+      return runtime;
+    }
+    emit('repair', 'running', crash ? `Crash found: ${crash.title}` : 'Preview failed. Applying one automatic fix…');
+    const feedback = [
+      userMessage,
+      crash ? `${crash.title} ${crash.hint}` : 'Health check failed because the process died before listen or the UI files are missing.',
+      diagnosis.findings.map((f) => f.title).join('; '),
+      runtime.error,
+    ].filter(Boolean).join('\n');
+    try {
+      await improveProject(project, feedback, emit);
+      emit('run', 'running', 'Retrying the preview after the fix…');
+      runtime = await runProject(project, emit);
+    } catch (err) {
+      runtime = { ...runtime, repairError: err.message };
+    }
+    return runtime;
+  }
+
   return { review };
 }
 
@@ -756,37 +786,6 @@ async function collectRelevant(source) {
   }
   return chunks.join('\n\n');
 }
-
-  async function runWithRepair(project, emit, userMessage) {
-    emit('run', 'running', 'Building the image and starting a live preview…');
-    let runtime = await runProject(project, emit);
-    if (runtime.status === 'passed') return runtime;
-    const crash = classifyLogs(`${runtime.error || ''}\n${runtime.logs || ''}`);
-    const diagnosis = await diagnoseSource(projects.sourceDir(project.slug));
-    if (crash?.code === 'registry_unauthorized' || crash?.code === 'github_workflow_permission') {
-      const guide = crash.code === 'github_workflow_permission'
-        ? 'GitHub Actions is read-only. Open GitHub → Repository → Settings → Actions → General → Workflow permissions → Read and write permissions → Save.'
-        : 'The Docker image cannot be downloaded from GHCR. Check that the image name is correct and the GHCR package is public/pullable. If the image is private, configure access instead of changing the app code.';
-      runtime.brief = [`RESULT: Not ready.`, `WHY: ${crash.title}`, `DONE: I identified an access/configuration problem outside the app source.`, `MISSING: ${guide}`, `NEXT: ${guide}`].join('\n');
-      emit('repair', 'done', 'The problem is an access/configuration issue, so I did not change the app source.');
-      return runtime;
-    }
-    emit('repair', 'running', crash ? `Crash found: ${crash.title}` : 'Preview failed. Applying one automatic fix…');
-    const feedback = [
-      userMessage,
-      crash ? `${crash.title} ${crash.hint}` : 'Health check failed because the process died before listen or the UI files are missing.',
-      diagnosis.findings.map((f) => f.title).join('; '),
-      runtime.error,
-    ].filter(Boolean).join('\n');
-    try {
-      await improveProject(project, feedback, emit);
-      emit('run', 'running', 'Retrying the preview after the fix…');
-      runtime = await runProject(project, emit);
-    } catch (err) {
-      runtime = { ...runtime, repairError: err.message };
-    }
-    return runtime;
-  }
 
 function formatUserBrief({ action, runtime, diagnosis, reply, next, language = 'English', reports = [] }) {
   const templates = {

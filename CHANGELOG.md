@@ -1,9 +1,8 @@
 # Changelog
 
-## 1.4.12
+## 1.4.13
 
-- Preview always returns a Builder chrome page (back bar + iframe). No empty TCP close.
-- Blank iframe auto-returns to the same project chat.
-- New-app questions wait until every choice is picked, or the user types custom answers.
-- Gemini remembers a working model and prefers version 2.5 or newer.
+- ⬆ Zip imports an app, unpacks it, and flattens a single wrapper folder.
+- ⬇ Zip downloads a real .zip via blob (works in Pi Desktop WebView).
+- runWithRepair is inside the pipeline again so Run is not "runProject is not defined".
 

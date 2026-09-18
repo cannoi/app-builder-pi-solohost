@@ -216,3 +216,18 @@ test('Gemini prefers models at least 2.5', async () => {
   assert.ok(geminiVersion('gemini-1.5-pro') < 2.5);
   assert.ok(compareGeminiModels('gemini-2.5-flash', 'gemini-2.5-pro') > 0);
 });
+
+test('imported zip wrapper folder is flattened', async () => {
+  const fs = await import('node:fs/promises');
+  const path = await import('node:path');
+  const os = await import('node:os');
+  const { flattenImportedTree } = await import('../src/projects/importer.js');
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'paf-flat-'));
+  await fs.mkdir(path.join(root, 'snake-app', 'public'), { recursive: true });
+  await fs.writeFile(path.join(root, 'snake-app', 'package.json'), '{"name":"snake"}');
+  await fs.writeFile(path.join(root, 'snake-app', 'public', 'index.html'), '<html></html>');
+  await flattenImportedTree(root);
+  const names = await fs.readdir(root);
+  assert.ok(names.includes('package.json'));
+  assert.ok(names.includes('public'));
+});

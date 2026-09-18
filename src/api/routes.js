@@ -401,11 +401,22 @@ export function registerRoutes(r, app) {
   r.get('/api/projects/:id/download', async (req, res) => {
     const p = projects.get(req.params.id);
     if (!p) return res.status(404).json({ error: 'Project not found' });
-    const kind = String(req.query.kind || 'project');
-    const artifact = await createProjectZip({ sourceDir: projects.sourceDir(p.slug), outputDir: path.join(projects.projectDir(p), 'artifacts'), slug: p.slug, kind, cfg });
-    res.setHeader('Content-Type', 'application/zip');
-    res.setHeader('Content-Disposition', `attachment; filename="${artifact.filename}"`);
-    createReadStream(artifact.path).pipe(res);
+    let kind = String(req.query.kind || 'project');
+    if (!['project', 'solohost'].includes(kind)) kind = 'project';
+    const sourceDir = projects.sourceDir(p.slug);
+    if (kind === 'solohost') {
+      try { await fs.access(path.join(sourceDir, 'solohost', 'docker-compose.yml')); }
+      catch { kind = 'project'; }
+    }
+    const artifact = await createProjectZip({ sourceDir, outputDir: path.join(projects.projectDir(p), 'artifacts'), slug: p.slug, kind, cfg });
+    const data = await fs.readFile(artifact.path);
+    res.writeHead(200, {
+      'Content-Type': 'application/zip',
+      'Content-Disposition': `attachment; filename="${artifact.filename}"`,
+      'Content-Length': data.length,
+      'Cache-Control': 'no-store',
+    });
+    res.end(data);
   });
 
   r.get('/api/projects/:id/github-fallback', async (req, res) => {

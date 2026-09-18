@@ -22,7 +22,28 @@ export async function importZipBuffer(buf, destDir) {
       await fs.rm(zipPath, { force: true }).catch(() => {});
     }
   }
+  await flattenImportedTree(destDir);
   return detectStack(destDir);
+}
+
+export async function flattenImportedTree(destDir) {
+  const skip = new Set(['__macosx', '.ds_store', '.git', 'node_modules']);
+  let guard = 0;
+  while (guard < 3) {
+    guard += 1;
+    const entries = (await fs.readdir(destDir, { withFileTypes: true }).catch(() => []))
+      .filter((e) => !skip.has(e.name.toLowerCase()));
+    if (entries.length !== 1 || !entries[0].isDirectory()) break;
+    const inner = path.join(destDir, entries[0].name);
+    const kids = await fs.readdir(inner);
+    for (const name of kids) {
+      const from = path.join(inner, name);
+      const to = path.join(destDir, name);
+      if (await fs.access(to).then(() => true).catch(() => false)) continue;
+      await fs.rename(from, to);
+    }
+    await fs.rm(inner, { recursive: true, force: true }).catch(() => {});
+  }
 }
 
 export async function detectStack(dir) {

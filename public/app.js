@@ -137,15 +137,53 @@ async function sendMessage() {
     watch(data.jobId);
   } catch (e) { setBusy(false); add('ai', e.message, { small: 'Nothing was changed.' }); }
 }
+async function downloadZip(projectId, kind) {
+  const url = `/api/projects/${projectId}/download?kind=${encodeURIComponent(kind || 'project')}`;
+  const r = await fetch(url);
+  if (!r.ok) {
+    const data = await r.json().catch(() => ({}));
+    throw new Error(data.error || 'Could not create the ZIP.');
+  }
+  const blob = await r.blob();
+  const name = (r.headers.get('content-disposition') || '').match(/filename="([^"]+)"/)?.[1] || `${kind}.zip`;
+  const href = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = href; a.download = name; document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(href), 2000);
+  add('ai', `ZIP ready: ${name}`);
+}
+function pickImportZip() {
+  const input = $('importZipInput');
+  if (!input) { add('ai', 'Import is not available in this screen.'); return; }
+  input.onchange = async () => {
+    const file = input.files?.[0];
+    input.value = '';
+    if (!file) return;
+    setBusy(true, 'Importing ZIP…');
+    try {
+      const form = new FormData();
+      form.append('file', file);
+      form.append('idea', `Imported ZIP: ${file.name}`);
+      const url = state.projectId ? `/api/projects/${state.projectId}/import` : '/api/projects/import';
+      const r = await fetch(url, { method: 'POST', body: form });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(data.error || 'Import failed.');
+      add('ai', `Importing ${file.name}. I will unpack it and flatten a wrapper folder if needed.`);
+      watch(data.jobId);
+    } catch (e) { setBusy(false); add('ai', e.message); }
+  };
+  input.click();
+}
 async function quick(action) {
   if (state.busy) return;
   if (action === 'support') return openSupport();
   if (action === 'docker') return inspectDocker();
+  if (action === 'import') return pickImportZip();
   if (action === 'export') {
     if (!state.projectId) { add('ai', 'Create an app first, then tap Zip.'); return; }
     add('ai', 'Preparing a ZIP of your app…');
-    window.open(`/api/projects/${state.projectId}/download?kind=project`, '_blank');
-    window.setTimeout(() => window.open(`/api/projects/${state.projectId}/download?kind=solohost`, '_blank'), 600);
+    try { await downloadZip(state.projectId, 'project'); }
+    catch (e) { add('ai', e.message); }
     return;
   }
   if (!state.projectId) { add('ai', 'Start with your app idea in the chat. I’ll create the project first.'); return; }
