@@ -153,7 +153,7 @@ async function watch(jobId) {
         else if (state.projectId) { await loadProjects(); }
         summarizeResult(result, job.status);
         if (result.guide) renderGuide(result.guide);
-        const live = result.runtime || result.result?.runtime;
+        const live = extractRuntime(result);
         if (live?.status === 'passed') setLive(true);
         if (live?.status === 'stopped' || result.status === 'released') setLive(Boolean(live?.status === 'passed'));
         maybeJump();
@@ -161,8 +161,20 @@ async function watch(jobId) {
     } catch (e) { clearInterval(state.poll); state.poll = null; setBusy(false); add('ai', `Connection lost while checking the job: ${e.message}`); }
   }, 700);
 }
+// Fix: `result.runtime` can be either the preview engine name as a plain string
+// (e.g. "native-preview", set by src/runtime/native-preview.js) or, in older/other
+// result shapes, an object carrying { status, previewPath, url, ... }. Treating the
+// string case as the object silently made `runtime.status` always undefined, so the
+// "Open the test UI" link (and the Live indicator) never rendered even after a
+// successful Run. This only reads it as the runtime object when it actually is one.
+function extractRuntime(result) {
+  if (result?.runtime && typeof result.runtime === 'object') return result.runtime;
+  if (result?.result?.runtime && typeof result.result.runtime === 'object') return result.result.runtime;
+  if (result?.previewPath || result?.url || result?.publicUiUrl) return result;
+  return null;
+}
 function summarizeResult(result, status) {
-  const runtime = result.runtime || result.result?.runtime || (result.previewPath || result.url ? result : null);
+  const runtime = extractRuntime(result);
   if (status === 'failed' && !result.brief) {
     add('ai', result.error || 'RESULT: Not ready.\nNEXT: Send the error back to me and I will fix it.');
     return;
