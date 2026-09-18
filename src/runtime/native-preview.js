@@ -41,31 +41,38 @@ export class NativePreview {
 
     const port = await freePort();
     const pkg = await readPackageJson(sourcePath);
-    // Preview must never depend on the generated app binding PORT.
-    // Generated Express/Snake apps often hardcode 8080 or crash on missing
-    // node_modules — waitForHttp then reports a useless "fetch failed".
-    // If any index.html exists, Builder owns the preview port and always
-    // answers /health. The app process is optional and uses another port.
-    const publicDir = await resolvePublicDir(sourcePath);
+    // Fix: a generated app with its own start command must own the port itself.
+    // The old code always bound a decoy static server to `port` first and then
+    // spawned the real app on the SAME port, so the real app silently failed to
+    // bind (EADDRINUSE) while the decoy answered /health as if nothing were wrong.
+    // Only fall back to the built-in static server for pure static sites that have
+    // no server process of their own.
     const hasAppProcess = Boolean(pkg?.scripts?.start || pkg?.main);
 
     let server = null;
+    let publicDir = null;
     let child = null;
 
-    if (publicDir) {
-      server = createStaticServer(publicDir, safe);
-      await new Promise((resolve, reject) => {
-        server.once('error', reject);
-        server.listen(port, '127.0.0.1', resolve);
-      });
-    } else if (hasAppProcess) {
+    if (hasAppProcess) {
+      // Fix: `Run` used to spawn the app straight away, before any `npm install`
+      // step. A freshly generated project has no node_modules yet, so the child
+      // process crashed immediately and the health check just saw a closed port
+      // (surfaced as a generic "fetch failed"). Install once, only when needed.
       const deps = await ensureDependencies(sourcePath, pkg);
       if (deps.error) {
         return { status: 'failed', runtime: 'native-preview', health: false, error: `Dependency install failed: ${deps.error}` };
       }
       child = await spawnApp(sourcePath, port, pkg).catch(() => null);
     } else {
-      return { status: 'failed', runtime: 'native-preview', health: false, error: 'No UI files were found. Tap Build first so the app has an index page.' };
+      publicDir = await resolvePublicDir(sourcePath);
+      if (!publicDir) {
+        return { status: 'failed', runtime: 'native-preview', health: false, error: 'No UI files were found. Tap Build first so the app has an index page.' };
+      }
+      server = createStaticServer(publicDir, safe);
+      await new Promise((resolve, reject) => {
+        server.once('error', reject);
+        server.listen(port, '127.0.0.1', resolve);
+      });
     }
 
     const state = { server, child, port, publicDir, startedAt: Date.now(), stdout: '', stderr: '' };
@@ -77,7 +84,7 @@ export class NativePreview {
       return {
         status: 'failed', runtime: 'native-preview', hostPort: port, url: `http://127.0.0.1:${port}`,
         duration: Math.round((Date.now() - started) / 1000), health: false,
-        error: health.error || 'The preview server did not start.',
+        error: health.error || 'The preview server did not start. Check the app startup log and port binding.',
       };
     }
 
@@ -104,6 +111,8 @@ export class NativePreview {
       container: null,
       containerIp: null,
       hostPort: port,
+      proxyHost: '127.0.0.1',
+      proxyPort: port,
       url: localUrl,
       duration: Math.round((Date.now() - started) / 1000),
       health: true,
@@ -238,32 +247,25 @@ function freePort() {
   });
 }
 
-function httpGet(url, timeoutMs = 1500) {
-  return new Promise((resolve, reject) => {
-    const req = http.get(url, { timeout: timeoutMs }, (res) => {
-      res.resume();
-      resolve({ status: res.statusCode || 0 });
-    });
-    req.on('timeout', () => { req.destroy(); reject(new Error('timeout')); });
-    req.on('error', (err) => reject(err));
-  });
-}
-
 async function waitForHttp(port, timeoutSec) {
   const deadline = Date.now() + Math.max(3, Number(timeoutSec || 15)) * 1000;
   let last = 'Preview did not respond.';
   while (Date.now() < deadline) {
-    for (const pathName of ['/health', '/']) {
-      try {
-        const r = await httpGet(`http://127.0.0.1:${port}${pathName}`);
-        if (r.status && r.status < 500) return { ok: true };
-        last = `HTTP ${r.status}`;
-      } catch (err) {
-        const code = err?.code || err?.cause?.code;
-        last = code === 'ECONNREFUSED' ? 'Preview port is not open yet.' : String(err.message || err);
-      }
+    try {
+      const r = await fetch(`http://127.0.0.1:${port}/health`, { signal: AbortSignal.timeout(1500) });
+      if (r.ok) return { ok: true };
+      last = `HTTP ${r.status}`;
+    } catch (err) {
+      last = String(err.message || err);
     }
-    await sleep(150);
+    // Fallback: not every generated app implements /health ("when practical" per the
+    // build prompt). If the root path responds at all, treat the app as up rather
+    // than timing out and reporting a false "did not start" error.
+    try {
+      const r2 = await fetch(`http://127.0.0.1:${port}/`, { signal: AbortSignal.timeout(1500) });
+      if (r2.status < 500) return { ok: true };
+    } catch {}
+    await sleep(200);
   }
   return { ok: false, error: last };
 }

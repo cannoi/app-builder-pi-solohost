@@ -201,14 +201,13 @@ export function registerPipeline(app) {
     emit('ai', 'running', 'AI is turning your feedback into a change…');
     const r = await ai.completeJson({ task: 'DEBUGGING', system: SYSTEM, prompt: improvePrompt(project, feedback, relevant), projectId: project.id });
     if (!r.json?.files?.length) throw new Error('AI did not propose a code change.');
-    await snapshots.create(project, 'before-improve');
     emit('patch', 'running', 'Applying the improvement…');
-    await writeGeneratedFiles(source, r.json.files);
+    await applySafeAiPatch({ sourceDir: source, files: r.json.files, project, snapshots, reason: 'ai-improve' });
     const tested = await testAndMaybeFix(projects.get(project.id), emit);
     if (tested.staticResult?.status === 'passed' && tested.nodeResult?.status !== 'failed') {
       emit('run', 'running', 'Refreshing the safe preview…');
       const runtime = await runner.runApp({ sourcePath: source, projectSlug: project.slug, timeout: cfg.limits.sandboxTimeoutSec, keepRunning: true });
-      await projects.saveMetadata(project, 'runtime.json', { ...runtime, image: null, updatedAt: new Date().toISOString() });
+      await projects.saveMetadata(project, 'runtime.json', { ...runtime, image: runtime.image || null, lastSeenAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
     }
     return { feedback, rootCause: r.json.root_cause || '', explanation: r.json.explanation || '', files: r.json.files.map((f) => f.path), tested };
   });
@@ -542,7 +541,19 @@ export function registerPipeline(app) {
       jobs.attachProject(job.id, project.id);
     }
     const dest = projects.sourceDir(project.slug);
-    const stack = await importZipBuffer(buf, dest);
+    let stack;
+    try {
+      stack = await importZipBuffer(buf, dest, { replace: true });
+    } catch (err) {
+      // A replacement import is destructive to source, so restore the latest
+      // checkpoint if unpacking/validation fails. New projects have no prior
+      // checkpoint and can simply fail without affecting another project.
+      if (job.payload.projectId) {
+        const latest = snapshots.list(project.id)[0];
+        if (latest?.id) await snapshots.restore(project, latest.id).catch(() => {});
+      }
+      throw err;
+    }
     await projects.saveMetadata(project, 'requirements.json', { ...(await projects.readMetadata(project, 'requirements.json', {})), stack, imported: true, filename: job.payload.filename });
     await projects.saveMetadata(project, 'user-language.json', { language: detectUserLanguage(job.payload.idea || job.payload.filename || 'Imported app'), source: job.payload.idea || job.payload.filename || 'Imported app' });
     projects.setStatus(project, 'READY_TO_BUILD');
@@ -557,7 +568,7 @@ export function registerPipeline(app) {
     emit('snapshot', 'running', 'Saving a restore point…');
     await snapshots.create(project, 'before-patch');
     emit('patch', 'running', 'Applying the change…');
-    await writeGeneratedFiles(projects.sourceDir(project.slug), files);
+    await applySafeAiPatch({ sourceDir: projects.sourceDir(project.slug), files, project, snapshots, reason: 'apply-patch' });
     await stampMadeBy(projects.sourceDir(project.slug), cfg);
     await writeGithubWorkflow(projects.sourceDir(project.slug), project);
     return testAndMaybeFix(projects.get(project.id), emit);
@@ -615,9 +626,9 @@ export function registerPipeline(app) {
       attempts += 1;
       emit('repair', 'running', `Trying a safe fix (${attempts}/${cfg.limits.maxAutoFixes})…`);
       projects.setStatus(project, 'REPAIRING');
-      await snapshots.create(project, `before-fix-${attempts}`);
       const errText = [failSummary(staticResult), nodeResult.error].filter(Boolean).join('\n');
       const relevant = await collectRelevant(source);
+      let checkpoint = null;
       try {
         const r = await ai.completeJson({
           task: 'DEBUGGING',
@@ -625,13 +636,21 @@ export function registerPipeline(app) {
           prompt: patchPrompt(project, errText, relevant),
           projectId: project.id,
         });
-        if (r.json?.files?.length) await writeGeneratedFiles(source, r.json.files);
+        if (r.json?.files?.length) checkpoint = await applySafeAiPatch({ sourceDir: source, files: r.json.files, project, snapshots, reason: `before-fix-${attempts}` });
       } catch (err) {
         emit('repair', 'failed', friendlyAiError(err));
         break;
       }
+      const beforeFailureScore = failureScore(staticResult, nodeResult);
       staticResult = await runStaticTests(source);
       nodeResult = await runNodeTests(source, 45000);
+      const afterFailureScore = failureScore(staticResult, nodeResult);
+      if (checkpoint?.snapshot?.id && afterFailureScore > beforeFailureScore) {
+        await snapshots.restore(project, checkpoint.snapshot.id).catch(() => {});
+        emit('rollback', 'done', 'The repair made the checks worse, so I restored the previous working state.');
+        staticResult = await runStaticTests(source);
+        nodeResult = await runNodeTests(source, 45000);
+      }
     }
     emit('security', 'running', 'Looking for secrets and unsafe settings…');
     const scan = await scanProject(source);
@@ -688,7 +707,7 @@ export function registerPipeline(app) {
   async function runProject(project, emit) {
     const source = projects.sourceDir(project.slug);
     const runtime = await runner.runApp({ sourcePath: source, projectSlug: project.slug, timeout: cfg.limits.sandboxTimeoutSec, keepRunning: true });
-    await projects.saveMetadata(project, 'runtime.json', { ...runtime, image: null, updatedAt: new Date().toISOString() });
+    await projects.saveMetadata(project, 'runtime.json', { ...runtime, image: runtime.image || null, lastSeenAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
     const tests = await projects.readMetadata(project, 'test-plan.json', {});
     await projects.saveMetadata(project, 'test-plan.json', { ...tests, preview: runtime });
     projects.setStatus(project, runtime.status === 'passed' ? 'WAITING_APPROVAL' : 'FAILED');
@@ -708,8 +727,7 @@ export function registerPipeline(app) {
     const relevant = await collectProjectContext(source);
     const r = await ai.completeJson({ task: 'DEBUGGING', system: SYSTEM, prompt: patchPrompt(project, '', relevant, feedback), projectId: project.id, images: [] });
     if (!r.json?.files?.length) throw new Error('AI did not propose a code change.');
-    await snapshots.create(project, 'before-improve');
-    await writeGeneratedFiles(source, r.json.files);
+    await applySafeAiPatch({ sourceDir: source, files: r.json.files, project, snapshots, reason: 'ai-improve' });
     await stampMadeBy(source, cfg);
     const tested = await testAndMaybeFix(projects.get(project.id), emit);
     let runtime = null;
@@ -727,6 +745,28 @@ export function registerPipeline(app) {
       if (out.length >= 3) break;
     }
     return out;
+  }
+
+  async function applySafeAiPatch({ sourceDir, files, project, snapshots: snapshotStore, reason = 'ai-patch' }) {
+    const proposed = Array.isArray(files) ? files.filter((f) => f && f.path && typeof f.content === 'string') : [];
+    if (!proposed.length) throw new Error('AI returned no usable patch files.');
+    if (proposed.length > 8) throw new Error('AI patch is too large for an automatic repair. I will not rewrite the project blindly.');
+    for (const f of proposed) {
+      const rel = String(f.path).replace(/\\/g, '/');
+      if (!rel || rel.startsWith('/') || rel.includes('..') || /^(?:data|workspace|projects)\//i.test(rel)) {
+        throw new Error(`AI patch contains an unsafe path: ${rel}`);
+      }
+      if (/^(?:\.env(?:\.|$)|.*\/(?:\.env(?:\.|$)|id_rsa(?:\.|$)|private[_-]?key(?:\.|$)))/i.test(rel)) {
+        throw new Error(`AI patch attempted to modify a protected file: ${rel}`);
+      }
+    }
+    const snapshot = await snapshotStore.create(project, `before-${reason}`);
+    const written = await writeGeneratedFiles(sourceDir, proposed);
+    return { written, snapshot };
+  }
+
+  function failureScore(staticResult, nodeResult) {
+    return (staticResult?.status === 'failed' ? 1 : 0) + (nodeResult?.status === 'failed' ? 1 : 0);
   }
 
   function mustProject(id) {

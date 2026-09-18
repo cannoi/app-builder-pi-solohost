@@ -37,8 +37,8 @@ export function createPreviewHandler({ projects }) {
       return true;
     }
     const runtime = await projects.readMetadata(project, 'runtime.json', {}).catch(() => ({}));
-    const port = Number(runtime.hostPort);
-    const ip = runtime.containerIp;
+    const port = Number(runtime.proxyPort || runtime.hostPort);
+    const ip = runtime.proxyHost || runtime.containerIp || '127.0.0.1';
     const rel = '/' + restParts.filter((p) => p !== '__app__').join('/');
     const targetPath = (rel === '/' ? '/' : rel) + url.search;
 
@@ -126,6 +126,10 @@ function proxy(req, res, hostname, port, targetPath, project) {
       const hop = { ...up.headers };
       delete hop.connection;
       delete hop['keep-alive'];
+      // The Builder owns the preview frame. Generated apps must not be able to
+      // blank the frame with their own X-Frame-Options/CSP frame-ancestors.
+      delete hop['x-frame-options'];
+      delete hop['content-security-policy'];
       try {
         res.writeHead(up.statusCode || 502, hop);
         up.pipe(res);
