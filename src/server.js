@@ -1,96 +1,96 @@
-const express = require('express');
-const cors = require('cors');
-const path = require('path');
+import path from 'node:path';
+import { loadConfig, validateConfig } from './config/index.js';
+import { createLogger } from './utils/logger.js';
+import { openDb } from './storage/db.js';
+import { AIGateway } from './ai/gateway.js';
+import { ProjectManager } from './projects/manager.js';
+import { SnapshotStore } from './projects/snapshots.js';
+import { JobQueue } from './jobs/queue.js';
+import { registerPipeline } from './jobs/pipeline.js';
+import { GitHubManager } from './github/manager.js';
+import { ReleaseManager } from './release/manager.js';
+import { BuildRunner } from './docker/runner.js';
+import { Sandbox } from './sandbox/native.js';
+import { registerRoutes } from './api/routes.js';
+import { createApp, listen } from './http.js';
+import { createPreviewHandler } from './preview.js';
+import { gcDocker, reapIdlePreviews } from './docker/cleanup.js';
 
-// Bắt lỗi toàn cục để tránh crash server đột ngột
-process.on('uncaughtException', (err) => {
-  console.error('[CRITICAL] Uncaught Exception:', err);
+const cfg = loadConfig();
+const log = createLogger(cfg.logLevel);
+
+// Failure must not cascade: a single unforeseen bug (e.g. a reference error deep
+// in a raw event-handler callback, outside any request's try/catch) must never
+// take the whole server process down and break every other project/request until
+// a manual restart. Log it and keep serving instead.
+process.on('uncaughtException', (err) => { log.error('Uncaught exception (process kept alive)', { error: err?.message, stack: err?.stack }); });
+process.on('unhandledRejection', (err) => { log.error('Unhandled rejection (process kept alive)', { error: err?.message || String(err) }); });
+
+const db = openDb(cfg.dataDir);
+hydrateSecrets(cfg, db);
+const check = validateConfig(cfg);
+for (const w of check.warnings) log.warn(w);
+
+const snapshots = new SnapshotStore({ cfg, db, log });
+const projects = new ProjectManager({ cfg, db, log, snapshots });
+const jobs = new JobQueue({ db, log });
+const ai = new AIGateway({ cfg, db, log });
+const github = new GitHubManager({ cfg, log });
+const releases = new ReleaseManager({ cfg, db, log });
+const runner = new BuildRunner({ cfg, log });
+const sandbox = new Sandbox({ runner });
+
+const ctx = { cfg, db, log, ai, projects, snapshots, jobs, github, releases, runner, sandbox };
+registerPipeline(ctx);
+const resumed = jobs.resumeInterrupted();
+if (resumed) log.warn('Marked interrupted jobs as failed', { count: resumed });
+
+gcDocker({ cfg, log }).catch((err) => log.warn('startup preview cleanup skipped', { error: String(err.message || err) }));
+const idleMs = Number(process.env.PREVIEW_IDLE_MS || 15 * 60 * 1000);
+setInterval(() => {
+  reapIdlePreviews({ projects, runner, idleMs, log }).catch((err) => log.warn('idle preview cleanup skipped', { error: String(err.message || err) }));
+}, 60 * 1000).unref();
+
+const app = createApp();
+registerRoutes(app, ctx);
+
+const publicDir = path.resolve(path.dirname(new URL(import.meta.url).pathname), '../public');
+const server = listen(app, {
+  port: cfg.port,
+  bind: cfg.bind,
+  publicDir,
+  log,
+  preview: createPreviewHandler({ projects }),
+});
+log.info('Listening', {
+  version: cfg.version,
+  port: cfg.port,
+  engine: 'native-preview',
+  ai: cfg.ai.provider,
+  open: `http://127.0.0.1:${cfg.port}/`,
 });
 
-process.on('unhandledRejection', (reason, promise) => {
-  console.error('[CRITICAL] Unhandled Rejection at:', promise, 'reason:', reason);
-});
-
-const app = express();
-const PORT = process.env.PORT || 8080;
-
-app.use(cors());
-app.use(express.json());
-app.use(express.static(path.join(__dirname, 'public')));
-
-// Hàm nhận diện ngôn ngữ đơn giản & phản hồi tin nhắn AI
-function generateAIResponse(message) {
-  const text = message.toLowerCase();
-  
-  // Phát hiện ngôn ngữ tiếng Việt
-  const isVietnamese = /[àáạảãâầấậẩẫăằắặẳẵèéẹẻẽêềếệểễìíịỉĩòóọỏõôồốộổỗơờớợởỡùúụủũưừứựửữỳýỵỷỹđ]/i.test(text) || 
-                       text.includes('xin chào') || text.includes('tạo app') || text.includes('pi');
-
-  if (isVietnamese) {
-    if (text.includes('node') || text.includes('solohost')) {
-      return "⚡ **Pi SoloHost Assistant**: Để cấu hình Node SoloHost, bạn chỉ cần chọn tên App, bật SSL và nhấn 'Tạo App'. Hệ thống sẽ tự động tối ưu hóa container cho Pi Network!";
-    }
-    return "⚡ **Pi SoloHost Assistant**: Chào mừng bạn! Tôi có thể giúp gì cho bạn trong việc tạo App cho Pi SoloHost hôm nay?";
-  } 
-  
-  // Mặc định phản hồi Tiếng Anh tinh gọn
-  if (text.includes('node') || text.includes('build') || text.includes('app')) {
-    return "⚡ **Pi SoloHost Assistant**: To build your Pi SoloHost app, just enter your App Name, enable SSL, and click 'Build App'. Optimization is handled automatically!";
-  }
-  return "⚡ **Pi SoloHost Assistant**: Welcome! How can I help you build your Pi SoloHost application today?";
+function shutdown(signal) {
+  log.info('Shutting down', { signal });
+  server.close(() => {
+    db.close();
+    process.exit(0);
+  });
+  setTimeout(() => process.exit(1), 8000).unref();
 }
 
-// API Chat AI hỗ trợ đa ngôn ngữ
-app.post('/api/chat', (req, res) => {
-  try {
-    const { message } = req.body;
-    if (!message) {
-      return res.status(400).json({ error: 'Message is required' });
-    }
-    const reply = generateAIResponse(message);
-    res.json({ reply });
-  } catch (error) {
-    console.error('Chat API Error:', error);
-    res.status(500).json({ error: 'Internal Server Error' });
-  }
-});
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGINT', () => shutdown('SIGINT'));
 
-// API Tạo App SoloHost
-app.post('/api/build', (req, res) => {
-  try {
-    const { appName, domain, enableSSL } = req.body;
-    if (!appName) {
-      return res.status(400).json({ success: false, message: 'App Name is required' });
-    }
-
-    const appConfig = {
-      name: appName,
-      domain: domain || `${appName.toLowerCase().replace(/\s+/g, '-')}.pisolohost.net`,
-      ssl: !!enableSSL,
-      piSdkStatus: 'Ready',
-      dockerCompose: `version: '3.8'\nservices:\n  ${appName.toLowerCase()}:\n    image: node:18-alpine\n    ports:\n      - "8080:8080"\n    restart: always`
-    };
-
-    res.json({
-      success: true,
-      message: 'App SoloHost configured successfully!',
-      config: appConfig
-    });
-  } catch (error) {
-    console.error('Build API Error:', error);
-    res.status(500).json({ success: false, message: 'Failed to build app configuration' });
-  }
-});
-
-// Serve Single Page Application
-app.get('*', (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'index.html'));
-});
-
-// Khởi chạy server trên cổng 8080 và Bind 0.0.0.0
-app.listen(PORT, '0.0.0.0', () => {
-  console.log(`=================================`);
-  console.log(`🚀 Pi SoloHost App Builder Running`);
-  console.log(`🌐 Address: http://0.0.0.0:${PORT}`);
-  console.log(`=================================`);
-});
+function hydrateSecrets(cfg, db) {
+  const saved = db.setting('runtimeSecrets', null);
+  if (!saved || typeof saved !== 'object') return;
+  if (saved.AI_PROVIDER) { process.env.AI_PROVIDER = saved.AI_PROVIDER; cfg.ai.provider = saved.AI_PROVIDER; }
+  if (saved.AI_MODE) { process.env.AI_MODE = saved.AI_MODE; cfg.ai.mode = saved.AI_MODE === 'council' ? 'council' : 'single'; }
+  if (saved.GEMINI_API_KEY) { process.env.GEMINI_API_KEY = saved.GEMINI_API_KEY; cfg.ai.geminiKey = saved.GEMINI_API_KEY; }
+  if (saved.GEMINI_MODEL) { process.env.GEMINI_MODEL = saved.GEMINI_MODEL; cfg.ai.geminiModel = saved.GEMINI_MODEL; }
+  if (saved.DEEPSEEK_API_KEY) { process.env.DEEPSEEK_API_KEY = saved.DEEPSEEK_API_KEY; cfg.ai.deepseekKey = saved.DEEPSEEK_API_KEY; }
+  if (saved.DEEPSEEK_MODEL) { process.env.DEEPSEEK_MODEL = saved.DEEPSEEK_MODEL; cfg.ai.deepseekModel = saved.DEEPSEEK_MODEL; }
+  if (saved.GITHUB_TOKEN) { process.env.GITHUB_TOKEN = saved.GITHUB_TOKEN; cfg.github.token = saved.GITHUB_TOKEN; }
+  if (saved.GITHUB_OWNER) { process.env.GITHUB_OWNER = saved.GITHUB_OWNER; cfg.github.owner = saved.GITHUB_OWNER; }
+}

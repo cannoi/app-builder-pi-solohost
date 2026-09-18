@@ -1,136 +1,94 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Pi SoloHost App Builder</title>
-  <script src="https://cdn.tailwindcss.com"></script>
-  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-</head>
-<body class="bg-slate-900 text-slate-100 font-sans min-h-screen flex flex-col">
-
-  <!-- Header -->
-  <header class="border-b border-slate-800 bg-slate-950/50 backdrop-blur px-6 py-4 flex justify-between items-center">
-    <div class="flex items-center gap-3">
-      <div class="w-10 h-10 rounded-xl bg-purple-600 flex items-center justify-center text-xl font-bold shadow-lg shadow-purple-500/30">
-        <i class="fa-solid fa-cubes"></i>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>App Builder — Pi SoloHost</title>
+  <meta name="theme-color" content="#0e1116">
+  <link rel="stylesheet" href="/styles.css?v=1.3.6">
+<style>.paf-made-by{position:fixed;right:8px;bottom:8px;width:min(72px,12vw);max-width:12vw;height:auto;object-fit:contain;opacity:.5;background:transparent;padding:0;border:0;box-shadow:none;filter:none;pointer-events:none;z-index:30}</style></head>
+<body>
+  <div id="app">
+    <header class="hero">
+      <img src="/banner.png" alt="App Builder — Pi SoloHost">
+    </header>
+    <header class="top">
+      <div class="brand"><img class="logoMark" src="/app-logo.jpg" alt="App Builder logo"><div><h1>App Builder</h1><p>Pi SoloHost · idea in, app out</p></div></div>
+      <div class="topRight">
+        <span id="workPill" class="pill ready">Ready</span>
+        <button id="liveBtn" class="pill live" hidden type="button" title="Stop the test app and delete its container">Live · Stop</button>
+        <select id="aiSelect" aria-label="AI model">
+          <option value="deepseek">DeepSeek</option>
+          <option value="gemini">Gemini</option>
+          <option value="council">Council</option>
+        </select>
+        <select id="projectSelect" aria-label="Project"><option value="">New app</option></select>
+        <button id="settingsBtn" class="iconBtn" title="Settings">⚙</button>
       </div>
-      <div>
-        <h1 class="font-bold text-lg leading-tight">Pi SoloHost Builder</h1>
-        <p class="text-xs text-slate-400">Streamlined AI App Generator</p>
+    </header>
+
+    <main class="chatShell">
+      <section id="chat" class="chat" aria-live="polite"></section>
+      <button id="jumpDown" class="jump" hidden title="Jump to new messages">↓</button>
+      <div id="busyBar" class="busy" hidden><span class="spinner"></span><span id="busyText">Working…</span></div>
+
+      <section class="composer">
+        <div class="quickGroups">
+          <div class="group"><span class="groupLabel">Build</span><button data-action="build">✨ Build</button><button data-action="run">▶ Run</button></div>
+          <div class="group"><span class="groupLabel">Refine</span><button data-action="improve">✦ Improve</button><button data-action="analyze">🔎 Check</button></div>
+          <div class="group"><span class="groupLabel">Ship</span><button data-action="publish">🚀 Publish</button><button data-action="export">⬇ Zip</button><button type="button" id="importZipBtn" data-action="import">⬆ Zip</button></div>
+        <input id="importZipInput" type="file" accept=".zip,application/zip" hidden>
+          <div class="group"><span class="groupLabel">Help</span><button type="button" id="supportBtn" data-action="support">💛 Support</button></div>
+        </div>
+        <div class="inputRow">
+          <button id="attachBtn" class="attach" title="Attach files">📎</button>
+          <input id="fileInput" type="file" multiple hidden accept=".zip,.pdf,.txt,.md,.json,.yaml,.yml,.js,.ts,.jsx,.tsx,.html,.css,.py,.go,.rs,.java,.php,.sql,.csv,.png,.jpg,.jpeg,.gif,.webp">
+          <textarea id="message" rows="2" placeholder="Tell me the app you want. I will lead the rest."></textarea>
+          <button id="sendBtn" class="send">➤</button>
+        </div>
+        <div id="attachments" class="attachments"></div>
+        <p class="hint">1 Idea → 2 Run → 3 Publish. I keep the next step visible.</p>
+      </section>
+    </main>
+  </div>
+
+  <div id="supportModal" class="modal" hidden>
+    <div class="sheet">
+      <div class="sheetHead"><h2>💛 Support this project</h2><button id="closeSupport" class="iconBtn" type="button">✕</button></div>
+      <p class="info">Thank you for supporting App Builder — Pi SoloHost. Your gift keeps the tool free for Pioneers.</p>
+      <div class="supportTabs">
+        <button type="button" class="supportTab on" data-support="pi">Pi Wallet</button>
+        <button type="button" class="supportTab" data-support="mb">MB Bank</button>
+      </div>
+      <div id="supportPi" class="supportPane">
+        <img src="/support-pi-qr.jpg" alt="Pi Wallet QR" class="supportQr">
+        <p class="muted">Pi Wallet address</p>
+        <p class="mono" id="piAddr">GAQAZ5XLWREKQYMMN247A44PNPLAKRORZOPZNVG3CDPCSSFMEVFIYJJL</p>
+        <button type="button" class="primary wide" data-copy="GAQAZ5XLWREKQYMMN247A44PNPLAKRORZOPZNVG3CDPCSSFMEVFIYJJL">Copy address</button>
+      </div>
+      <div id="supportMb" class="supportPane" hidden>
+        <img src="https://img.vietqr.io/image/MB-0905428801-compact2.png" alt="MB Bank VietQR" class="supportQr">
+        <p class="muted">MB Bank · 0905428801</p>
+        <p class="mono" id="mbAddr">0905428801</p>
+        <button type="button" class="primary wide" data-copy="0905428801">Copy account</button>
       </div>
     </div>
-    <span class="text-xs bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 px-3 py-1 rounded-full flex items-center gap-1.5">
-      <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span> Engine Active
-    </span>
-  </header>
+  </div>
 
-  <!-- Main Content -->
-  <main class="flex-1 max-w-6xl w-full mx-auto p-4 md:p-6 grid grid-cols-1 lg:grid-cols-12 gap-6">
-    
-    <!-- Left Panel: Builder Form -->
-    <section class="lg:col-span-7 bg-slate-800/50 border border-slate-700/50 rounded-2xl p-6 flex flex-col gap-5">
-      <h2 class="text-lg font-semibold flex items-center gap-2 text-purple-400">
-        <i class="fa-solid fa-wand-magic-sparkles"></i> App Configuration
-      </h2>
+  <div id="settings" class="modal" hidden>
+    <div class="sheet">
+      <div class="sheetHead"><h2>Settings</h2><button id="closeSettings" class="iconBtn">✕</button></div>
+      <label>AI provider<select id="setProvider"><option value="deepseek">DeepSeek</option><option value="gemini">Google Gemini</option><option value="council">Council (both)</option></select></label>
+      <label>DeepSeek API key<input id="setDeepseek" type="password" autocomplete="off" placeholder="Paste key"></label>
+      <label>Gemini API key<input id="setGemini" type="password" autocomplete="off" placeholder="Needed for Council"></label>
+      <label>GitHub token <span class="muted">optional</span><input id="setGhToken" type="password" autocomplete="off" placeholder="Personal access token (classic)"><span class="small">Use classic token: <b>repo</b> + <b>workflow</b> + <b>write:packages</b>. Create: github.com/settings/tokens/new</span></label>
+      <label>GitHub owner <span class="muted">optional</span><input id="setGhOwner" type="text" placeholder="username or org"></label><div class="info">If GitHub Actions says permission is read-only: Repository → Settings → Actions → General → Workflow permissions → <b>Read and write permissions</b> → Save.</div>
+      <div class="info">Council: one model writes, the other reviews. Trust scores prefer the model that finishes with fewer errors. No host Docker access is required.</div>
+      <button id="saveSettings" class="primary wide">Save</button>
+      <p id="settingsState" class="muted"></p>
+    </div>
+  </div>
 
-      <form id="buildForm" class="space-y-4">
-        <div>
-          <label class="block text-xs font-medium text-slate-400 mb-1">App Name</label>
-          <input type="text" id="appName" placeholder="e.g. My Pi Store" required
-                 class="w-full bg-slate-900 border border-slate-700 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-purple-500 text-white">
-        </div>
-
-        <div>
-          <label class="block text-xs font-medium text-slate-400 mb-1">Domain (Optional)</label>
-          <input type="text" id="domain" placeholder="mystore.pisolohost.net"
-                 class="w-full bg-slate-900 border border-slate-700 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-purple-500 text-white">
-        </div>
-
-        <div class="flex items-center gap-2 pt-1">
-          <input type="checkbox" id="enableSSL" checked class="w-4 h-4 accent-purple-600 rounded">
-          <label for="enableSSL" class="text-sm text-slate-300">Enable SSL (HTTPS)</label>
-        </div>
-
-        <button type="submit" class="w-full bg-purple-600 hover:bg-purple-500 text-white font-medium py-3 rounded-xl shadow-lg shadow-purple-600/20 transition flex items-center justify-center gap-2">
-          <i class="fa-solid fa-rocket"></i> Build SoloHost App
-        </button>
-      </form>
-
-      <div id="buildResult" class="hidden mt-4 p-4 bg-slate-900/80 border border-slate-700 rounded-xl">
-        <h3 class="text-xs font-semibold text-emerald-400 mb-2 flex items-center gap-1.5">
-          <i class="fa-solid fa-circle-check"></i> Configuration Generated
-        </h3>
-        <pre id="configOutput" class="text-xs text-slate-300 font-mono overflow-x-auto p-2 bg-slate-950 rounded"></pre>
-      </div>
-    </section>
-
-    <!-- Right Panel: AI Chat Assistant -->
-    <section class="lg:col-span-5 bg-slate-800/50 border border-slate-700/50 rounded-2xl flex flex-col h-[500px]">
-      <div class="p-4 border-b border-slate-700/50 flex items-center gap-2">
-        <i class="fa-solid fa-robot text-purple-400"></i>
-        <h2 class="text-sm font-semibold">AI Assistant (Multi-language)</h2>
-      </div>
-
-      <div id="chatBox" class="flex-1 p-4 overflow-y-auto space-y-3 text-xs">
-        <div class="bg-slate-900 p-3 rounded-xl text-slate-300 border border-slate-700/50">
-          👋 Hello! I am your AI Builder assistant. Ask me anything in any language!
-        </div>
-      </div>
-
-      <form id="chatForm" class="p-3 border-t border-slate-700/50 flex gap-2">
-        <input type="text" id="chatInput" placeholder="Ask something..." required
-               class="flex-1 bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs focus:outline-none focus:border-purple-500 text-white">
-        <button type="submit" class="bg-purple-600 hover:bg-purple-500 px-4 py-2 rounded-xl text-xs font-medium transition">
-          <i class="fa-solid fa-paper-plane"></i>
-        </button>
-      </form>
-    </section>
-
-  </main>
-
-  <script>
-    // Build App Handler
-    document.getElementById('buildForm').addEventListener('submit', async (e) => {
-      e.preventDefault();
-      const appName = document.getElementById('appName').value;
-      const domain = document.getElementById('domain').value;
-      const enableSSL = document.getElementById('enableSSL').checked;
-
-      const res = await fetch('/api/build', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ appName, domain, enableSSL })
-      });
-      const data = await res.json();
-      
-      if(data.success) {
-        document.getElementById('buildResult').classList.remove('hidden');
-        document.getElementById('configOutput').textContent = JSON.stringify(data.config, null, 2);
-      }
-    });
-
-    // Chat Handler
-    document.getElementById('chatForm').addEventListener('submit', async (e) => {
-      e.preventDefault();
-      const input = document.getElementById('chatInput');
-      const chatBox = document.getElementById('chatBox');
-      const msg = input.value;
-      input.value = '';
-
-      chatBox.innerHTML += `<div class="bg-purple-600/20 text-purple-200 border border-purple-500/30 p-2.5 rounded-xl ml-6">${msg}</div>`;
-      chatBox.scrollTop = chatBox.scrollHeight;
-
-      const res = await fetch('/api/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: msg })
-      });
-      const data = await res.json();
-
-      chatBox.innerHTML += `<div class="bg-slate-900 p-2.5 rounded-xl text-slate-300 border border-slate-700/50 mr-6">${data.reply}</div>`;
-      chatBox.scrollTop = chatBox.scrollHeight;
-    });
-  </script>
-</body>
+  <script src="/app.js?v=1.3.6"></script>
+<img class="paf-made-by" src="/made-by.png" alt="Made with App Builder — Pi SoloHost"></body>
 </html>
