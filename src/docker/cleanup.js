@@ -9,7 +9,7 @@ export async function reapIdlePreviews({ projects, runner, idleMs = 15 * 60 * 10
   const now = Date.now();
   for (const project of projects.list()) {
     const runtime = await projects.readMetadata(project, 'runtime.json', {}).catch(() => ({}));
-    if (!['native-preview', 'podman-sandbox'].includes(runtime.runtime) || runtime.status !== 'passed') continue;
+    if (runtime.runtime !== 'native-preview' || runtime.status !== 'passed') continue;
     const seen = Date.parse(runtime.lastSeenAt || runtime.updatedAt || 0);
     if (!seen || now - seen < idleMs) continue;
     await runner.stopApp({ projectSlug: project.slug }).catch((err) => log?.warn?.('idle preview stop failed', { error: String(err.message || err) }));

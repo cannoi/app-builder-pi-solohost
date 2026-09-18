@@ -67,3 +67,18 @@ test('native preview serves index.html and /health without Docker', async () => 
   assert.match(await page.text(), /Calculator/);
   await preview.stop({ projectSlug: 'calc-preview' });
 });
+
+test('native preview still serves UI when package.json has a start script', async () => {
+  const { NativePreview } = await import('../src/runtime/native-preview.js');
+  const root = fs.mkdtempSync('/tmp/paf-native-express-');
+  fs.mkdirSync(`${root}/public`);
+  fs.writeFileSync(`${root}/public/index.html`, '<html><body>Snake</body></html>');
+  fs.writeFileSync(`${root}/package.json`, JSON.stringify({ name: 'snake', scripts: { start: 'node server.js' }, main: 'server.js' }));
+  fs.writeFileSync(`${root}/server.js`, 'process.exit(1)');
+  const preview = new NativePreview({ cfg: {}, log: { warn() {} } });
+  const result = await preview.run({ sourcePath: root, projectSlug: 'snake-preview', timeout: 10, keepRunning: true });
+  assert.equal(result.status, 'passed');
+  const page = await fetch(`http://127.0.0.1:${result.hostPort}/`);
+  assert.match(await page.text(), /Snake/);
+  await preview.stop({ projectSlug: 'snake-preview' });
+});

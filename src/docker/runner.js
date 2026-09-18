@@ -104,41 +104,32 @@ export class BuildRunner {
       const created = await this.podman.createPreviewContainer({ image, name: containerName });
       containerId = created.Id || created.id;
       if (!containerId) throw new Error('Container Sandbox did not return a preview container ID.');
-      this.podmanContainers.set(safeSlug, { id: containerId, image, name: containerName, proxyHost: null, proxyPort: null });
+      this.podmanContainers.set(safeSlug, { id: containerId, image, name: containerName });
       await this.podman.startContainer(containerId);
 
       const deadline = Date.now() + Math.min(Number(timeout || 180), 600) * 1000;
       let port = null;
-      let proxyTarget = null;
       let lastError = 'Waiting for the sandbox preview to start.';
       while (Date.now() < deadline) {
         const info = await this.podman.inspectContainer(containerId).catch(() => null);
         port = hostPort(info);
-        const candidates = previewTargets(info, port, this.podman.baseUrl);
-        for (const candidate of candidates) {
-          const probe = await probeHttp(candidate.host, candidate.port, '/health');
-          if (probe.ok) { proxyTarget = candidate; break; }
-          const rootProbe = await probeHttp(candidate.host, candidate.port, '/');
-          if (rootProbe.ok) { proxyTarget = candidate; break; }
-          if (probe.error) lastError = probe.error;
-        }
-        if (proxyTarget) break;
-        if (info?.State?.Running === false && info?.State?.ExitCode != null) {
-          lastError = `Preview container exited with code ${info.State.ExitCode}.`;
-          break;
+        if (port) {
+          try {
+            const r = await fetch(`http://127.0.0.1:${port}/health`, { signal: AbortSignal.timeout(3000) });
+            if (r.ok || r.status < 500) break;
+            lastError = `Health returned HTTP ${r.status}.`;
+          } catch (err) { lastError = String(err?.message || err); }
         }
         await sleep(800);
       }
-      if (!proxyTarget) {
+      if (!port) {
         const logs = await this.podman.containerLogs(containerId).catch(() => '');
-        const result = { status: 'failed', runtime: 'podman-sandbox', image, container: containerName, containerId, hostPort: port, health: false, logs: clip(logs), error: `${lastError} ${clip(logs, 1800)}`.trim() };
+        const result = { status: 'failed', runtime: 'podman-sandbox', image, container: containerName, containerId, hostPort: null, health: false, logs: clip(logs), error: `${lastError} ${clip(logs, 1800)}`.trim() };
         await this.stopApp({ projectSlug: safeSlug, removeImage: false }).catch(() => {});
         return result;
       }
 
-      const localUrl = `http://${proxyTarget.host}:${proxyTarget.port}`;
-      const tracked = this.podmanContainers.get(safeSlug);
-      if (tracked) { tracked.proxyHost = proxyTarget.host; tracked.proxyPort = proxyTarget.port; tracked.port = port; }
+      const localUrl = `http://127.0.0.1:${port}`;
       const artifactDir = path.join(path.dirname(sourcePath), 'artifacts');
       await fs.mkdir(artifactDir, { recursive: true });
       const e2e = await runSandboxE2E({
@@ -164,7 +155,7 @@ export class BuildRunner {
       if (!keepRunning) this.podmanContainers.delete(safeSlug);
       return {
         status: 'passed', runtime: 'podman-sandbox', engine: 'podman-api', image, container: containerName, containerId,
-        containerIp: proxyTarget.host, hostPort: port, proxyHost: proxyTarget.host, proxyPort: proxyTarget.port, url: localUrl, previewPath: `/preview/${safeSlug}/`, duration: Math.round((Date.now() - started) / 1000), health: true,
+        containerIp: null, hostPort: port, url: localUrl, previewPath: `/preview/${safeSlug}/`, duration: Math.round((Date.now() - started) / 1000), health: true,
         logs: clip(logs), e2e, keptRunning: Boolean(keepRunning), sandbox: { memoryMb: 512, cpus: 1, hostBind: '127.0.0.1' },
       };
     } catch (err) {
@@ -201,9 +192,7 @@ export class BuildRunner {
       const info = await this.podman.inspectContainer(item.id).catch(() => null);
       if (!info) { this.podmanContainers.delete(safeSlug); return { status: 'stopped', runtime: 'podman-sandbox', hostPort: null, url: null }; }
       const port = hostPort(info) || item.port || null;
-      const host = item.proxyHost || null;
-      const pport = item.proxyPort || port || null;
-      return { status: info.State?.Running ? 'running' : 'stopped', runtime: 'podman-sandbox', container: item.name, containerId: item.id, hostPort: port, containerIp: host, proxyHost: host, proxyPort: pport, url: host && pport ? `http://${host}:${pport}` : null, previewPath: `/preview/${safeSlug}/` };
+      return { status: info.State?.Running ? 'running' : 'stopped', runtime: 'podman-sandbox', container: item.name, containerId: item.id, hostPort: port, containerIp: null, url: port ? `http://127.0.0.1:${port}` : null, previewPath: `/preview/${safeSlug}/` };
     }
     if (this.podman) return { status: 'stopped', runtime: 'podman-sandbox', hostPort: null, url: null };
     return this.native.status({ projectSlug: safeSlug });
@@ -256,33 +245,6 @@ export class BuildRunner {
     try { const info = await this.podman.imageInfo(image); return { ok: Boolean(info), id: info?.Id || info?.Id || null }; }
     catch (err) { return { ok: false, error: clip(String(err?.message || err)) }; }
   }
-}
-
-async function probeHttp(host, port, pathname = '/') {
-  try {
-    const r = await fetch(`http://${host}:${port}${pathname}`, { signal: AbortSignal.timeout(1200), redirect: 'manual' });
-    return { ok: r.status < 500 };
-  } catch (err) {
-    return { ok: false, error: `${host}:${port} is unreachable (${String(err?.message || err).slice(0, 160)})` };
-  }
-}
-
-function previewTargets(info, port, apiBase) {
-  const out = [];
-  const seen = new Set();
-  const add = (host, p) => {
-    if (!host || !p) return;
-    const key = `${host}:${p}`;
-    if (seen.has(key)) return;
-    seen.add(key); out.push({ host, port: Number(p) });
-  };
-  const ips = info?.NetworkSettings?.Networks ? Object.values(info.NetworkSettings.Networks).map((n) => n?.IPAddress).filter(Boolean) : [];
-  for (const ip of ips) add(ip, 8080);
-  if (port) add('host.containers.internal', port);
-  if (port) add('host.docker.internal', port);
-  if (port) add('127.0.0.1', port);
-  try { add(new URL(apiBase).hostname, port); } catch {}
-  return out;
 }
 
 function hostPort(info) {

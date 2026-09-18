@@ -295,10 +295,8 @@ function addLink(label, href, text) {
   const a = document.createElement('a');
   a.href = absolute; a.rel = 'noopener'; a.textContent = text || absolute; a.style.color = '#8b7cff'; a.style.fontWeight = '700';
   a.addEventListener('click', (e) => {
-    // Same-tab is the reliable path in Pi Desktop WebViews. The preview page
-    // itself has a project-aware Back link, so browser history cannot land on New App.
-    e.preventDefault();
-    window.location.assign(absolute);
+    const win = window.open(absolute, '_blank');
+    if (win) e.preventDefault();
   });
   el.appendChild(a);
   $('chat').appendChild(el); $('chat').scrollTop = $('chat').scrollHeight;

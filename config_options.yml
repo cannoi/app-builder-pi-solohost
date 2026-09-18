@@ -1,44 +1,63 @@
 title: "App Builder — Pi SoloHost"
 eyebrow: SoloHost App
 description: "Build, test, repair, and publish simple SoloHost apps with AI."
-footer_hint: "Only enter the important AI and GitHub details you need. Secrets are password fields."
+footer_hint: "API keys and GitHub access are optional until you use those features."
 output_file: .env
-after_save: "Settings saved. Start the app if a provider or GitHub setting does not update immediately."
-fixed_values:
-  PREVIEW_MODE: auto
-  PODMAN_API_URL: ""
+after_save: "Saved. Restart the app if a provider or GitHub setting does not update immediately."
 fields:
   - name: AI_PROVIDER
     label: AI provider
     type: select
-    default: gemini
+    default: deepseek
     options:
-      - value: gemini
-        label: Gemini
       - value: deepseek
         label: DeepSeek
-    help: "Choose the AI service used by the Builder."
-
-  - name: GEMINI_API_KEY
-    label: Gemini API key
-    type: password
-    preserve_if_blank: true
-    help: "Required when Gemini is selected. Model selection is automatic."
-
+      - value: gemini
+        label: Google Gemini
   - name: DEEPSEEK_API_KEY
     label: DeepSeek API key
     type: password
     preserve_if_blank: true
-    help: "Required when DeepSeek is selected."
-
-  - name: GITHUB_OWNER
-    label: GitHub owner
-    type: text
-    preserve_if_blank: true
-    help: "Your GitHub username or organization used for publishing."
-
-  - name: GITHUB_TOKEN
-    label: GitHub token
+    help: "Paste your DeepSeek API key only if you use DeepSeek."
+  - name: GEMINI_API_KEY
+    label: Google Gemini API key
     type: password
     preserve_if_blank: true
-    help: "Required only for GitHub publishing. Keep this token private."
+    help: "Paste your Gemini API key only if you use Gemini."
+  - name: GEMINI_MODEL
+    label: Gemini model ID
+    type: text
+    preserve_if_blank: true
+    help: "Optional. Leave blank to let App Builder select its configured model."
+  - name: DEEPSEEK_MODEL
+    label: DeepSeek model ID
+    type: text
+    default: deepseek-flash
+    preserve_if_blank: true
+    help: "Optional. Leave the default unless your account uses another model."
+  - name: GITHUB_OWNER
+    label: GitHub username or organization
+    type: text
+    help: "Use the GitHub account or organization that will own the app repository."
+  - name: PREVIEW_MODE
+    label: Preview mode
+    type: select
+    default: auto
+    options:
+      - value: auto
+        label: Auto (Sandbox → fallback)
+      - value: container
+        label: Container Sandbox
+      - value: native
+        label: Native Preview
+    help: "Auto is recommended. Container Sandbox is used when a protected Podman API is available."
+  - name: PODMAN_API_URL
+    label: Podman Sandbox API (optional)
+    type: text
+    preserve_if_blank: true
+    help: "Optional advanced setting. Leave blank to use the built-in fallback preview. Do not enter a Docker socket URL."
+  - name: GITHUB_TOKEN
+    label: GitHub Personal access token
+    type: password
+    preserve_if_blank: true
+    help: "For this Builder, use a GitHub Personal access token (classic) with repo, workflow, and write:packages. Create it at https://github.com/settings/tokens/new."

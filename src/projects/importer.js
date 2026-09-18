@@ -7,9 +7,8 @@ import { readZip } from '../utils/zip.js';
 
 const exec = promisify(execFile);
 
-export async function importZipBuffer(buf, destDir, { replace = false } = {}) {
+export async function importZipBuffer(buf, destDir) {
   await ensureDir(destDir);
-  if (replace) await clearImportedSource(destDir);
   try {
     await readZip(buf, destDir);
   } catch {
@@ -68,14 +67,4 @@ async function walkNames(dir, acc = [], prefix = '') {
     } else acc.push(rel);
   }
   return acc;
-}
-
-
-async function clearImportedSource(destDir) {
-  const entries = await fs.readdir(destDir, { withFileTypes: true }).catch(() => []);
-  for (const entry of entries) {
-    // The source directory is the app workspace. Snapshots/artifacts live outside it.
-    // Remove the old source completely so stale files cannot survive an import.
-    await fs.rm(path.join(destDir, entry.name), { recursive: true, force: true });
-  }
 }
