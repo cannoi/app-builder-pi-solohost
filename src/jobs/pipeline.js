@@ -173,9 +173,14 @@ export function registerPipeline(app) {
       emit('run', 'done', '✓ Preview started and browser check passed.');
     } else {
       projects.setStatus(project, 'FAILED');
-      emit('run', 'failed', result.error || 'The app could not start or pass browser testing.');
+      const message = result.error || 'The app could not start or pass browser testing.';
+      emit('run', 'failed', message);
+      // Fix: previously this handler returned normally even when the preview failed,
+      // which made JobQueue mark the job "done" and hid the error + link from the UI.
+      // Throwing here makes JobQueue mark it "failed" so the real error reaches the user.
+      throw new Error(message);
     }
-    return { ...runtime, downloads: [], ui_url: publicUiUrl, next: result.status === 'passed' ? 'Open the test link, improve if needed, then Publish.' : 'Fix the blocking issue, then Run again.' };
+    return { ...runtime, downloads: [], ui_url: publicUiUrl, next: 'Open the test link, improve if needed, then Publish.' };
   });
 
   jobs.on('stop', async (job, { emit }) => {

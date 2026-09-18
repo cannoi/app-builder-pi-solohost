@@ -39,18 +39,33 @@ export class NativePreview {
     await this.stop({ projectSlug: safe }).catch(() => {});
 
     const port = await freePort();
-    const publicDir = await resolvePublicDir(sourcePath);
-    if (!publicDir) {
-      return { status: 'failed', runtime: 'native-preview', health: false, error: 'No UI files were found. Tap Build first so the app has an index page.' };
+    const pkg = await readPackageJson(sourcePath);
+    // Fix: a generated app with its own start command must own the port itself.
+    // The old code always bound a decoy static server to `port` first and then
+    // spawned the real app on the SAME port, so the real app silently failed to
+    // bind (EADDRINUSE) while the decoy answered /health as if nothing were wrong.
+    // Only fall back to the built-in static server for pure static sites that have
+    // no server process of their own.
+    const hasAppProcess = Boolean(pkg?.scripts?.start || pkg?.main);
+
+    let server = null;
+    let publicDir = null;
+    let child = null;
+
+    if (hasAppProcess) {
+      child = await spawnApp(sourcePath, port, pkg).catch(() => null);
+    } else {
+      publicDir = await resolvePublicDir(sourcePath);
+      if (!publicDir) {
+        return { status: 'failed', runtime: 'native-preview', health: false, error: 'No UI files were found. Tap Build first so the app has an index page.' };
+      }
+      server = createStaticServer(publicDir, safe);
+      await new Promise((resolve, reject) => {
+        server.once('error', reject);
+        server.listen(port, '127.0.0.1', resolve);
+      });
     }
 
-    const server = createStaticServer(publicDir, safe);
-    await new Promise((resolve, reject) => {
-      server.once('error', reject);
-      server.listen(port, '127.0.0.1', resolve);
-    });
-
-    const child = await spawnApp(sourcePath, port).catch(() => null);
     const state = { server, child, port, publicDir, startedAt: Date.now(), stdout: '', stderr: '' };
     processes.set(safe, state);
 
@@ -102,7 +117,9 @@ export class NativePreview {
     const state = processes.get(key);
     if (!state) return { status: 'stopped', runtime: 'native-preview', container: null };
     processes.delete(key);
-    await new Promise((resolve) => state.server.close(() => resolve())).catch(() => {});
+    if (state.server) {
+      await new Promise((resolve) => state.server.close(() => resolve())).catch(() => {});
+    }
     if (state.child?.pid) {
       try { process.kill(-state.child.pid, 'SIGTERM'); } catch { try { state.child.kill('SIGTERM'); } catch {} }
     }
@@ -167,8 +184,12 @@ async function resolvePublicDir(sourcePath) {
   return null;
 }
 
-async function spawnApp(sourcePath, port) {
-  const pkg = JSON.parse(await fs.readFile(path.join(sourcePath, 'package.json'), 'utf8').catch(() => 'null'));
+async function readPackageJson(sourcePath) {
+  try { return JSON.parse(await fs.readFile(path.join(sourcePath, 'package.json'), 'utf8')); } catch { return null; }
+}
+
+async function spawnApp(sourcePath, port, pkgIn = null) {
+  const pkg = pkgIn || await readPackageJson(sourcePath);
   if (!pkg?.scripts?.start && !pkg?.main) return null;
   const file = pkg.scripts?.start ? (process.platform === 'win32' ? 'npm.cmd' : 'npm') : 'node';
   const args = pkg.scripts?.start ? ['start'] : [String(pkg.main)];
@@ -210,6 +231,13 @@ async function waitForHttp(port, timeoutSec) {
     } catch (err) {
       last = String(err.message || err);
     }
+    // Fallback: not every generated app implements /health ("when practical" per the
+    // build prompt). If the root path responds at all, treat the app as up rather
+    // than timing out and reporting a false "did not start" error.
+    try {
+      const r2 = await fetch(`http://127.0.0.1:${port}/`, { signal: AbortSignal.timeout(1500) });
+      if (r2.status < 500) return { ok: true };
+    } catch {}
     await sleep(200);
   }
   return { ok: false, error: last };
