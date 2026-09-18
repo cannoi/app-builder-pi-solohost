@@ -37,7 +37,6 @@
           <div class="group"><span class="groupLabel">Build</span><button data-action="build">✨ Build</button><button data-action="run">▶ Run</button></div>
           <div class="group"><span class="groupLabel">Refine</span><button data-action="improve">✦ Improve</button><button data-action="analyze">🔎 Check</button></div>
           <div class="group"><span class="groupLabel">Ship</span><button data-action="publish">🚀 Publish</button><button data-action="export">⬇ Zip</button></div>
-          <div class="group"><span class="groupLabel">Help</span><button type="button" id="supportBtn" data-action="support">💛 Support</button></div>
         </div>
         <div class="inputRow">
           <button id="attachBtn" class="attach" title="Attach files">📎</button>
@@ -49,29 +48,6 @@
         <p class="hint">1 Idea → 2 Run → 3 Publish. I keep the next step visible.</p>
       </section>
     </main>
-  </div>
-
-  <div id="supportModal" class="modal" hidden>
-    <div class="sheet">
-      <div class="sheetHead"><h2>💛 Support this project</h2><button id="closeSupport" class="iconBtn" type="button">✕</button></div>
-      <p class="info">Thank you for supporting App Builder — Pi SoloHost. Your gift keeps the tool free for Pioneers.</p>
-      <div class="supportTabs">
-        <button type="button" class="supportTab on" data-support="pi">Pi Wallet</button>
-        <button type="button" class="supportTab" data-support="mb">MB Bank</button>
-      </div>
-      <div id="supportPi" class="supportPane">
-        <img src="/support-pi-qr.jpg" alt="Pi Wallet QR" class="supportQr">
-        <p class="muted">Pi Wallet address</p>
-        <p class="mono" id="piAddr">GAQAZ5XLWREKQYMMN247A44PNPLAKRORZOPZNVG3CDPCSSFMEVFIYJJL</p>
-        <button type="button" class="primary wide" data-copy="GAQAZ5XLWREKQYMMN247A44PNPLAKRORZOPZNVG3CDPCSSFMEVFIYJJL">Copy address</button>
-      </div>
-      <div id="supportMb" class="supportPane" hidden>
-        <img src="https://img.vietqr.io/image/MB-0905428801-compact2.png" alt="MB Bank VietQR" class="supportQr">
-        <p class="muted">MB Bank · 0905428801</p>
-        <p class="mono" id="mbAddr">0905428801</p>
-        <button type="button" class="primary wide" data-copy="0905428801">Copy account</button>
-      </div>
-    </div>
   </div>
 
   <div id="settings" class="modal" hidden>

@@ -67,8 +67,6 @@ export class PodmanClient {
         PidsLimit: 128,
         SecurityOpt: ['no-new-privileges:true'],
         CapDrop: ['ALL'],
-        NetworkMode: 'bridge',
-        Dns: ['1.1.1.1', '8.8.8.8'],
         PortBindings: { [`${port}/tcp`]: [{ HostIp: '127.0.0.1', HostPort: '' }] },
       },
       ExposedPorts: { [`${port}/tcp`]: {} },

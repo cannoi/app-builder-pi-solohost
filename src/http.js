@@ -65,31 +65,13 @@ export function listen(app, { port, bind, publicDir, log, preview = null }) {
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('X-Frame-Options', 'SAMEORIGIN');
     res.setHeader('Referrer-Policy', 'no-referrer');
-    try {
-      const url = new URL(req.url, 'http://localhost');
-      if (preview && url.pathname.startsWith('/preview/')) {
-        await preview(req, res, url);
-        return;
-      }
-      if (req.method === 'GET' && serveUi(resolvedPublic, url.pathname, res)) return;
-      await app.handle(req, res);
-    } catch (err) {
-      // Root-cause fix for the ERR_EMPTY_RESPONSE / white-screen preview bug:
-      // this top-level handler previously had no catch, so any error thrown or
-      // rejected while proxying a preview (a race on project/runtime metadata,
-      // an upstream connection edge case, etc.) crashed the request with zero
-      // bytes ever sent — the browser reports that as ERR_EMPTY_RESPONSE, i.e.
-      // a white screen with no way back. Every request now always gets a real
-      // HTTP response, and the preview case gets a page with a way back to Builder.
-      log?.error?.('Unhandled request error', { path: req.url, error: err?.message });
-      if (!res.headersSent) {
-        const isPreview = req.url?.startsWith('/preview/');
-        res.writeHead(502, { 'Content-Type': isPreview ? 'text/html; charset=utf-8' : 'application/json; charset=utf-8' });
-        res.end(isPreview ? previewErrorPage() : JSON.stringify({ error: 'Something went wrong. Try again.' }));
-      } else {
-        try { res.end(); } catch {}
-      }
+    const url = new URL(req.url, 'http://localhost');
+    if (preview && url.pathname.startsWith('/preview/')) {
+      await preview(req, res, url);
+      return;
     }
+    if (req.method === 'GET' && serveUi(resolvedPublic, url.pathname, res)) return;
+    await app.handle(req, res);
   });
   server.listen(port, bind, () => {
     log?.info?.('Pi App Factory ready', {
@@ -100,14 +82,6 @@ export function listen(app, { port, bind, publicDir, log, preview = null }) {
     });
   });
   return server;
-}
-
-function previewErrorPage() {
-  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Preview error</title>
-<style>body{font-family:system-ui;background:#0e1116;color:#e8eef6;margin:0;padding:32px}a{color:#8b7cff}</style>
-</head><body><h1>Preview error</h1><p>The preview could not load. Go back to chat and tap ▶ Run again.</p><p><a href="/">← Back to App Builder</a></p>
-<script>setTimeout(function(){ try { if (window.top === window.self) window.location.href = '/'; } catch (e) {} }, 4000);</script>
-</body></html>`;
 }
 
 function resolvePublicDir(publicDir) {
