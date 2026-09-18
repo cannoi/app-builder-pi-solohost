@@ -1,0 +1,36 @@
+services:
+  app-factory:
+    build: .
+    image: pi-app-factory:1.4.8
+    container_name: pi-app-factory
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATA_DIR: /app/data
+      WORKSPACE_DIR: /app/workspace
+      PROJECTS_DIR: /app/projects
+      DOCKER_MODE: power
+    ports:
+      # Factory UI is reachable on the host; generated SoloHost packages still use loopback bindings.
+      # Use 127.0.0.1:18795:8080 instead if you only want local access.
+      - "18795:8080"
+    user: "0:0"
+    group_add:
+      - "0"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./data:/app/data
+      - ./workspace:/app/workspace
+      - ./projects:/app/projects
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    mem_limit: 1g
+    cpus: "1.0"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8080/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 20s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
