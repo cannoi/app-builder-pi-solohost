@@ -2,9 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { GEMINI_MODEL_CANDIDATES, GeminiProvider } from '../src/ai/providers/gemini.js';
 
-test('Gemini candidate order is lightweight-first and stable', () => {
-  assert.equal(GEMINI_MODEL_CANDIDATES[0], 'gemini-3.1-flash-lite-preview');
-  assert.equal(GEMINI_MODEL_CANDIDATES.at(-1), 'gemini-3-pro-preview');
+test('Gemini candidates prioritize capable models at or above 2.5', () => {
+  assert.equal(GEMINI_MODEL_CANDIDATES[0], 'gemini-3.1-pro-preview');
+  assert.ok(GEMINI_MODEL_CANDIDATES.some((m) => m === 'gemini-2.5-pro'));
 });
 
 test('Gemini discover falls back to any generateContent model', async () => {

@@ -84,7 +84,7 @@ export class NativePreview {
       return {
         status: 'failed', runtime: 'native-preview', hostPort: port, url: `http://127.0.0.1:${port}`,
         duration: Math.round((Date.now() - started) / 1000), health: false,
-        error: health.error || 'The preview server did not start.',
+        error: health.error || 'The preview server did not start. Check the app startup log and port binding.',
       };
     }
 
@@ -111,6 +111,8 @@ export class NativePreview {
       container: null,
       containerIp: null,
       hostPort: port,
+      proxyHost: '127.0.0.1',
+      proxyPort: port,
       url: localUrl,
       duration: Math.round((Date.now() - started) / 1000),
       health: true,

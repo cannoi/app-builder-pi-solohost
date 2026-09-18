@@ -80,6 +80,19 @@ async function loadStatus() {
     if ($('setProvider')) $('setProvider').value = mode;
   } catch {}
 }
+function rememberProject(id) {
+  try {
+    if (id) localStorage.setItem('paf.projectId', id);
+    else localStorage.removeItem('paf.projectId');
+  } catch {}
+}
+function savedProjectId() {
+  try {
+    const q = new URLSearchParams(location.search).get('p');
+    if (q) return q;
+    return localStorage.getItem('paf.projectId');
+  } catch { return null; }
+}
 async function loadProjects() {
   state.projects = await api('/api/projects');
   const select = $('projectSelect');
@@ -87,7 +100,7 @@ async function loadProjects() {
   select.value = state.projectId || '';
 }
 async function openProject(id, announce = true) {
-  state.projectId = id; await loadProjects();
+  state.projectId = id; rememberProject(id); await loadProjects();
   const p = await api(`/api/projects/${id}`);
   $('chat').innerHTML = '';
   if (p.chat?.length) p.chat.forEach((m) => add(m.role === 'user' ? 'user' : m.role === 'assistant' ? 'ai' : 'system', m.message));
@@ -99,6 +112,17 @@ async function sendMessage() {
   if (state.busy) return;
   const message = $('message').value.trim();
   if (!message && !state.files.length) return;
+  if (state.awaitingChoices && state.projectId && message) {
+    $('message').value = '';
+    add('user', message);
+    state.awaitingChoices = false;
+    setBusy(true, 'Saving your custom answers…');
+    try {
+      const r = await api(`/api/projects/${state.projectId}/answer`, { method: 'POST', body: JSON.stringify({ answers: { custom: message, ...state.pendingAnswers } }) });
+      watch(r.jobId);
+    } catch (e) { setBusy(false); add('ai', e.message); }
+    return;
+  }
   const files = state.files.slice(); state.files = []; renderFiles();
   if (message) { add('user', message); $('message').value = ''; }
   setBusy(true, state.projectId ? 'AI is working on your app…' : 'AI is creating your app…');
@@ -113,14 +137,53 @@ async function sendMessage() {
     watch(data.jobId);
   } catch (e) { setBusy(false); add('ai', e.message, { small: 'Nothing was changed.' }); }
 }
+async function downloadZip(projectId, kind) {
+  const url = `/api/projects/${projectId}/download?kind=${encodeURIComponent(kind || 'project')}`;
+  const r = await fetch(url);
+  if (!r.ok) {
+    const data = await r.json().catch(() => ({}));
+    throw new Error(data.error || 'Could not create the ZIP.');
+  }
+  const blob = await r.blob();
+  const name = (r.headers.get('content-disposition') || '').match(/filename="([^"]+)"/)?.[1] || `${kind}.zip`;
+  const href = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = href; a.download = name; document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(href), 2000);
+  add('ai', `ZIP ready: ${name}`);
+}
+function pickImportZip() {
+  const input = $('importZipInput');
+  if (!input) { add('ai', 'Import is not available in this screen.'); return; }
+  input.onchange = async () => {
+    const file = input.files?.[0];
+    input.value = '';
+    if (!file) return;
+    setBusy(true, 'Importing ZIP…');
+    try {
+      const form = new FormData();
+      form.append('file', file);
+      form.append('idea', `Imported ZIP: ${file.name}`);
+      const url = state.projectId ? `/api/projects/${state.projectId}/import` : '/api/projects/import';
+      const r = await fetch(url, { method: 'POST', body: form });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(data.error || 'Import failed.');
+      add('ai', `Importing ${file.name}. I will unpack it and flatten a wrapper folder if needed.`);
+      watch(data.jobId);
+    } catch (e) { setBusy(false); add('ai', e.message); }
+  };
+  input.click();
+}
 async function quick(action) {
   if (state.busy) return;
+  if (action === 'support') return openSupport();
   if (action === 'docker') return inspectDocker();
+  if (action === 'import') return pickImportZip();
   if (action === 'export') {
     if (!state.projectId) { add('ai', 'Create an app first, then tap Zip.'); return; }
     add('ai', 'Preparing a ZIP of your app…');
-    window.open(`/api/projects/${state.projectId}/download?kind=project`, '_blank');
-    window.setTimeout(() => window.open(`/api/projects/${state.projectId}/download?kind=solohost`, '_blank'), 600);
+    try { await downloadZip(state.projectId, 'project'); }
+    catch (e) { add('ai', e.message); }
     return;
   }
   if (!state.projectId) { add('ai', 'Start with your app idea in the chat. I’ll create the project first.'); return; }
@@ -221,20 +284,68 @@ function renderRepoChoices(choices) {
 function addLink(label, href, text) {
   const el = document.createElement('div'); el.className = 'msg ai';
   const p = document.createElement('div'); p.textContent = label; el.appendChild(p);
-  const a = document.createElement('a'); a.href = href; a.target = '_blank'; a.rel = 'noopener'; a.textContent = text || href; a.style.color = '#8b7cff'; a.style.fontWeight = '700';
+  // Fix: many embedded WebViews (including Pi Desktop's) don't support opening a new
+  // tab/window at all — target="_blank" and window.open() silently do nothing when
+  // tapped there. Resolve to an absolute URL (relative "/preview/..." only worked by
+  // accident, and breaks if copied elsewhere) and, on click, try a new tab first;
+  // if the environment blocks/ignores that, fall back to same-tab navigation, which
+  // works everywhere. Desktop-browser users keep normal right-click/long-press.
+  let absolute = href;
+  try { absolute = new URL(href, window.location.origin).href; } catch {}
+  const a = document.createElement('a');
+  a.href = absolute; a.rel = 'noopener'; a.textContent = text || absolute; a.style.color = '#8b7cff'; a.style.fontWeight = '700';
+  a.addEventListener('click', (e) => {
+    // Same-tab is the reliable path in Pi Desktop WebViews. The preview page
+    // itself has a project-aware Back link, so browser history cannot land on New App.
+    e.preventDefault();
+    window.location.assign(absolute);
+  });
   el.appendChild(a);
   $('chat').appendChild(el); $('chat').scrollTop = $('chat').scrollHeight;
 }
 function renderQuestions(questions) {
+  const list = (questions || []).slice(0, 3);
+  if (!list.length) return;
+  state.pendingAnswers = {};
+  state.awaitingChoices = true;
   const box = document.createElement('div'); box.className = 'msg ai';
-  const title = document.createElement('div'); title.textContent = 'A quick choice:'; box.appendChild(title);
-  questions.slice(0,3).forEach((q) => {
-    const qEl = document.createElement('div'); qEl.style.marginTop = '8px'; qEl.textContent = q.question; box.appendChild(qEl);
+  const title = document.createElement('div'); title.textContent = 'Choose every option below, or type your own answers in chat.'; box.appendChild(title);
+  list.forEach((q, i) => {
+    const key = q.id || `q${i}`;
+    const qEl = document.createElement('div'); qEl.style.marginTop = '8px'; qEl.textContent = `${i + 1}. ${q.question}`; box.appendChild(qEl);
     const row = document.createElement('div'); row.className = 'actionCard';
-    (q.options || []).slice(0,4).forEach((option) => { const b=document.createElement('button'); b.textContent=option; b.onclick=()=>{ if(state.busy)return; $('message').value=option; sendMessage(); }; row.appendChild(b); });
+    (q.options || []).slice(0, 4).forEach((option) => {
+      const b = document.createElement('button'); b.textContent = option;
+      b.onclick = () => {
+        if (state.busy) return;
+        state.pendingAnswers[key] = option;
+        row.querySelectorAll('button').forEach((x) => { x.style.outline = ''; });
+        b.style.outline = '2px solid #8b7cff';
+        const left = list.filter((item, idx) => !state.pendingAnswers[item.id || `q${idx}`]).length;
+        hint.textContent = left ? `${left} choice(s) left. Or type a custom answer in chat.` : 'All choices picked. Tap Continue.';
+        go.disabled = left > 0;
+      };
+      row.appendChild(b);
+    });
     box.appendChild(row);
   });
+  const hint = document.createElement('div'); hint.className = 'small'; hint.textContent = 'Pick every choice, or type your own answers and send.'; box.appendChild(hint);
+  const go = document.createElement('button'); go.textContent = 'Continue'; go.disabled = true; go.style.marginTop = '8px';
+  go.onclick = () => submitQuestionAnswers(list);
+  box.appendChild(go);
   $('chat').appendChild(box); $('chat').scrollTop = $('chat').scrollHeight;
+}
+async function submitQuestionAnswers(questions) {
+  if (state.busy) return;
+  if (!state.projectId) { add('ai', 'Create the project first, then answer the choices.'); return; }
+  const answers = { ...(state.pendingAnswers || {}) };
+  questions.forEach((q, i) => { if (!answers[q.id || `q${i}`] && q.question) answers[q.id || `q${i}`] = q.question; });
+  state.awaitingChoices = false;
+  setBusy(true, 'Saving your choices…');
+  try {
+    const r = await api(`/api/projects/${state.projectId}/answer`, { method: 'POST', body: JSON.stringify({ answers }) });
+    watch(r.jobId);
+  } catch (e) { setBusy(false); add('ai', e.message); }
 }
 async function inspectDocker() {
   if (state.busy) return;
@@ -334,10 +445,38 @@ $('closeSettings').onclick = () => $('settings').hidden = true;
 $('saveSettings').onclick = saveSettings;
 if ($('aiSelect')) $('aiSelect').onchange = () => applyAiNow($('aiSelect').value);
 if ($('setProvider')) $('setProvider').onchange = () => applyAiNow($('setProvider').value);
-$('projectSelect').onchange = async () => { if (state.busy) return; state.projectId = $('projectSelect').value || null; if (state.projectId) await openProject(state.projectId); else renderWelcome(); };
+$('projectSelect').onchange = async () => { if (state.busy) return; state.projectId = $('projectSelect').value || null; if (state.projectId) await openProject(state.projectId); else { rememberProject(null); renderWelcome(); } };
 $('jumpDown').onclick = () => { $('chat').scrollTop = $('chat').scrollHeight; $('jumpDown').hidden = true; };
 $('chat').addEventListener('scroll', maybeJump);
 setBusy(false, 'Ready');
 $('chat').addEventListener('click', (e) => { const b = e.target.closest('[data-container]'); if (b) inspectNamedContainer(b.dataset.container); });
 
-Promise.all([loadStatus(), loadProjects(), loadSettings()]).then(() => renderWelcome()).catch(() => renderWelcome());
+function openSupport() {
+  $('supportModal').hidden = false;
+  add('ai', 'Thank you for supporting App Builder — Pi SoloHost. Choose Pi Wallet or MB Bank, copy the details, and send what you can.');
+}
+function bindSupport() {
+  const modal = $('supportModal');
+  if (!modal) return;
+  $('closeSupport').onclick = () => { modal.hidden = true; };
+  modal.querySelectorAll('.supportTab').forEach((tab) => {
+    tab.onclick = () => {
+      modal.querySelectorAll('.supportTab').forEach((x) => x.classList.toggle('on', x === tab));
+      $('supportPi').hidden = tab.dataset.support !== 'pi';
+      $('supportMb').hidden = tab.dataset.support !== 'mb';
+    };
+  });
+  modal.querySelectorAll('[data-copy]').forEach((btn) => {
+    btn.onclick = async () => {
+      try { await navigator.clipboard.writeText(btn.dataset.copy); add('system', 'Copied. Thank you for supporting this project.'); }
+      catch { add('system', btn.dataset.copy); }
+    };
+  });
+}
+bindSupport();
+
+Promise.all([loadStatus(), loadProjects(), loadSettings()]).then(async () => {
+  const id = savedProjectId();
+  if (id && state.projects.some((p) => p.id === id)) await openProject(id, false);
+  else renderWelcome();
+}).catch(() => renderWelcome());

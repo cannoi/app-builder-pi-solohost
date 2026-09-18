@@ -1,9 +1,8 @@
 # Changelog
 
-## 1.4.9
+## 1.4.13
 
-- Run preview is an in-process static server. It no longer depends on npm start or Playwright.
-- Playwright is optional and cannot block a working preview.
-- Publish still requires a passing Run (health + preview link).
-- Factory compose stays without docker.sock.
+- ⬆ Zip imports an app, unpacks it, and flattens a single wrapper folder.
+- ⬇ Zip downloads a real .zip via blob (works in Pi Desktop WebView).
+- runWithRepair is inside the pipeline again so Run is not "runProject is not defined".
 

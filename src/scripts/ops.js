@@ -8,6 +8,16 @@ export function isQuestion(message) {
     && !/\b(build|sửa ngay|fix now|chạy ngay|publish now|xuất bản ngay)\b/i.test(m);
 }
 
+export function splitUserSteps(message) {
+  const text = String(message || '').trim();
+  if (!text) return [];
+  const numbered = text.split(/\n+/).map((l) => l.replace(/^\s*(?:\d+[\.\)]\s+|[-*]\s+)/, '').trim()).filter(Boolean);
+  if (numbered.length >= 2 && numbered.length <= 6) return numbered;
+  const parts = text.split(/\s+(?:then|after that|sau đó|rồi|and then|và sau đó)\s+/i).map((s) => s.trim()).filter(Boolean);
+  if (parts.length >= 2 && parts.length <= 5) return parts;
+  return [text];
+}
+
 export function inferAction(message) {
   const m = String(message || '').toLowerCase();
   if (isQuestion(m)) return 'reply';
@@ -42,7 +52,7 @@ export function classifyLogs(logs = '') {
   if (/eaddrinuse/i.test(t)) return { code: 'port_busy', title: 'Port is already in use.', hint: 'Stop the previous preview and Run again.' };
   if (/syntaxerror|unexpected token/i.test(t)) return { code: 'syntax', title: 'The server file has a syntax error.', hint: 'I will patch the file and Run again.' };
   if (/fetch failed|econnrefused|couldn't connect/i.test(t)) {
-    return { code: 'not_listening', title: 'Nothing is listening yet. The process died before app.listen().', hint: 'Read the container logs, fix the crash, rebuild, then Run.' };
+    return { code: 'preview_connection', title: 'The preview could not connect to the app.', hint: 'Check whether the app process stayed alive, whether it listens on the assigned PORT, and whether the Preview proxy can reach the sandbox. Read the startup log before changing source code.' };
   }
   return null;
 }

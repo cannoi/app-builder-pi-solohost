@@ -9,7 +9,7 @@ import { listFiles } from '../utils/fsx.js';
 import fs from 'node:fs/promises';
 import { saveAttachment, attachmentContext, attachmentList, imageInputsFromAttachments } from '../projects/attachments.js';
 import { writeSoloHostPackage } from '../release/solohost.js';
-import { inferAction, classifyLogs, diagnoseSource, nextStep, guideCard, isHostDockerCommand, isNpmOnEmptyRisk } from '../scripts/ops.js';
+import { inferAction, classifyLogs, diagnoseSource, nextStep, guideCard, isHostDockerCommand, isNpmOnEmptyRisk, splitUserSteps } from '../scripts/ops.js';
 import { stampMadeBy } from '../projects/badge.js';
 import { createProjectZip } from '../projects/exporter.js';
 import { gcDocker } from '../docker/cleanup.js';
@@ -201,14 +201,13 @@ export function registerPipeline(app) {
     emit('ai', 'running', 'AI is turning your feedback into a change…');
     const r = await ai.completeJson({ task: 'DEBUGGING', system: SYSTEM, prompt: improvePrompt(project, feedback, relevant), projectId: project.id });
     if (!r.json?.files?.length) throw new Error('AI did not propose a code change.');
-    await snapshots.create(project, 'before-improve');
     emit('patch', 'running', 'Applying the improvement…');
-    await writeGeneratedFiles(source, r.json.files);
+    await applySafeAiPatch({ sourceDir: source, files: r.json.files, project, snapshots, reason: 'ai-improve' });
     const tested = await testAndMaybeFix(projects.get(project.id), emit);
     if (tested.staticResult?.status === 'passed' && tested.nodeResult?.status !== 'failed') {
       emit('run', 'running', 'Refreshing the safe preview…');
       const runtime = await runner.runApp({ sourcePath: source, projectSlug: project.slug, timeout: cfg.limits.sandboxTimeoutSec, keepRunning: true });
-      await projects.saveMetadata(project, 'runtime.json', { ...runtime, image: null, updatedAt: new Date().toISOString() });
+      await projects.saveMetadata(project, 'runtime.json', { ...runtime, image: runtime.image || null, lastSeenAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
     }
     return { feedback, rootCause: r.json.root_cause || '', explanation: r.json.explanation || '', files: r.json.files.map((f) => f.path), tested };
   });
@@ -423,34 +422,58 @@ export function registerPipeline(app) {
         continue;
       }
     }
-    let payload = { projectId: project.id, action, reply, skipped };
+    let payload = { projectId: project.id, action, reply, skipped, reports: [] };
+    const planned = [];
+    if (Array.isArray(r.json?.steps) && r.json.steps.length > 1) {
+      for (const step of r.json.steps.slice(0, 5)) {
+        planned.push({ action: String(step.action || inferAction(step.goal || '') || action), goal: String(step.goal || message) });
+      }
+    } else {
+      const pieces = splitUserSteps(message);
+      if (pieces.length > 1) planned.push(...pieces.map((goal) => ({ action: inferAction(goal) || action, goal })));
+      else planned.push({ action, goal: String(r.json?.feedback || message) });
+    }
     if (action === 'question' && Array.isArray(r.json.questions) && r.json.questions.length) {
       await projects.saveMetadata(project, 'chat-question.json', { questions: r.json.questions });
       projects.setStatus(project, 'WAITING_INPUT');
       payload.questions = r.json.questions;
-    } else if (action === 'build') {
-      emit('build', 'running', 'Building the app from your conversation…');
-      const analysis = await projects.readMetadata(project, 'requirements.json', {});
-      const plan = await projects.readMetadata(project, 'architecture.json', {});
-      payload.built = await generateCode({ project, analysis, plan, emit, allowFallback: false });
-    } else if (action === 'improve') {
-      emit('improve', 'running', 'Applying a targeted fix…');
-      payload.result = await improveProject(project, String(r.json.feedback || message), emit);
-    } else if (action === 'run') {
-      payload.runtime = await runWithRepair(project, emit, message);
-    } else if (action === 'analyze') {
-      emit('analyze', 'running', 'Checking files, crash logs, and security…');
-      payload.tested = await testAndMaybeFix(project, emit);
-      payload.diagnosis = await diagnoseSource(source);
-      if (runtimeNow.logs) payload.crash = classifyLogs(runtimeNow.logs || runtimeNow.error || '');
-    } else if (action === 'export') {
-      const kind = /install|solohost|config|cài đặt|solo\s*host/i.test(message) ? 'solohost' : 'project';
-      const artifact = await createProjectZip({ sourceDir: projects.sourceDir(project.slug), outputDir: path.join(projects.projectDir(project), 'artifacts'), slug: project.slug, kind });
-      payload.downloads = [{ kind, filename: artifact.filename, url: `/api/projects/${project.id}/download?kind=${kind}` }];
-    } else if (action === 'publish') {
-      emit('release', 'running', 'Publishing the app now…');
-      payload.result = await runRelease(project, { approved: true, confirm: true, push: true, existingAction: 'confirm' }, emit);
-      payload.publish_ready = payload.result?.status === 'released' || payload.result?.status === 'packaged';
+    } else {
+      for (const step of planned) {
+        let stepAction = step.action;
+        const gatedStep = gateAction(stepAction, { files: diagnosis.files, runtime: runtimeNow, githubConfigured: github.configured() });
+        if (gatedStep.lock) stepAction = gatedStep.action;
+        try {
+          if (stepAction === 'build') {
+            emit('build', 'running', `Step: write files — ${step.goal.slice(0, 80)}`);
+            const analysis = await projects.readMetadata(project, 'requirements.json', {});
+            const plan = await projects.readMetadata(project, 'architecture.json', {});
+            payload.built = await generateCode({ project, analysis, plan, emit, allowFallback: false });
+          } else if (stepAction === 'improve') {
+            emit('improve', 'running', `Step: targeted patch — ${step.goal.slice(0, 80)}`);
+            await snapshots.create(project, 'before-step-improve').catch(() => {});
+            payload.result = await improveProject(project, step.goal, emit);
+          } else if (stepAction === 'run') {
+            payload.runtime = await runWithRepair(project, emit, step.goal);
+          } else if (stepAction === 'analyze') {
+            emit('analyze', 'running', 'Checking files, crash logs, and security…');
+            payload.tested = await testAndMaybeFix(project, emit);
+            payload.diagnosis = await diagnoseSource(source);
+            if (runtimeNow.logs) payload.crash = classifyLogs(runtimeNow.logs || runtimeNow.error || '');
+          } else if (stepAction === 'export') {
+            const kind = /install|solohost|config|cài đặt|solo\s*host/i.test(step.goal) ? 'solohost' : 'project';
+            const artifact = await createProjectZip({ sourceDir: projects.sourceDir(project.slug), outputDir: path.join(projects.projectDir(project), 'artifacts'), slug: project.slug, kind });
+            payload.downloads = [{ kind, filename: artifact.filename, url: `/api/projects/${project.id}/download?kind=${kind}` }];
+          } else if (stepAction === 'publish') {
+            emit('release', 'running', 'Publishing the app now…');
+            payload.result = await runRelease(project, { approved: true, confirm: true, push: true, existingAction: 'confirm' }, emit);
+            payload.publish_ready = payload.result?.status === 'released' || payload.result?.status === 'packaged';
+          }
+          payload.reports.push({ action: stepAction, status: 'done', goal: step.goal });
+        } catch (err) {
+          payload.reports.push({ action: stepAction, status: 'failed', goal: step.goal, error: String(err.message || err).slice(0, 240) });
+          emit('improve', 'failed', `Step failed, continuing other safe steps: ${String(err.message || err).slice(0, 160)}`);
+        }
+      }
     }
     const latestRuntime = payload.runtime || payload.result?.runtime || await projects.readMetadata(project, 'runtime.json', {});
     if (action !== 'run') {
@@ -460,7 +483,7 @@ export function registerPipeline(app) {
     }
     payload.guide = guideCard({ runtime: latestRuntime, findings: diagnosis.findings, action, publishReady: payload.publish_ready });
     payload.next = payload.guide.detail;
-    payload.brief = formatUserBrief({ action, runtime: latestRuntime, diagnosis, reply, next: payload.next, language: userLanguage });
+    payload.brief = formatUserBrief({ action, runtime: latestRuntime, diagnosis, reply, next: payload.next, language: userLanguage, reports: payload.reports });
     await gcDocker({ keepImage: latestRuntime.image || null, keepContainer: latestRuntime.status === 'passed' ? latestRuntime.container : null, log }).catch(() => {});
     await projects.chat(project, payload.brief, 'assistant', { action, next: payload.next });
     await projects.saveMetadata(project, 'handoff.json', {
@@ -518,7 +541,7 @@ export function registerPipeline(app) {
       jobs.attachProject(job.id, project.id);
     }
     const dest = projects.sourceDir(project.slug);
-    const stack = await importZipBuffer(buf, dest);
+    const stack = await importZipBuffer(buf, dest, { replace: true });
     await projects.saveMetadata(project, 'requirements.json', { ...(await projects.readMetadata(project, 'requirements.json', {})), stack, imported: true, filename: job.payload.filename });
     await projects.saveMetadata(project, 'user-language.json', { language: detectUserLanguage(job.payload.idea || job.payload.filename || 'Imported app'), source: job.payload.idea || job.payload.filename || 'Imported app' });
     projects.setStatus(project, 'READY_TO_BUILD');
@@ -533,7 +556,7 @@ export function registerPipeline(app) {
     emit('snapshot', 'running', 'Saving a restore point…');
     await snapshots.create(project, 'before-patch');
     emit('patch', 'running', 'Applying the change…');
-    await writeGeneratedFiles(projects.sourceDir(project.slug), files);
+    await applySafeAiPatch({ sourceDir: projects.sourceDir(project.slug), files, project, snapshots, reason: 'apply-patch' });
     await stampMadeBy(projects.sourceDir(project.slug), cfg);
     await writeGithubWorkflow(projects.sourceDir(project.slug), project);
     return testAndMaybeFix(projects.get(project.id), emit);
@@ -591,9 +614,9 @@ export function registerPipeline(app) {
       attempts += 1;
       emit('repair', 'running', `Trying a safe fix (${attempts}/${cfg.limits.maxAutoFixes})…`);
       projects.setStatus(project, 'REPAIRING');
-      await snapshots.create(project, `before-fix-${attempts}`);
       const errText = [failSummary(staticResult), nodeResult.error].filter(Boolean).join('\n');
       const relevant = await collectRelevant(source);
+      let checkpoint = null;
       try {
         const r = await ai.completeJson({
           task: 'DEBUGGING',
@@ -601,13 +624,21 @@ export function registerPipeline(app) {
           prompt: patchPrompt(project, errText, relevant),
           projectId: project.id,
         });
-        if (r.json?.files?.length) await writeGeneratedFiles(source, r.json.files);
+        if (r.json?.files?.length) checkpoint = await applySafeAiPatch({ sourceDir: source, files: r.json.files, project, snapshots, reason: `before-fix-${attempts}` });
       } catch (err) {
         emit('repair', 'failed', friendlyAiError(err));
         break;
       }
+      const beforeFailureScore = failureScore(staticResult, nodeResult);
       staticResult = await runStaticTests(source);
       nodeResult = await runNodeTests(source, 45000);
+      const afterFailureScore = failureScore(staticResult, nodeResult);
+      if (checkpoint?.snapshot?.id && afterFailureScore > beforeFailureScore) {
+        await snapshots.restore(project, checkpoint.snapshot.id).catch(() => {});
+        emit('rollback', 'done', 'The repair made the checks worse, so I restored the previous working state.');
+        staticResult = await runStaticTests(source);
+        nodeResult = await runNodeTests(source, 45000);
+      }
     }
     emit('security', 'running', 'Looking for secrets and unsafe settings…');
     const scan = await scanProject(source);
@@ -664,7 +695,7 @@ export function registerPipeline(app) {
   async function runProject(project, emit) {
     const source = projects.sourceDir(project.slug);
     const runtime = await runner.runApp({ sourcePath: source, projectSlug: project.slug, timeout: cfg.limits.sandboxTimeoutSec, keepRunning: true });
-    await projects.saveMetadata(project, 'runtime.json', { ...runtime, image: null, updatedAt: new Date().toISOString() });
+    await projects.saveMetadata(project, 'runtime.json', { ...runtime, image: runtime.image || null, lastSeenAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
     const tests = await projects.readMetadata(project, 'test-plan.json', {});
     await projects.saveMetadata(project, 'test-plan.json', { ...tests, preview: runtime });
     projects.setStatus(project, runtime.status === 'passed' ? 'WAITING_APPROVAL' : 'FAILED');
@@ -684,8 +715,7 @@ export function registerPipeline(app) {
     const relevant = await collectProjectContext(source);
     const r = await ai.completeJson({ task: 'DEBUGGING', system: SYSTEM, prompt: patchPrompt(project, '', relevant, feedback), projectId: project.id, images: [] });
     if (!r.json?.files?.length) throw new Error('AI did not propose a code change.');
-    await snapshots.create(project, 'before-improve');
-    await writeGeneratedFiles(source, r.json.files);
+    await applySafeAiPatch({ sourceDir: source, files: r.json.files, project, snapshots, reason: 'ai-improve' });
     await stampMadeBy(source, cfg);
     const tested = await testAndMaybeFix(projects.get(project.id), emit);
     let runtime = null;
@@ -705,10 +735,62 @@ export function registerPipeline(app) {
     return out;
   }
 
+  async function applySafeAiPatch({ sourceDir, files, project, snapshots: snapshotStore, reason = 'ai-patch' }) {
+    const proposed = Array.isArray(files) ? files.filter((f) => f && f.path && typeof f.content === 'string') : [];
+    if (!proposed.length) throw new Error('AI returned no usable patch files.');
+    if (proposed.length > 8) throw new Error('AI patch is too large for an automatic repair. I will not rewrite the project blindly.');
+    for (const f of proposed) {
+      const rel = String(f.path).replace(/\\/g, '/');
+      if (!rel || rel.startsWith('/') || rel.includes('..') || /^(?:data|workspace|projects)\//i.test(rel)) {
+        throw new Error(`AI patch contains an unsafe path: ${rel}`);
+      }
+      if (/^(?:\.env(?:\.|$)|.*\/(?:\.env(?:\.|$)|id_rsa(?:\.|$)|private[_-]?key(?:\.|$)))/i.test(rel)) {
+        throw new Error(`AI patch attempted to modify a protected file: ${rel}`);
+      }
+    }
+    const snapshot = await snapshotStore.create(project, `before-${reason}`);
+    const written = await writeGeneratedFiles(sourceDir, proposed);
+    return { written, snapshot };
+  }
+
+  function failureScore(staticResult, nodeResult) {
+    return (staticResult?.status === 'failed' ? 1 : 0) + (nodeResult?.status === 'failed' ? 1 : 0);
+  }
+
   function mustProject(id) {
     const p = projects.get(id);
     if (!p) throw new Error('Project not found');
     return p;
+  }
+
+  async function runWithRepair(project, emit, userMessage) {
+    emit('run', 'running', 'Starting a safe local preview…');
+    let runtime = await runProject(project, emit);
+    if (runtime.status === 'passed') return runtime;
+    const crash = classifyLogs(`${runtime.error || ''}\n${runtime.logs || ''}`);
+    const diagnosis = await diagnoseSource(projects.sourceDir(project.slug));
+    if (crash?.code === 'registry_unauthorized' || crash?.code === 'github_workflow_permission') {
+      const guide = crash.code === 'github_workflow_permission'
+        ? 'GitHub Actions is read-only. Open GitHub → Repository → Settings → Actions → General → Workflow permissions → Read and write permissions → Save.'
+        : 'The Docker image cannot be downloaded from GHCR. Check that the image name is correct and the GHCR package is public/pullable.';
+      runtime.brief = [`RESULT: Not ready.`, `WHY: ${crash.title}`, `DONE: Identified an access problem outside the app source.`, `MISSING: ${guide}`, `NEXT: ${guide}`].join('\n');
+      return runtime;
+    }
+    emit('repair', 'running', crash ? `Crash found: ${crash.title}` : 'Preview failed. Applying one automatic fix…');
+    const feedback = [
+      userMessage,
+      crash ? `${crash.title} ${crash.hint}` : 'Health check failed because the process died before listen or the UI files are missing.',
+      diagnosis.findings.map((f) => f.title).join('; '),
+      runtime.error,
+    ].filter(Boolean).join('\n');
+    try {
+      await improveProject(project, feedback, emit);
+      emit('run', 'running', 'Retrying the preview after the fix…');
+      runtime = await runProject(project, emit);
+    } catch (err) {
+      runtime = { ...runtime, repairError: err.message };
+    }
+    return runtime;
   }
 
   return { review };
@@ -733,38 +815,7 @@ async function collectRelevant(source) {
   return chunks.join('\n\n');
 }
 
-  async function runWithRepair(project, emit, userMessage) {
-    emit('run', 'running', 'Building the image and starting a live preview…');
-    let runtime = await runProject(project, emit);
-    if (runtime.status === 'passed') return runtime;
-    const crash = classifyLogs(`${runtime.error || ''}\n${runtime.logs || ''}`);
-    const diagnosis = await diagnoseSource(projects.sourceDir(project.slug));
-    if (crash?.code === 'registry_unauthorized' || crash?.code === 'github_workflow_permission') {
-      const guide = crash.code === 'github_workflow_permission'
-        ? 'GitHub Actions is read-only. Open GitHub → Repository → Settings → Actions → General → Workflow permissions → Read and write permissions → Save.'
-        : 'The Docker image cannot be downloaded from GHCR. Check that the image name is correct and the GHCR package is public/pullable. If the image is private, configure access instead of changing the app code.';
-      runtime.brief = [`RESULT: Not ready.`, `WHY: ${crash.title}`, `DONE: I identified an access/configuration problem outside the app source.`, `MISSING: ${guide}`, `NEXT: ${guide}`].join('\n');
-      emit('repair', 'done', 'The problem is an access/configuration issue, so I did not change the app source.');
-      return runtime;
-    }
-    emit('repair', 'running', crash ? `Crash found: ${crash.title}` : 'Preview failed. Applying one automatic fix…');
-    const feedback = [
-      userMessage,
-      crash ? `${crash.title} ${crash.hint}` : 'Health check failed because the process died before listen or the UI files are missing.',
-      diagnosis.findings.map((f) => f.title).join('; '),
-      runtime.error,
-    ].filter(Boolean).join('\n');
-    try {
-      await improveProject(project, feedback, emit);
-      emit('run', 'running', 'Retrying the preview after the fix…');
-      runtime = await runProject(project, emit);
-    } catch (err) {
-      runtime = { ...runtime, repairError: err.message };
-    }
-    return runtime;
-  }
-
-function formatUserBrief({ action, runtime, diagnosis, reply, next, language = 'English' }) {
+function formatUserBrief({ action, runtime, diagnosis, reply, next, language = 'English', reports = [] }) {
   const templates = {
     English: { running: 'App is running.', failed: 'App did not stay up.', finished: 'Action finished.', none: 'none.', needRun: 'a passing Run.', image: 'safe preview started, health check and browser test passed.' },
     Vietnamese: { running: 'Ứng dụng đang chạy.', failed: 'Ứng dụng chưa chạy ổn định.', finished: 'Đã hoàn tất thao tác.', none: 'không có.', needRun: 'một lần Run thành công.', image: 'đã build image, khởi động container và kiểm tra /health thành công.' },
@@ -782,7 +833,10 @@ function formatUserBrief({ action, runtime, diagnosis, reply, next, language = '
   const missing = diagnosis?.findings?.length ? diagnosis.findings.map((f) => f.title).join('; ') : (runtime?.status === 'passed' ? t.none : (classifyLogs(runtime?.error || runtime?.logs || '')?.title || t.needRun));
   const why = runtime?.status === 'failed' && runtime.error ? String(runtime.error).split('\n')[0].slice(0, 220) : '';
   const extra = reply && !/RESULT:/i.test(reply) ? reply : '';
-  return [`RESULT: ${result}`, why ? `WHY: ${why}` : '', `DONE: ${done}`, `MISSING: ${missing}`, `NEXT: ${next}`, extra].filter(Boolean).join('\n');
+  const reportLines = Array.isArray(reports) && reports.length
+    ? reports.map((s) => `${s.status === 'done' ? '✅' : '⚠️'} ${s.action}: ${String(s.goal || '').slice(0, 80)}${s.error ? ` (${s.error})` : ''}`).join('\n')
+    : '';
+  return [`RESULT: ${result}`, why ? `WHY: ${why}` : '', `DONE: ${done}`, `MISSING: ${missing}`, `NEXT: ${next}`, reportLines, extra].filter(Boolean).join('\n');
 }
 
 function briefRun(runtime) {
