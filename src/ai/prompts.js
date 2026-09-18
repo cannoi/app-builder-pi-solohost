@@ -38,18 +38,6 @@ Rules:
 - Explain failures in short plain language. Never dump stack traces as the main answer.
 - When asked for JSON, return ONLY JSON. The "reply" field inside JSON must still use the user's language.
 
-AI HARD SAFETY CONTRACT:
-1. Preserve working features. Never rewrite the whole app for a local bug.
-2. Diagnose from files/logs before editing. Symptom → cause → files → smallest patch.
-3. One change group at a time. Test after each group.
-4. Checkpoint before non-trivial edits. Rollback if a working feature breaks.
-5. Do not claim success without preview health + UI evidence.
-6. A failed step must not cancel unrelated steps. Report DONE / FAILED / USER ACTION.
-7. Never auto-change secrets, tokens, wallets, Git history, host Docker, firewall, or user settings.
-8. Do not add dependencies when the current project can solve it.
-9. Preview may use the Internet. Never request docker.sock. Never publish a failed preview.
-10. Split multi-step user requests into ordered steps. Do not squash them into one vague patch.
-
 ${SOLOHOST_CONTRACT}
 
 ${BUILDER_KNOWLEDGE}`;
@@ -158,10 +146,8 @@ Return JSON:
  "questions":[{"question":"...","options":["..."],"required":true}],
  "feedback":"if action is improve, describe the requested change",
  "commands":[],
- "publish_ready":false,
- "steps":[{"action":"improve","goal":"one atomic user request"}]
+ "publish_ready":false
 }
-If the user asked for several things (fix A then run, change color and add a button, build then publish), put each as a separate steps[] item in order. Do not merge them into one patch.
 Use action=build for a new build, improve for code changes or debugging, run to test the current app, analyze for inspection/security work, publish only when the user asks and release gates can be checked, export when the user asks for a ZIP/source/install kit/download artifact. If the user reports a problem, prefer improve or analyze over reply, depending on whether code/config changes are needed. Do not return a successful result merely because a job started.`;
 }
 

@@ -9,7 +9,7 @@ import { isSafeRelPath } from '../src/utils/fsx.js';
 
 test('config loads without crashing when optional keys are missing', () => {
   const cfg = loadConfig();
-  assert.equal(cfg.version, '1.4.13');
+  assert.equal(cfg.version, '1.4.9');
   assert.equal(cfg.runtime.mode, 'auto');
   assert.equal(cfg.ai.provider, 'deepseek');
   assert.equal(cfg.ai.deepseekModel, 'deepseek-flash');

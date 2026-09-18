@@ -9,7 +9,7 @@ import { listFiles } from '../utils/fsx.js';
 import fs from 'node:fs/promises';
 import { saveAttachment, attachmentContext, attachmentList, imageInputsFromAttachments } from '../projects/attachments.js';
 import { writeSoloHostPackage } from '../release/solohost.js';
-import { inferAction, classifyLogs, diagnoseSource, nextStep, guideCard, isHostDockerCommand, isNpmOnEmptyRisk, splitUserSteps } from '../scripts/ops.js';
+import { inferAction, classifyLogs, diagnoseSource, nextStep, guideCard, isHostDockerCommand, isNpmOnEmptyRisk } from '../scripts/ops.js';
 import { stampMadeBy } from '../projects/badge.js';
 import { createProjectZip } from '../projects/exporter.js';
 import { gcDocker } from '../docker/cleanup.js';
@@ -423,58 +423,34 @@ export function registerPipeline(app) {
         continue;
       }
     }
-    let payload = { projectId: project.id, action, reply, skipped, reports: [] };
-    const planned = [];
-    if (Array.isArray(r.json?.steps) && r.json.steps.length > 1) {
-      for (const step of r.json.steps.slice(0, 5)) {
-        planned.push({ action: String(step.action || inferAction(step.goal || '') || action), goal: String(step.goal || message) });
-      }
-    } else {
-      const pieces = splitUserSteps(message);
-      if (pieces.length > 1) planned.push(...pieces.map((goal) => ({ action: inferAction(goal) || action, goal })));
-      else planned.push({ action, goal: String(r.json?.feedback || message) });
-    }
+    let payload = { projectId: project.id, action, reply, skipped };
     if (action === 'question' && Array.isArray(r.json.questions) && r.json.questions.length) {
       await projects.saveMetadata(project, 'chat-question.json', { questions: r.json.questions });
       projects.setStatus(project, 'WAITING_INPUT');
       payload.questions = r.json.questions;
-    } else {
-      for (const step of planned) {
-        let stepAction = step.action;
-        const gatedStep = gateAction(stepAction, { files: diagnosis.files, runtime: runtimeNow, githubConfigured: github.configured() });
-        if (gatedStep.lock) stepAction = gatedStep.action;
-        try {
-          if (stepAction === 'build') {
-            emit('build', 'running', `Step: write files — ${step.goal.slice(0, 80)}`);
-            const analysis = await projects.readMetadata(project, 'requirements.json', {});
-            const plan = await projects.readMetadata(project, 'architecture.json', {});
-            payload.built = await generateCode({ project, analysis, plan, emit, allowFallback: false });
-          } else if (stepAction === 'improve') {
-            emit('improve', 'running', `Step: targeted patch — ${step.goal.slice(0, 80)}`);
-            await snapshots.create(project, 'before-step-improve').catch(() => {});
-            payload.result = await improveProject(project, step.goal, emit);
-          } else if (stepAction === 'run') {
-            payload.runtime = await runWithRepair(project, emit, step.goal);
-          } else if (stepAction === 'analyze') {
-            emit('analyze', 'running', 'Checking files, crash logs, and security…');
-            payload.tested = await testAndMaybeFix(project, emit);
-            payload.diagnosis = await diagnoseSource(source);
-            if (runtimeNow.logs) payload.crash = classifyLogs(runtimeNow.logs || runtimeNow.error || '');
-          } else if (stepAction === 'export') {
-            const kind = /install|solohost|config|cài đặt|solo\s*host/i.test(step.goal) ? 'solohost' : 'project';
-            const artifact = await createProjectZip({ sourceDir: projects.sourceDir(project.slug), outputDir: path.join(projects.projectDir(project), 'artifacts'), slug: project.slug, kind });
-            payload.downloads = [{ kind, filename: artifact.filename, url: `/api/projects/${project.id}/download?kind=${kind}` }];
-          } else if (stepAction === 'publish') {
-            emit('release', 'running', 'Publishing the app now…');
-            payload.result = await runRelease(project, { approved: true, confirm: true, push: true, existingAction: 'confirm' }, emit);
-            payload.publish_ready = payload.result?.status === 'released' || payload.result?.status === 'packaged';
-          }
-          payload.reports.push({ action: stepAction, status: 'done', goal: step.goal });
-        } catch (err) {
-          payload.reports.push({ action: stepAction, status: 'failed', goal: step.goal, error: String(err.message || err).slice(0, 240) });
-          emit('improve', 'failed', `Step failed, continuing other safe steps: ${String(err.message || err).slice(0, 160)}`);
-        }
-      }
+    } else if (action === 'build') {
+      emit('build', 'running', 'Building the app from your conversation…');
+      const analysis = await projects.readMetadata(project, 'requirements.json', {});
+      const plan = await projects.readMetadata(project, 'architecture.json', {});
+      payload.built = await generateCode({ project, analysis, plan, emit, allowFallback: false });
+    } else if (action === 'improve') {
+      emit('improve', 'running', 'Applying a targeted fix…');
+      payload.result = await improveProject(project, String(r.json.feedback || message), emit);
+    } else if (action === 'run') {
+      payload.runtime = await runWithRepair(project, emit, message);
+    } else if (action === 'analyze') {
+      emit('analyze', 'running', 'Checking files, crash logs, and security…');
+      payload.tested = await testAndMaybeFix(project, emit);
+      payload.diagnosis = await diagnoseSource(source);
+      if (runtimeNow.logs) payload.crash = classifyLogs(runtimeNow.logs || runtimeNow.error || '');
+    } else if (action === 'export') {
+      const kind = /install|solohost|config|cài đặt|solo\s*host/i.test(message) ? 'solohost' : 'project';
+      const artifact = await createProjectZip({ sourceDir: projects.sourceDir(project.slug), outputDir: path.join(projects.projectDir(project), 'artifacts'), slug: project.slug, kind });
+      payload.downloads = [{ kind, filename: artifact.filename, url: `/api/projects/${project.id}/download?kind=${kind}` }];
+    } else if (action === 'publish') {
+      emit('release', 'running', 'Publishing the app now…');
+      payload.result = await runRelease(project, { approved: true, confirm: true, push: true, existingAction: 'confirm' }, emit);
+      payload.publish_ready = payload.result?.status === 'released' || payload.result?.status === 'packaged';
     }
     const latestRuntime = payload.runtime || payload.result?.runtime || await projects.readMetadata(project, 'runtime.json', {});
     if (action !== 'run') {
@@ -484,7 +460,7 @@ export function registerPipeline(app) {
     }
     payload.guide = guideCard({ runtime: latestRuntime, findings: diagnosis.findings, action, publishReady: payload.publish_ready });
     payload.next = payload.guide.detail;
-    payload.brief = formatUserBrief({ action, runtime: latestRuntime, diagnosis, reply, next: payload.next, language: userLanguage, reports: payload.reports });
+    payload.brief = formatUserBrief({ action, runtime: latestRuntime, diagnosis, reply, next: payload.next, language: userLanguage });
     await gcDocker({ keepImage: latestRuntime.image || null, keepContainer: latestRuntime.status === 'passed' ? latestRuntime.container : null, log }).catch(() => {});
     await projects.chat(project, payload.brief, 'assistant', { action, next: payload.next });
     await projects.saveMetadata(project, 'handoff.json', {
@@ -735,36 +711,6 @@ export function registerPipeline(app) {
     return p;
   }
 
-  async function runWithRepair(project, emit, userMessage) {
-    emit('run', 'running', 'Starting a safe local preview…');
-    let runtime = await runProject(project, emit);
-    if (runtime.status === 'passed') return runtime;
-    const crash = classifyLogs(`${runtime.error || ''}\n${runtime.logs || ''}`);
-    const diagnosis = await diagnoseSource(projects.sourceDir(project.slug));
-    if (crash?.code === 'registry_unauthorized' || crash?.code === 'github_workflow_permission') {
-      const guide = crash.code === 'github_workflow_permission'
-        ? 'GitHub Actions is read-only. Open GitHub → Repository → Settings → Actions → General → Workflow permissions → Read and write permissions → Save.'
-        : 'The Docker image cannot be downloaded from GHCR. Check that the image name is correct and the GHCR package is public/pullable.';
-      runtime.brief = [`RESULT: Not ready.`, `WHY: ${crash.title}`, `DONE: Identified an access problem outside the app source.`, `MISSING: ${guide}`, `NEXT: ${guide}`].join('\n');
-      return runtime;
-    }
-    emit('repair', 'running', crash ? `Crash found: ${crash.title}` : 'Preview failed. Applying one automatic fix…');
-    const feedback = [
-      userMessage,
-      crash ? `${crash.title} ${crash.hint}` : 'Health check failed because the process died before listen or the UI files are missing.',
-      diagnosis.findings.map((f) => f.title).join('; '),
-      runtime.error,
-    ].filter(Boolean).join('\n');
-    try {
-      await improveProject(project, feedback, emit);
-      emit('run', 'running', 'Retrying the preview after the fix…');
-      runtime = await runProject(project, emit);
-    } catch (err) {
-      runtime = { ...runtime, repairError: err.message };
-    }
-    return runtime;
-  }
-
   return { review };
 }
 
@@ -787,7 +733,38 @@ async function collectRelevant(source) {
   return chunks.join('\n\n');
 }
 
-function formatUserBrief({ action, runtime, diagnosis, reply, next, language = 'English', reports = [] }) {
+  async function runWithRepair(project, emit, userMessage) {
+    emit('run', 'running', 'Building the image and starting a live preview…');
+    let runtime = await runProject(project, emit);
+    if (runtime.status === 'passed') return runtime;
+    const crash = classifyLogs(`${runtime.error || ''}\n${runtime.logs || ''}`);
+    const diagnosis = await diagnoseSource(projects.sourceDir(project.slug));
+    if (crash?.code === 'registry_unauthorized' || crash?.code === 'github_workflow_permission') {
+      const guide = crash.code === 'github_workflow_permission'
+        ? 'GitHub Actions is read-only. Open GitHub → Repository → Settings → Actions → General → Workflow permissions → Read and write permissions → Save.'
+        : 'The Docker image cannot be downloaded from GHCR. Check that the image name is correct and the GHCR package is public/pullable. If the image is private, configure access instead of changing the app code.';
+      runtime.brief = [`RESULT: Not ready.`, `WHY: ${crash.title}`, `DONE: I identified an access/configuration problem outside the app source.`, `MISSING: ${guide}`, `NEXT: ${guide}`].join('\n');
+      emit('repair', 'done', 'The problem is an access/configuration issue, so I did not change the app source.');
+      return runtime;
+    }
+    emit('repair', 'running', crash ? `Crash found: ${crash.title}` : 'Preview failed. Applying one automatic fix…');
+    const feedback = [
+      userMessage,
+      crash ? `${crash.title} ${crash.hint}` : 'Health check failed because the process died before listen or the UI files are missing.',
+      diagnosis.findings.map((f) => f.title).join('; '),
+      runtime.error,
+    ].filter(Boolean).join('\n');
+    try {
+      await improveProject(project, feedback, emit);
+      emit('run', 'running', 'Retrying the preview after the fix…');
+      runtime = await runProject(project, emit);
+    } catch (err) {
+      runtime = { ...runtime, repairError: err.message };
+    }
+    return runtime;
+  }
+
+function formatUserBrief({ action, runtime, diagnosis, reply, next, language = 'English' }) {
   const templates = {
     English: { running: 'App is running.', failed: 'App did not stay up.', finished: 'Action finished.', none: 'none.', needRun: 'a passing Run.', image: 'safe preview started, health check and browser test passed.' },
     Vietnamese: { running: 'Ứng dụng đang chạy.', failed: 'Ứng dụng chưa chạy ổn định.', finished: 'Đã hoàn tất thao tác.', none: 'không có.', needRun: 'một lần Run thành công.', image: 'đã build image, khởi động container và kiểm tra /health thành công.' },
@@ -805,10 +782,7 @@ function formatUserBrief({ action, runtime, diagnosis, reply, next, language = '
   const missing = diagnosis?.findings?.length ? diagnosis.findings.map((f) => f.title).join('; ') : (runtime?.status === 'passed' ? t.none : (classifyLogs(runtime?.error || runtime?.logs || '')?.title || t.needRun));
   const why = runtime?.status === 'failed' && runtime.error ? String(runtime.error).split('\n')[0].slice(0, 220) : '';
   const extra = reply && !/RESULT:/i.test(reply) ? reply : '';
-  const reportLines = Array.isArray(reports) && reports.length
-    ? reports.map((s) => `${s.status === 'done' ? '✅' : '⚠️'} ${s.action}: ${String(s.goal || '').slice(0, 80)}${s.error ? ` (${s.error})` : ''}`).join('\n')
-    : '';
-  return [`RESULT: ${result}`, why ? `WHY: ${why}` : '', `DONE: ${done}`, `MISSING: ${missing}`, `NEXT: ${next}`, reportLines, extra].filter(Boolean).join('\n');
+  return [`RESULT: ${result}`, why ? `WHY: ${why}` : '', `DONE: ${done}`, `MISSING: ${missing}`, `NEXT: ${next}`, extra].filter(Boolean).join('\n');
 }
 
 function briefRun(runtime) {

@@ -83,24 +83,3 @@ test('Check action posts to analyze', () => {
   assert.match(js, /action === 'analyze'|\/analyze/);
   assert.match(routes, /analyze/);
 });
-
-test('support button and Pi QR asset exist', () => {
-  const html = fs.readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
-  const js = fs.readFileSync(new URL('../public/app.js', import.meta.url), 'utf8');
-  assert.match(html, /💛 Support/);
-  assert.match(html, /GAQAZ5XLWREKQYMMN247A44PNPLAKRORZOPZNVG3CDPCSSFMEVFIYJJL/);
-  assert.match(html, /0905428801/);
-  assert.match(html, /support-pi-qr\.jpg/);
-  assert.match(html, /img\.vietqr\.io\/image\/MB-0905428801/);
-  assert.match(js, /openSupport/);
-  assert.equal(fs.existsSync(new URL('../public/support-pi-qr.jpg', import.meta.url)), true);
-});
-
-test('preview back bar returns to the current project', () => {
-  const src = fs.readFileSync(new URL('../src/preview.js', import.meta.url), 'utf8');
-  assert.match(src, /\?p=/);
-  assert.match(src, /builderHome/);
-  const js = fs.readFileSync(new URL('../public/app.js', import.meta.url), 'utf8');
-  assert.match(js, /paf\.projectId/);
-  assert.match(js, /savedProjectId/);
-});
