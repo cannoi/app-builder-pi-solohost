@@ -8,7 +8,7 @@ export function loadConfig() {
     templatesDir: process.env.TEMPLATES_DIR || './templates',
     logLevel: process.env.LOG_LEVEL || 'info',
     locale: process.env.APP_LOCALE || 'en',
-    version: '1.4.16',
+    version: '1.4.17',
     runtime: {
       mode: process.env.PREVIEW_MODE || 'auto',
       podman: { apiUrl: process.env.PODMAN_API_URL || '' },

@@ -17,3 +17,6 @@
 - Gemini 503/429 rotates to the next model instead of failing the whole request.
 - Bundled Sandbox Benchmark demo (🧪 Sandbox). Run advises testing sandbox first.
 - Preview proxies /api and /health to the spawned app process when present.
+
+## 1.4.17
+- Preview iframe now rewrites fetch("/api") and /health to /preview/<slug>/__app__/ so product APIs are not sent to Builder.

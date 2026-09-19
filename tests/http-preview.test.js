@@ -2,7 +2,13 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import { createApp, listen } from '../src/http.js';
-import { createPreviewHandler, previewPath, resolvePreviewUpstream } from '../src/preview.js';
+import { createPreviewHandler, previewPath, resolvePreviewUpstream, injectPreviewBridge } from '../src/preview.js';
+
+test('preview HTML fetch("/api") is rewritten to the preview prefix', () => {
+  const html = injectPreviewBridge('<head></head><body></body>', 'snake-classic');
+  assert.match(html, /data-paf-bridge/);
+  assert.match(html, /\/preview\/snake-classic\/__app__/);
+});
 
 test('preview proxy must use the app port, never Builder :8080 on localhost', () => {
   assert.deepEqual(

@@ -52,7 +52,7 @@ export function createPreviewHandler({ projects }) {
       if (ok) return true;
     }
     const sourceDir = projects.sourceDir(project.slug);
-    if (serveProjectFile(sourceDir, targetPath, res)) return true;
+    if (serveProjectFile(sourceDir, targetPath, res, project.slug)) return true;
     safeHtml(res, 503, page('App is not running', 'Go back to chat and tap ▶ Run. When it finishes, open this link again.', project));
     return true;
   };
@@ -91,7 +91,16 @@ iframe{position:fixed;top:38px;left:0;right:0;bottom:0;width:100%;height:calc(10
 </body></html>`;
 }
 
-function serveProjectFile(sourceDir, targetPath, res) {
+export function injectPreviewBridge(html, slug) {
+  const prefix = `/preview/${encodeURIComponent(slug)}/__app__`;
+  const snippet = `<script data-paf-bridge="1">(function(){var p=${JSON.stringify(prefix)};function fix(u){if(typeof u!=='string')return u;if(!u||u.charAt(0)!=='/')return u;if(u.indexOf(p)===0||u.indexOf('/preview/')===0||u.indexOf('/?')===0)return u;return p+u;}var f=window.fetch;window.fetch=function(i,n){if(typeof i==='string')i=fix(i);else if(i&&i.url)i=new Request(fix(i.url),i);return f.call(this,i,n);};var o=XMLHttpRequest.prototype.open;XMLHttpRequest.prototype.open=function(m,u){if(typeof u==='string')arguments[1]=fix(u);return o.apply(this,arguments);};})();</script>`;
+  const text = String(html || '');
+  if (/data-paf-bridge/.test(text)) return text;
+  if (/<head[^>]*>/i.test(text)) return text.replace(/<head[^>]*>/i, (m) => `${m}${snippet}`);
+  return `${snippet}${text}`;
+}
+
+function serveProjectFile(sourceDir, targetPath, res, slug) {
   const clean = decodeURIComponent(String(targetPath || '/').split('?')[0] || '/');
   const rel = clean === '/' ? 'index.html' : clean.replace(/^\/+/, '');
   const roots = ['public', 'dist', 'www', ''].map((d) => path.join(sourceDir, d));
@@ -103,8 +112,10 @@ function serveProjectFile(sourceDir, targetPath, res) {
       : null;
     if (!candidate || !candidate.startsWith(root)) continue;
     try {
-      const data = fs.readFileSync(candidate);
-      res.writeHead(200, { 'Content-Type': MIME[path.extname(candidate).toLowerCase()] || 'application/octet-stream' });
+      let data = fs.readFileSync(candidate);
+      const type = MIME[path.extname(candidate).toLowerCase()] || 'application/octet-stream';
+      if (type.includes('text/html') && slug) data = Buffer.from(injectPreviewBridge(data.toString('utf8'), slug), 'utf8');
+      res.writeHead(200, { 'Content-Type': type });
       res.end(data);
       return true;
     } catch { return false; }
@@ -131,10 +142,26 @@ function proxy(req, res, hostname, port, targetPath, project) {
       const hop = { ...up.headers };
       delete hop.connection;
       delete hop['keep-alive'];
-      // The Builder owns the preview frame. Generated apps must not be able to
-      // blank the frame with their own X-Frame-Options/CSP frame-ancestors.
       delete hop['x-frame-options'];
       delete hop['content-security-policy'];
+      const ctype = String(hop['content-type'] || hop['Content-Type'] || '');
+      const slug = project?.slug;
+      if (slug && ctype.includes('text/html')) {
+        const chunks = [];
+        up.on('data', (c) => chunks.push(c));
+        up.on('end', () => {
+          try {
+            const html = injectPreviewBridge(Buffer.concat(chunks).toString('utf8'), slug);
+            delete hop['content-length'];
+            res.writeHead(up.statusCode || 200, hop);
+            res.end(html);
+            resolve(true);
+          } catch {
+            resolve(false);
+          }
+        });
+        return;
+      }
       try {
         res.writeHead(up.statusCode || 502, hop);
         up.pipe(res);

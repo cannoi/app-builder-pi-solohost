@@ -63,7 +63,7 @@ export class NativePreview {
         if (!deps.error) {
           apiPort = await freePort();
           child = await spawnApp(sourcePath, apiPort, pkg).catch(() => null);
-          const apiUp = await waitForHttp(apiPort, 8);
+          const apiUp = await waitForHttp(apiPort, 15);
           if (!apiUp.ok) apiPort = null;
         }
       }
@@ -222,8 +222,11 @@ async function readPackageJson(sourcePath) {
 async function spawnApp(sourcePath, port, pkgIn = null) {
   const pkg = pkgIn || await readPackageJson(sourcePath);
   if (!pkg?.scripts?.start && !pkg?.main) return null;
-  const file = pkg.scripts?.start ? (process.platform === 'win32' ? 'npm.cmd' : 'npm') : 'node';
-  const args = pkg.scripts?.start ? ['start'] : [String(pkg.main)];
+  const start = String(pkg.scripts?.start || '');
+  const fromStart = start.match(/\bnode\s+(\S+)/);
+  const entry = pkg.main || fromStart?.[1] || null;
+  const file = entry ? 'node' : (process.platform === 'win32' ? 'npm.cmd' : 'npm');
+  const args = entry ? [entry] : ['start'];
   const child = spawn(file, args, {
     cwd: sourcePath,
     env: {
