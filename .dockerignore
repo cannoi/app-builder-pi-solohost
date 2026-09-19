@@ -1,5 +1,5 @@
-node_modules
 .git
-solohost
 *.zip
-.env
+runtime
+node_modules
+README.md

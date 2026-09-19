@@ -1,18 +1,14 @@
 {
-  "name": "pi-app-factory",
-  "version": "1.4.15",
+  "name": "sandbox-app-benchmark",
+  "version": "2.0.0",
   "private": true,
-  "type": "module",
-  "description": "App Builder — Pi SoloHost. Idea in, working SoloHost app out.",
-  "scripts": {
-    "start": "node src/server.js",
-    "test": "node --test tests/*.test.js"
-  },
+  "description": "One-container baseline for qualifying a Podman/Docker sandbox before testing generated web apps.",
+  "main": "server.js",
   "engines": {
-    "node": ">=22"
+    "node": ">=18"
   },
-  "dependencies": {
-    "@octokit/rest": "^21.1.1",
-    "playwright": "^1.63.0"
+  "scripts": {
+    "start": "node server.js",
+    "health": "node -e \"require('http').get('http://127.0.0.1:'+(process.env.PORT||8080)+'/health',r=>{let b='';r.on('data',c=>b+=c);r.on('end',()=>{console.log(b);process.exit(r.statusCode===200?0:1)})}).on('error',e=>{console.error(e);process.exit(1)})\""
   }
 }
