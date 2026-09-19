@@ -1,302 +1,94 @@
 <!doctype html>
-<html lang="vi">
+<html lang="en">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<meta name="color-scheme" content="dark light">
-<title>Sandbox App Benchmark</title>
-<style>
-:root{
-  --bg:#0e141b;--card:#172029;--line:#26313c;--text:#e8eef4;--muted:#8b98a5;
-  --ok:#3dd68c;--bad:#ff6b6b;--warn:#f5c542;--idle:#6e7b88;--accent:#2dd4bf;
-}
-*{box-sizing:border-box}
-html,body{margin:0;background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,Segoe UI,sans-serif}
-main{max-width:920px;margin:auto;padding:20px 16px 40px}
-header{display:flex;justify-content:space-between;gap:14px;align-items:flex-start;margin-bottom:16px}
-h1{margin:0 0 4px;font-size:24px;letter-spacing:-.02em}
-.sub{margin:0;color:var(--muted);font-size:14px}
-.badge{padding:8px 12px;border-radius:999px;background:#22303b;color:var(--muted);font-weight:700;font-size:13px;white-space:nowrap;border:1px solid var(--line)}
-.badge.ok{background:#103226;color:var(--ok);border-color:#1e5a40}
-.badge.bad{background:#3a1518;color:var(--bad);border-color:#6b2a30}
-.badge.warn{background:#3a3010;color:var(--warn);border-color:#6a5414}
-.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
-.card,.panel{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px}
-.card b{display:block;color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.04em}
-.card span{display:block;margin-top:8px;font-size:16px;font-weight:700}
-.panel{margin-top:12px}
-.panel h2{margin:0 0 10px;font-size:15px}
-pre{white-space:pre-wrap;line-height:1.5;margin:0;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12.5px;color:#d7e0e8}
-.layers{display:grid;grid-template-columns:repeat(5,1fr);gap:8px;margin:12px 0}
-.layer{text-align:center;padding:10px 6px;border-radius:12px;border:1px solid var(--line);background:#121a21}
-.layer .dot{width:10px;height:10px;border-radius:50%;margin:0 auto 6px;background:var(--idle)}
-.layer.ok .dot{background:var(--ok)}
-.layer.bad .dot{background:var(--bad)}
-.layer.warn .dot{background:var(--warn)}
-.layer small{color:var(--muted);font-size:11px}
-.pulse{animation:pulse 1.2s ease-in-out infinite}
-@keyframes pulse{0%,100%{opacity:.45}50%{opacity:1}}
-.css-alive{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--accent);margin-right:6px;animation:pulse 1s infinite}
-.meta{display:flex;flex-wrap:wrap;gap:8px 14px;margin:8px 0 0;color:var(--muted);font-size:12px}
-.actions{display:flex;gap:8px;margin-top:12px;flex-wrap:wrap}
-button{background:#1c2a35;color:var(--text);border:1px solid var(--line);border-radius:10px;padding:8px 12px;font-weight:650;cursor:pointer}
-ul{margin:0;padding-left:18px;color:#c9d4de;font-size:14px;line-height:1.55}
-@media(max-width:720px){
-  .grid{grid-template-columns:1fr 1fr}
-  .layers{grid-template-columns:1fr 1fr}
-  header{flex-direction:column}
-  h1{font-size:21px}
-}
-</style>
-</head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>App Builder — Pi SoloHost</title>
+  <meta name="theme-color" content="#0e1116">
+  <link rel="stylesheet" href="/styles.css?v=1.4.13">
+<style>.paf-made-by{position:fixed;right:8px;bottom:8px;width:min(72px,12vw);max-width:12vw;height:auto;object-fit:contain;opacity:.5;background:transparent;padding:0;border:0;box-shadow:none;filter:none;pointer-events:none;z-index:30}</style></head>
 <body>
-<main>
-  <header>
-    <div>
-      <h1>Sandbox App Benchmark</h1>
-      <p class="sub">One-container baseline for Podman / Docker preview. Tests finish in 1–3 seconds.</p>
-      <p class="meta">
-        <span><span class="css-alive"></span>HTML+CSS loaded</span>
-        <span>Clock <b id="clock">--:--:--</b></span>
-        <span>Elapsed <b id="elapsed">0.0s</b></span>
-      </p>
-    </div>
-    <span id="overall" class="badge pulse">Testing…</span>
-  </header>
+  <div id="app">
+    <header class="hero">
+      <img src="/banner.png" alt="App Builder — Pi SoloHost">
+    </header>
+    <header class="top">
+      <div class="brand"><img class="logoMark" src="/app-logo.jpg" alt="App Builder logo"><div><h1>App Builder</h1><p>Pi SoloHost · idea in, app out</p></div></div>
+      <div class="topRight">
+        <span id="workPill" class="pill ready">Ready</span>
+        <button id="liveBtn" class="pill live" hidden type="button" title="Stop the test app and delete its container">Live · Stop</button>
+        <select id="aiSelect" aria-label="AI model">
+          <option value="deepseek">DeepSeek</option>
+          <option value="gemini">Gemini</option>
+          <option value="council">Council</option>
+        </select>
+        <select id="projectSelect" aria-label="Project"><option value="">New app</option></select>
+        <button id="settingsBtn" class="iconBtn" title="Settings">⚙</button>
+      </div>
+    </header>
 
-  <section class="layers" aria-label="Layer diagnosis">
-    <div class="layer ok" id="ly-html"><div class="dot"></div><b>HTML</b><small>page rendered</small></div>
-    <div class="layer" id="ly-js"><div class="dot"></div><b>JavaScript</b><small id="ly-js-d">waiting</small></div>
-    <div class="layer" id="ly-api"><div class="dot"></div><b>HTTP API</b><small id="ly-api-d">waiting</small></div>
-    <div class="layer" id="ly-ctr"><div class="dot"></div><b>Container</b><small id="ly-ctr-d">waiting</small></div>
-    <div class="layer" id="ly-prv"><div class="dot"></div><b>Preview</b><small id="ly-prv-d">page visible</small></div>
-  </section>
+    <main class="chatShell">
+      <section id="chat" class="chat" aria-live="polite"></section>
+      <button id="jumpDown" class="jump" hidden title="Jump to new messages">↓</button>
+      <div id="busyBar" class="busy" hidden><span class="spinner"></span><span id="busyText">Working…</span></div>
 
-  <section class="grid">
-    <article class="card"><b>Runtime</b><span id="runtime">…</span></article>
-    <article class="card"><b>HTTP / Preview</b><span id="http">…</span></article>
-    <article class="card"><b>JavaScript</b><span id="js">…</span></article>
-    <article class="card"><b>Filesystem</b><span id="fs">…</span></article>
-    <article class="card"><b>CPU</b><span id="cpu">…</span></article>
-    <article class="card"><b>Parallel requests</b><span id="parallel">…</span></article>
-  </section>
-
-  <section class="panel">
-    <h2>Live diagnostics</h2>
-    <pre id="log">HTML loaded. Waiting for inline JavaScript…
-
-If this line never changes after 3 seconds, Preview rendered HTML but JS did not execute.</pre>
-  </section>
-
-  <div class="actions">
-    <button type="button" id="btn-rerun">Run again</button>
-    <button type="button" id="btn-self">Open /api/self-test</button>
+      <section class="composer">
+        <div class="quickGroups">
+          <div class="group"><span class="groupLabel">Build</span><button data-action="build">✨ Build</button><button data-action="run">▶ Run</button><button data-action="sandbox">🧪 Sandbox</button></div>
+          <div class="group"><span class="groupLabel">Refine</span><button data-action="improve">✦ Improve</button><button data-action="analyze">🔎 Check</button></div>
+          <div class="group"><span class="groupLabel">Ship</span><button data-action="publish">🚀 Publish</button><button data-action="export">⬇ Zip</button><button type="button" id="importZipBtn" data-action="import">⬆ Import</button></div>
+        <input id="importZipInput" type="file" accept=".zip,application/zip" hidden>
+          <div class="group"><span class="groupLabel">Help</span><button type="button" id="supportBtn" data-action="support">💛 Support</button></div>
+        </div>
+        <div class="inputRow">
+          <button id="attachBtn" class="attach" title="Attach files">📎</button>
+          <input id="fileInput" type="file" multiple hidden accept=".zip,.pdf,.txt,.md,.json,.yaml,.yml,.js,.ts,.jsx,.tsx,.html,.css,.py,.go,.rs,.java,.php,.sql,.csv,.png,.jpg,.jpeg,.gif,.webp">
+          <textarea id="message" rows="2" placeholder="Tell me the app you want. I will lead the rest."></textarea>
+          <button id="sendBtn" class="send">➤</button>
+        </div>
+        <div id="attachments" class="attachments"></div>
+        <p class="hint">1 Idea → 2 Run → 3 Publish. I keep the next step visible.</p>
+      </section>
+    </main>
   </div>
 
-  <section class="panel">
-    <h2>How to read this page</h2>
-    <ul>
-      <li><strong>0–3s</strong>: normal. Wait for SANDBOX READY.</li>
-      <li><strong>3–10s</strong>: container or preview may still be starting.</li>
-      <li><strong>&gt;10s</strong> still Testing…: HTML loaded, JavaScript did not run or fetch is hung.</li>
-      <li><strong>&gt;30s</strong>: stop waiting. Treat as sandbox/preview failure.</li>
-      <li>CSS pulse + this text visible = Preview can serve HTML/CSS.</li>
-      <li>Clock ticking = inline JS executed. Frozen clock = JS runtime dead.</li>
-    </ul>
-  </section>
+  <div id="supportModal" class="modal" hidden>
+    <div class="sheet">
+      <div class="sheetHead"><h2>💛 Support this project</h2><button id="closeSupport" class="iconBtn" type="button">✕</button></div>
+      <p class="info">Thank you for supporting App Builder — Pi SoloHost. Your gift keeps the tool free for Pioneers.</p>
+      <div class="supportTabs">
+        <button type="button" class="supportTab on" data-support="pi">Pi Wallet</button>
+        <button type="button" class="supportTab" data-support="mb">MB Bank</button>
+      </div>
+      <div id="supportPi" class="supportPane">
+        <img src="/support-pi-qr.jpg" alt="Pi Wallet QR" class="supportQr">
+        <p class="muted">Pi Wallet address</p>
+        <p class="mono" id="piAddr">GAQAZ5XLWREKQYMMN247A44PNPLAKRORZOPZNVG3CDPCSSFMEVFIYJJL</p>
+        <button type="button" class="primary wide" data-copy="GAQAZ5XLWREKQYMMN247A44PNPLAKRORZOPZNVG3CDPCSSFMEVFIYJJL">Copy address</button>
+      </div>
+      <div id="supportMb" class="supportPane" hidden>
+        <img src="https://img.vietqr.io/image/MB-0905428801-compact2.png" alt="MB Bank VietQR" class="supportQr">
+        <p class="muted">MB Bank · 0905428801</p>
+        <p class="mono" id="mbAddr">0905428801</p>
+        <button type="button" class="primary wide" data-copy="0905428801">Copy account</button>
+      </div>
+    </div>
+  </div>
 
-  <noscript>
-    <section class="panel">
-      <h2>JavaScript disabled or not executed</h2>
-      <p>HTML arrived. Open <a href="/health">/health</a> and <a href="/api/self-test">/api/self-test</a> to test the container without the browser JS runtime.</p>
-    </section>
-  </noscript>
-</main>
-<script>
-(function () {
-  var PAGE_T0 = Date.now();
-  var logLines = [];
-  var finished = false;
-  var $ = function (id) { return document.getElementById(id); };
+  <div id="settings" class="modal" hidden>
+    <div class="sheet">
+      <div class="sheetHead"><h2>Settings</h2><button id="closeSettings" class="iconBtn">✕</button></div>
+      <label>AI provider<select id="setProvider"><option value="deepseek">DeepSeek</option><option value="gemini">Google Gemini</option><option value="council">Council (both)</option></select></label>
+      <label>DeepSeek API key<input id="setDeepseek" type="password" autocomplete="off" placeholder="Paste key"></label>
+      <label>Gemini API key<input id="setGemini" type="password" autocomplete="off" placeholder="Needed for Council"></label>
+      <label>GitHub token <span class="muted">optional</span><input id="setGhToken" type="password" autocomplete="off" placeholder="Personal access token (classic)"><span class="small">Use classic token: <b>repo</b> + <b>workflow</b> + <b>write:packages</b>. Create: github.com/settings/tokens/new</span></label>
+      <label>GitHub owner <span class="muted">optional</span><input id="setGhOwner" type="text" placeholder="username or org"></label><div class="info">If GitHub Actions says permission is read-only: Repository → Settings → Actions → General → Workflow permissions → <b>Read and write permissions</b> → Save.</div>
+      <div class="info">Council: one model writes, the other reviews. Trust scores prefer the model that finishes with fewer errors. No host Docker access is required.</div>
+      <button id="saveSettings" class="primary wide">Save</button>
+      <p id="settingsState" class="muted"></p>
+    </div>
+  </div>
 
-  function setLayer(id, state, detail) {
-    var el = $(id);
-    if (!el) return;
-    el.className = "layer " + (state || "");
-    var d = $(id + "-d");
-    if (d && detail) d.textContent = detail;
-  }
-
-  function record(ok, name, detail) {
-    logLines.push((ok ? "✓ PASS" : "✗ FAIL") + "  " + name + (detail ? " — " + detail : ""));
-    $("log").textContent = logLines.join("\n");
-  }
-
-  function tick() {
-    var now = new Date();
-    function pad(n) { return String(n).padStart(2, "0"); }
-    $("clock").textContent = pad(now.getHours()) + ":" + pad(now.getMinutes()) + ":" + pad(now.getSeconds());
-    $("elapsed").textContent = ((Date.now() - PAGE_T0) / 1000).toFixed(1) + "s";
-  }
-  tick();
-  setInterval(tick, 200);
-
-  setLayer("ly-js", "ok", "inline JS running");
-  setLayer("ly-prv", "ok", "browser executed page");
-  $("js").textContent = "inline JS OK";
-  $("log").textContent = "Inline JavaScript executed. Starting tests…";
-
-  function fetchJson(url, timeoutMs) {
-    var ctrl = typeof AbortController !== "undefined" ? new AbortController() : null;
-    var timer = setTimeout(function () { if (ctrl) ctrl.abort(); }, timeoutMs || 4000);
-    return fetch(url, { cache: "no-store", signal: ctrl ? ctrl.signal : undefined })
-      .then(function (r) {
-        return r.text().then(function (t) {
-          var data = null;
-          try { data = t ? JSON.parse(t) : null; } catch (e) { data = { raw: t }; }
-          return { ok: r.ok, status: r.status, data: data };
-        });
-      })
-      .finally(function () { clearTimeout(timer); });
-  }
-
-  function jsComputeOk() {
-    var x = 0;
-    for (var i = 0; i < 10000; i++) if (i % 7 === 0) x += i;
-    return x === 7142142;
-  }
-
-  async function run() {
-    finished = false;
-    logLines = [];
-    var passed = 0;
-    var total = 6;
-    $("overall").className = "badge pulse";
-    $("overall").textContent = "Testing…";
-    $("runtime").textContent = "…";
-    $("http").textContent = "…";
-    $("fs").textContent = "…";
-    $("cpu").textContent = "…";
-    $("parallel").textContent = "…";
-    setLayer("ly-api", "", "waiting");
-    setLayer("ly-ctr", "", "waiting");
-
-    var jsOk = jsComputeOk();
-    $("js").textContent = jsOk ? "JS OK" : "JS FAIL";
-    record(jsOk, "JavaScript execution", jsOk ? "7142142 checksum" : "unexpected result");
-    if (jsOk) passed++;
-
-    try {
-      var info = await fetchJson("/api/info", 4000);
-      var d = info.data || {};
-      var ok = !!(info.ok && d.ok);
-      $("runtime").textContent = ok ? ("Node " + d.node + " / " + d.platform) : ("HTTP " + info.status);
-      record(ok, "Runtime", ok ? (d.node + " pid=" + d.pid) : ("status " + info.status));
-      if (ok) { passed++; setLayer("ly-ctr", "ok", d.hostname || "container up"); }
-      else setLayer("ly-ctr", "bad", "info failed");
-    } catch (e) {
-      $("runtime").textContent = "FAIL";
-      record(false, "Runtime", e && e.message ? e.message : String(e));
-      setLayer("ly-ctr", "bad", "fetch failed");
-    }
-
-    try {
-      var h = await fetchJson("/health", 4000);
-      var okh = !!(h.ok && h.data && h.data.ok);
-      $("http").textContent = okh ? "HTTP 200" : ("HTTP " + h.status);
-      record(okh, "HTTP health", okh ? (h.data.service + " " + h.data.version) : ("status " + h.status));
-      if (okh) { passed++; setLayer("ly-api", "ok", "/health 200"); }
-      else setLayer("ly-api", "bad", "health " + h.status);
-    } catch (e) {
-      $("http").textContent = "FAIL";
-      record(false, "HTTP health", e && e.message ? e.message : String(e));
-      setLayer("ly-api", "bad", "fetch hung/failed");
-    }
-
-    try {
-      var w = await fetchJson("/api/write-test", 4000);
-      var okw = !!(w.ok && w.data && w.data.ok);
-      $("fs").textContent = okw ? ("Writable (" + w.data.bytes + " B)") : "FAIL";
-      record(okw, "Filesystem write/read", okw ? w.data.dir : (w.data && w.data.error) || ("status " + w.status));
-      if (okw) passed++;
-    } catch (e) {
-      $("fs").textContent = "FAIL";
-      record(false, "Filesystem write/read", e && e.message ? e.message : String(e));
-    }
-
-    try {
-      var t = (typeof performance !== "undefined" ? performance.now() : Date.now());
-      var c = await fetchJson("/api/cpu-test?ms=250", 4000);
-      var okc = !!(c.ok && c.data && c.data.ok);
-      var now2 = (typeof performance !== "undefined" ? performance.now() : Date.now());
-      var rt = Math.round(now2 - t);
-      $("cpu").textContent = okc ? (c.data.elapsed_ms + " ms") : "FAIL";
-      record(okc, "CPU/process test", okc ? ("server " + c.data.elapsed_ms + " ms, RTT " + rt + " ms") : ("status " + c.status));
-      if (okc) passed++;
-    } catch (e) {
-      $("cpu").textContent = "FAIL";
-      record(false, "CPU/process test", e && e.message ? e.message : String(e));
-    }
-
-    try {
-      var rs = await Promise.all([
-        fetchJson("/api/parallel-test", 4000),
-        fetchJson("/api/parallel-test", 4000),
-        fetchJson("/api/parallel-test", 4000),
-        fetchJson("/api/parallel-test", 4000),
-        fetchJson("/api/parallel-test", 4000)
-      ]);
-      var n = rs.filter(function (r) { return r.ok && r.data && r.data.ok; }).length;
-      var okp = n === 5;
-      $("parallel").textContent = n + "/5 OK";
-      record(okp, "Parallel HTTP requests", n + "/5");
-      if (okp) passed++;
-    } catch (e) {
-      $("parallel").textContent = "FAIL";
-      record(false, "Parallel HTTP requests", e && e.message ? e.message : String(e));
-    }
-
-    finished = true;
-    var all = passed === total;
-    $("overall").className = "badge " + (all ? "ok" : "bad");
-    $("overall").textContent = all ? "SANDBOX READY" : ("NOT READY · " + passed + "/" + total);
-    logLines.push("");
-    logLines.push("RESULT: " + passed + "/" + total + " checks passed in " + ((Date.now() - PAGE_T0) / 1000).toFixed(2) + "s");
-    logLines.push(all
-      ? "SAFE BASELINE: common web-app testing may proceed."
-      : "DO NOT BLAME THE APP YET: qualify/fix the sandbox first.");
-    $("log").textContent = logLines.join("\n");
-  }
-
-  setTimeout(function () {
-    if (!finished) {
-      $("overall").className = "badge warn";
-      $("overall").textContent = "STUCK >3s";
-      logLines.push("WATCHDOG: tests not finished after 3s. Preview/API may be hanging.");
-      $("log").textContent = logLines.join("\n");
-    }
-  }, 3000);
-
-  setTimeout(function () {
-    if (!finished) {
-      $("overall").className = "badge bad";
-      $("overall").textContent = "STUCK >10s";
-      setLayer("ly-api", "warn", "possible hang");
-      logLines.push("WATCHDOG: still running after 10s. Treat as sandbox/preview issue.");
-      $("log").textContent = logLines.join("\n");
-    }
-  }, 10000);
-
-  $("btn-rerun").onclick = function () { location.reload(); };
-  $("btn-self").onclick = function () { location.href = "/api/self-test"; };
-
-  run().catch(function (e) {
-    finished = true;
-    $("overall").className = "badge bad";
-    $("overall").textContent = "NOT READY";
-    record(false, "Runner crashed", e && e.message ? e.message : String(e));
-  });
-})();
-</script>
-</body>
+  <script src="/app.js?v=1.4.13"></script>
+<img class="paf-made-by" src="/made-by.png" alt="Made with App Builder — Pi SoloHost"></body>
 </html>

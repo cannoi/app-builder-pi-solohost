@@ -144,10 +144,11 @@ const server = http.createServer(function (req, res) {
     return finishJson(health());
   }
 
-  if (url.pathname === "/api/info") {
+  if (url.pathname === "/api/info" || url.pathname === "/api/container" || url.pathname === "/container") {
     return finishJson(Object.assign({}, health(), {
       writable_dir: pickWritableDir(),
-      write_candidates: WRITE_DIRS
+      write_candidates: WRITE_DIRS,
+      container: true
     }));
   }
 

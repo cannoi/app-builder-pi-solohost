@@ -1,0 +1,8 @@
+services:
+  app:
+    image: ghcr.io/cannoi/app-builder-pi-solohost:latest
+    restart: unless-stopped
+    labels:
+      pi.ui.primary: "true"
+    ports:
+      - "127.0.0.1:18080:8080"
