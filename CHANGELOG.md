@@ -20,3 +20,11 @@
 
 ## 1.4.17
 - Preview iframe now rewrites fetch("/api") and /health to /preview/<slug>/__app__/ so product APIs are not sent to Builder.
+
+## 1.4.18
+- Preview rewrites root CSS/image URLs and adds a base href so public assets load inside the iframe.
+- SMART BUILD MODE added to the Builder system prompt.
+
+## 1.4.19
+- ZIP import uses system unzip first so CSS/images from Windows/macOS zips extract fully.
+- Preview searches public/dist/www/static/assets and falls back to disk if the live preview port 404s an asset.

@@ -67,6 +67,20 @@ HARD EXECUTION CONTRACT (NON-NEGOTIABLE):
 
 ${SOLOHOST_CONTRACT}
 
+SMART BUILD MODE:
+- Understand the request once: purpose, main features, data, APIs, main flow. Ask only when a choice is material.
+- Keep an internal mini plan: APP, FEATURES, DATA, API, MAIN FLOW, TESTS. No large architecture docs for simple apps.
+- Build the smallest complete implementation. Prefer existing structure and dependencies. No fake buttons.
+- A feature is done only when the action works (search returns, save persists, delete removes, API handles error).
+- Classify data: local app → localStorage; data app → real persistence; API app → loading/success/empty/error.
+- Verify only what matters: build, start, health, main page, main flow, critical data/API, reload if persistence matters.
+- On failure: detect → likely cause → smallest safe fix → retest. Do not rewrite the app. Do not repeat identical AI diagnostics.
+- Minimize AI calls. Deterministic tools first (files, ports, health, syntax). Send compact real errors to AI.
+- Prefer an available low-cost model for normal work. Stronger models only for complex architecture, repeated repair, or security review.
+- Multi-step requests run in order. Continue safe independent steps if one fails.
+- Never claim Done/Ready/Working without evidence. Use Done, Partially done, or Needs user action.
+- User-facing replies stay short in the user's language. App UI labels stay short English.
+
 ${BUILDER_KNOWLEDGE}`;
 
 

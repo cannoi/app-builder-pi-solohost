@@ -10,6 +10,13 @@ test('preview HTML fetch("/api") is rewritten to the preview prefix', () => {
   assert.match(html, /\/preview\/snake-classic\/__app__/);
 });
 
+test('preview HTML rewrites root CSS and image URLs onto the app prefix', () => {
+  const html = injectPreviewBridge('<head><link href="/style.css" rel="stylesheet"></head><body><img src="/logo.png"></body>', 'demo-app');
+  assert.match(html, /\/preview\/demo-app\/__app__\/style\.css/);
+  assert.match(html, /\/preview\/demo-app\/__app__\/logo\.png/);
+  assert.match(html, /<base href="\/preview\/demo-app\/__app__\/">/);
+});
+
 test('preview proxy must use the app port, never Builder :8080 on localhost', () => {
   assert.deepEqual(
     resolvePreviewUpstream({ status: 'passed', proxyHost: '127.0.0.1', proxyPort: 45123, hostPort: 45123 }),

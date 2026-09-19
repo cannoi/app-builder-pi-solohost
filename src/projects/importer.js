@@ -10,17 +10,21 @@ const exec = promisify(execFile);
 export async function importZipBuffer(buf, destDir, { replace = false } = {}) {
   await ensureDir(destDir);
   if (replace) await clearImportedSource(destDir);
+  const zipPath = path.join(destDir, '_upload.zip');
+  await fs.writeFile(zipPath, buf);
+  let unpacked = false;
   try {
-    await readZip(buf, destDir);
+    await exec('unzip', ['-o', '-qq', zipPath, '-d', destDir], { timeout: 60000 });
+    unpacked = true;
   } catch {
-    const zipPath = path.join(destDir, '_upload.zip');
-    await fs.writeFile(zipPath, buf);
+    unpacked = false;
+  }
+  await fs.rm(zipPath, { force: true }).catch(() => {});
+  if (!unpacked) {
     try {
-      await exec('unzip', ['-o', '-qq', zipPath, '-d', destDir], { timeout: 60000 });
+      await readZip(buf, destDir);
     } catch {
       throw new Error('Could not unpack the ZIP. Use a standard .zip file without encryption.');
-    } finally {
-      await fs.rm(zipPath, { force: true }).catch(() => {});
     }
   }
   await flattenImportedTree(destDir);

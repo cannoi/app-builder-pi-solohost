@@ -1,21 +1,7 @@
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
-
-const MIME = {
-  '.html': 'text/html; charset=utf-8',
-  '.js': 'text/javascript; charset=utf-8',
-  '.mjs': 'text/javascript; charset=utf-8',
-  '.css': 'text/css; charset=utf-8',
-  '.json': 'application/json; charset=utf-8',
-  '.svg': 'image/svg+xml',
-  '.png': 'image/png',
-  '.jpg': 'image/jpeg',
-  '.jpeg': 'image/jpeg',
-  '.webp': 'image/webp',
-  '.gif': 'image/gif',
-  '.ico': 'image/x-icon',
-};
+import { PREVIEW_MIME as MIME } from './preview-mime.js';
 
 export function createPreviewHandler({ projects }) {
   return async function preview(req, res, url) {
@@ -44,12 +30,12 @@ export function createPreviewHandler({ projects }) {
     const apiPort = Number(runtime.apiPort);
     const isApi = /^\/(api|health|ready|live)(\/|$)/.test(rel === '/' ? '/' : rel);
     if (runtime.status === 'passed' && isApi && Number.isFinite(apiPort) && apiPort > 0) {
-      const ok = await proxy(req, res, runtime.apiHost || '127.0.0.1', apiPort, targetPath, project);
-      if (ok) return true;
+      const proxied = await proxy(req, res, runtime.apiHost || '127.0.0.1', apiPort, targetPath, project);
+      if (proxied.ok) return true;
     }
-    if (runtime.status === 'passed' && target) {
-      const ok = await proxy(req, res, target.host, target.port, targetPath, project);
-      if (ok) return true;
+    if (runtime.status === 'passed' && target && !isApi) {
+      const proxied = await proxy(req, res, target.host, target.port, targetPath, project);
+      if (proxied.ok && proxied.status < 400) return true;
     }
     const sourceDir = projects.sourceDir(project.slug);
     if (serveProjectFile(sourceDir, targetPath, res, project.slug)) return true;
@@ -91,36 +77,70 @@ iframe{position:fixed;top:38px;left:0;right:0;bottom:0;width:100%;height:calc(10
 </body></html>`;
 }
 
+export function previewAssetPrefix(slug) {
+  return `/preview/${encodeURIComponent(slug)}/__app__`;
+}
+
+export function rewriteRootAssetUrls(html, slug) {
+  const prefix = previewAssetPrefix(slug);
+  return String(html || '')
+    .replace(/\s(href|src|poster|action)=(["'])\/(?!\/|preview\/|\?)/gi, ` $1=$2${prefix}/`)
+    .replace(/url\(\s*(['"]?)\/(?!\/|preview\/)/gi, `url($1${prefix}/`);
+}
+
 export function injectPreviewBridge(html, slug) {
-  const prefix = `/preview/${encodeURIComponent(slug)}/__app__`;
-  const snippet = `<script data-paf-bridge="1">(function(){var p=${JSON.stringify(prefix)};function fix(u){if(typeof u!=='string')return u;if(!u||u.charAt(0)!=='/')return u;if(u.indexOf(p)===0||u.indexOf('/preview/')===0||u.indexOf('/?')===0)return u;return p+u;}var f=window.fetch;window.fetch=function(i,n){if(typeof i==='string')i=fix(i);else if(i&&i.url)i=new Request(fix(i.url),i);return f.call(this,i,n);};var o=XMLHttpRequest.prototype.open;XMLHttpRequest.prototype.open=function(m,u){if(typeof u==='string')arguments[1]=fix(u);return o.apply(this,arguments);};})();</script>`;
-  const text = String(html || '');
+  const prefix = previewAssetPrefix(slug);
+  const snippet = `<base href="${prefix}/"><script data-paf-bridge="1">(function(){var p=${JSON.stringify(prefix)};function fix(u){if(typeof u!=='string')return u;if(!u||u.charAt(0)!=='/')return u;if(u.indexOf(p)===0||u.indexOf('/preview/')===0||u.indexOf('/?')===0)return u;return p+u;}var f=window.fetch;window.fetch=function(i,n){if(typeof i==='string')i=fix(i);else if(i&&i.url)i=new Request(fix(i.url),i);return f.call(this,i,n);};var o=XMLHttpRequest.prototype.open;XMLHttpRequest.prototype.open=function(m,u){if(typeof u==='string')arguments[1]=fix(u);return o.apply(this,arguments);};})();</script>`;
+  let text = rewriteRootAssetUrls(String(html || ''), slug);
   if (/data-paf-bridge/.test(text)) return text;
   if (/<head[^>]*>/i.test(text)) return text.replace(/<head[^>]*>/i, (m) => `${m}${snippet}`);
   return `${snippet}${text}`;
 }
 
-function serveProjectFile(sourceDir, targetPath, res, slug) {
+export function findProjectAsset(sourceDir, targetPath) {
   const clean = decodeURIComponent(String(targetPath || '/').split('?')[0] || '/');
-  const rel = clean === '/' ? 'index.html' : clean.replace(/^\/+/, '');
-  const roots = ['public', 'dist', 'www', ''].map((d) => path.join(sourceDir, d));
-  for (const root of roots) {
-    const file = path.normalize(path.join(root, rel === 'index.html' && clean !== '/' ? rel : rel));
-    const index = path.join(root, 'index.html');
-    const candidate = fs.existsSync(file) && fs.statSync(file).isFile() ? file
-      : (clean === '/' || rel === 'index.html') && fs.existsSync(index) ? index
-      : null;
-    if (!candidate || !candidate.startsWith(root)) continue;
-    try {
-      let data = fs.readFileSync(candidate);
-      const type = MIME[path.extname(candidate).toLowerCase()] || 'application/octet-stream';
-      if (type.includes('text/html') && slug) data = Buffer.from(injectPreviewBridge(data.toString('utf8'), slug), 'utf8');
-      res.writeHead(200, { 'Content-Type': type });
-      res.end(data);
-      return true;
-    } catch { return false; }
+  const rel = (clean === '/' ? 'index.html' : clean.replace(/^\/+/, '')).replace(/\\/g, '/');
+  const roots = ['public', 'dist', 'www', 'static', 'assets', ''];
+  for (const dir of roots) {
+    const root = path.resolve(sourceDir, dir);
+    const file = path.normalize(path.join(root, rel));
+    if (file.startsWith(root) && fs.existsSync(file) && fs.statSync(file).isFile()) return file;
   }
-  return false;
+  const wanted = rel.toLowerCase();
+  const stack = [sourceDir];
+  while (stack.length) {
+    const dir = stack.pop();
+    let entries = [];
+    try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { continue; }
+    for (const e of entries) {
+      const full = path.join(dir, e.name);
+      if (e.isDirectory()) {
+        if (e.name === 'node_modules' || e.name === '.git') continue;
+        stack.push(full);
+      } else {
+        const relFound = path.relative(sourceDir, full).replace(/\\/g, '/');
+        if (relFound === rel || relFound.toLowerCase() === wanted || relFound.endsWith(`/${rel}`) || relFound.endsWith(`/${path.basename(rel)}`)) {
+          if (path.basename(relFound).toLowerCase() === path.basename(rel).toLowerCase()) return full;
+        }
+      }
+    }
+  }
+  return null;
+}
+
+function serveProjectFile(sourceDir, targetPath, res, slug) {
+  const candidate = findProjectAsset(sourceDir, targetPath);
+  if (!candidate) return false;
+  try {
+    let data = fs.readFileSync(candidate);
+    const type = MIME[path.extname(candidate).toLowerCase()] || 'application/octet-stream';
+    if (type.includes('text/html') && slug) data = Buffer.from(injectPreviewBridge(data.toString('utf8'), slug), 'utf8');
+    res.writeHead(200, { 'Content-Type': type, 'Cache-Control': 'no-store' });
+    res.end(data);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function proxy(req, res, hostname, port, targetPath, project) {
@@ -139,11 +159,17 @@ function proxy(req, res, hostname, port, targetPath, project) {
       headers,
       timeout: 5000,
     }, (up) => {
+      const status = up.statusCode || 502;
       const hop = { ...up.headers };
       delete hop.connection;
       delete hop['keep-alive'];
       delete hop['x-frame-options'];
       delete hop['content-security-policy'];
+      if (status >= 400) {
+        up.resume();
+        resolve({ ok: false, status });
+        return;
+      }
       const ctype = String(hop['content-type'] || hop['Content-Type'] || '');
       const slug = project?.slug;
       if (slug && ctype.includes('text/html')) {
@@ -153,25 +179,25 @@ function proxy(req, res, hostname, port, targetPath, project) {
           try {
             const html = injectPreviewBridge(Buffer.concat(chunks).toString('utf8'), slug);
             delete hop['content-length'];
-            res.writeHead(up.statusCode || 200, hop);
+            res.writeHead(status, hop);
             res.end(html);
-            resolve(true);
+            resolve({ ok: true, status });
           } catch {
-            resolve(false);
+            resolve({ ok: false, status });
           }
         });
         return;
       }
       try {
-        res.writeHead(up.statusCode || 502, hop);
+        res.writeHead(status, hop);
         up.pipe(res);
-        up.on('end', () => resolve(true));
+        up.on('end', () => resolve({ ok: true, status }));
       } catch {
-        resolve(false);
+        resolve({ ok: false, status });
       }
     });
     incoming.on('timeout', () => incoming.destroy());
-    incoming.on('error', () => resolve(false));
+    incoming.on('error', () => resolve({ ok: false, status: 0 }));
     if (req.method === 'GET' || req.method === 'HEAD') incoming.end();
     else req.pipe(incoming);
   });

@@ -6,26 +6,12 @@ import http from 'node:http';
 import { spawn, execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { runPlaywrightE2E } from '../testing/playwright.js';
+import { PREVIEW_MIME as MIME } from '../preview-mime.js';
+import { findProjectAsset } from '../preview.js';
 
 const sleep = promisify(setTimeout);
 const execFileP = promisify(execFile);
 const processes = new Map();
-
-const MIME = {
-  '.html': 'text/html; charset=utf-8',
-  '.js': 'text/javascript; charset=utf-8',
-  '.mjs': 'text/javascript; charset=utf-8',
-  '.css': 'text/css; charset=utf-8',
-  '.json': 'application/json; charset=utf-8',
-  '.svg': 'image/svg+xml',
-  '.png': 'image/png',
-  '.jpg': 'image/jpeg',
-  '.jpeg': 'image/jpeg',
-  '.webp': 'image/webp',
-  '.gif': 'image/gif',
-  '.ico': 'image/x-icon',
-  '.woff2': 'font/woff2',
-};
 
 export class NativePreview {
   constructor({ cfg, log, browserFactory = null } = {}) {
@@ -53,7 +39,7 @@ export class NativePreview {
     let apiPort = null;
 
     if (publicDir) {
-      server = createStaticServer(publicDir, safe);
+      server = createStaticServer(sourcePath, safe);
       await new Promise((resolve, reject) => {
         server.once('error', reject);
         server.listen(port, '127.0.0.1', resolve);
@@ -152,7 +138,7 @@ export class NativePreview {
   }
 }
 
-function createStaticServer(root, slugName) {
+function createStaticServer(sourcePath, slugName) {
   return http.createServer((req, res) => {
     const raw = decodeURIComponent((req.url || '/').split('?')[0] || '/');
     if (raw === '/health') {
@@ -160,25 +146,17 @@ function createStaticServer(root, slugName) {
       res.end(JSON.stringify({ status: 'ok', app: slugName, preview: true }));
       return;
     }
-    let rel = raw === '/' ? '/index.html' : raw;
-    const file = path.normalize(path.join(root, rel));
-    if (!file.startsWith(root)) {
-      res.writeHead(403);
-      res.end('Forbidden');
+    const file = findProjectAsset(sourcePath, raw === '/' ? '/index.html' : raw);
+    if (!file) {
+      res.writeHead(404);
+      res.end('Not found');
       return;
     }
     fssync.readFile(file, (err, data) => {
       if (err) {
-        const index = path.join(root, 'index.html');
-        return fssync.readFile(index, (e2, html) => {
-          if (e2) {
-            res.writeHead(404);
-            res.end('Not found');
-            return;
-          }
-          res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-          res.end(html);
-        });
+        res.writeHead(404);
+        res.end('Not found');
+        return;
       }
       res.writeHead(200, { 'Content-Type': MIME[path.extname(file).toLowerCase()] || 'application/octet-stream' });
       res.end(data);
