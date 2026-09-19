@@ -37,13 +37,12 @@ export function createPreviewHandler({ projects }) {
       return true;
     }
     const runtime = await projects.readMetadata(project, 'runtime.json', {}).catch(() => ({}));
-    const port = Number(runtime.proxyPort || runtime.hostPort);
-    const ip = runtime.proxyHost || runtime.containerIp || '127.0.0.1';
+    const target = resolvePreviewUpstream(runtime);
     const rel = '/' + restParts.filter((p) => p !== '__app__').join('/');
     const targetPath = (rel === '/' ? '/' : rel) + url.search;
 
-    if (runtime.status === 'passed' && (ip || port)) {
-      const ok = await proxy(req, res, ip || '127.0.0.1', ip ? 8080 : port, targetPath, project);
+    if (runtime.status === 'passed' && target) {
+      const ok = await proxy(req, res, target.host, target.port, targetPath, project);
       if (ok) return true;
     }
     const sourceDir = projects.sourceDir(project.slug);
@@ -170,4 +169,14 @@ function safeHtml(res, status, html) {
 
 export function previewPath(slug) {
   return `/preview/${encodeURIComponent(slug)}/`;
+}
+
+export function resolvePreviewUpstream(runtime = {}) {
+  const host = String(runtime.proxyHost || runtime.containerIp || '127.0.0.1');
+  const port = Number(runtime.proxyPort || runtime.hostPort);
+  if (!Number.isFinite(port) || port <= 0) return null;
+  const builderPort = Number(process.env.PORT || 8080);
+  const loopback = host === '127.0.0.1' || host === 'localhost' || host === '::1';
+  if (loopback && port === builderPort) return null;
+  return { host, port };
 }

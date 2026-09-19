@@ -2,7 +2,15 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import { createApp, listen } from '../src/http.js';
-import { createPreviewHandler, previewPath } from '../src/preview.js';
+import { createPreviewHandler, previewPath, resolvePreviewUpstream } from '../src/preview.js';
+
+test('preview proxy must use the app port, never Builder :8080 on localhost', () => {
+  assert.deepEqual(
+    resolvePreviewUpstream({ status: 'passed', proxyHost: '127.0.0.1', proxyPort: 45123, hostPort: 45123 }),
+    { host: '127.0.0.1', port: 45123 },
+  );
+  assert.equal(resolvePreviewUpstream({ proxyHost: '127.0.0.1', hostPort: 8080 }), null);
+});
 
 function get(port, pathname) {
   return new Promise((resolve, reject) => {
