@@ -51,8 +51,8 @@ export function classifyLogs(logs = '') {
   }
   if (/eaddrinuse/i.test(t)) return { code: 'port_busy', title: 'Port is already in use.', hint: 'Stop the previous preview and Run again.' };
   if (/syntaxerror|unexpected token/i.test(t)) return { code: 'syntax', title: 'The server file has a syntax error.', hint: 'I will patch the file and Run again.' };
-  if (/fetch failed|econnrefused|couldn't connect/i.test(t)) {
-    return { code: 'preview_connection', title: 'The preview could not connect to the app.', hint: 'Check whether the app process stayed alive, whether it listens on the assigned PORT, and whether the Preview proxy can reach the sandbox. Read the startup log before changing source code.' };
+  if (/fetch failed|econnrefused|couldn't connect|preview port is not open/i.test(t)) {
+    return { code: 'preview_connection', title: 'Preview could not open the test page.', hint: 'Tap Run again. App Builder will serve the app files directly if the generated server is not ready.' };
   }
   return null;
 }
