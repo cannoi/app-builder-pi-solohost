@@ -9,7 +9,7 @@ import { listFiles } from '../utils/fsx.js';
 import fs from 'node:fs/promises';
 import { saveAttachment, attachmentContext, attachmentList, imageInputsFromAttachments } from '../projects/attachments.js';
 import { writeSoloHostPackage } from '../release/solohost.js';
-import { inferAction, classifyLogs, diagnoseSource, nextStep, guideCard, isHostDockerCommand, isNpmOnEmptyRisk, splitUserSteps } from '../scripts/ops.js';
+import { inferAction, classifyLogs, describeFailure, diagnoseSource, nextStep, guideCard, isHostDockerCommand, isNpmOnEmptyRisk, splitUserSteps } from '../scripts/ops.js';
 import { stampMadeBy } from '../projects/badge.js';
 import { createProjectZip } from '../projects/exporter.js';
 import { gcDocker } from '../docker/cleanup.js';
@@ -389,6 +389,8 @@ export function registerPipeline(app) {
     const diagnosis = await diagnoseSource(source);
     const runtimeNow = await projects.readMetadata(project, 'runtime.json', {});
     const history = (await projects.chatHistory(project)).slice(-16).map((m) => `${m.role}: ${String(m.message || '').slice(0, 240)}`).join('\n');
+    const activity = await projects.readMetadata(project, 'activity.json', []);
+    const activityText = (Array.isArray(activity) ? activity.slice(-20) : []).map((a) => `${a.t || ''} ${a.action || ''} ${a.status || ''} ${String(a.detail || '').slice(0, 160)}`).join('\n');
     const handoff = await projects.readMetadata(project, 'handoff.json', {});
     const context = await collectProjectContext(source);
     const attachContext = await attachmentContext(projects.projectDir(project));
@@ -398,7 +400,7 @@ export function registerPipeline(app) {
       r = await ai.completeJson({
         task: 'USER_CHAT',
         system: SYSTEM,
-        prompt: builderChatPrompt(project, message, `${languageInstruction(message)}\nHANDOFF:\n${JSON.stringify(handoff)}\nHISTORY:\n${history}\nDIAGNOSIS:\n${JSON.stringify(diagnosis)}\nRUNTIME:\n${JSON.stringify({ status: runtimeNow.status, error: runtimeNow.error, previewPath: runtimeNow.previewPath })}\n${context}\n${attachContext}`, await attachmentList(projects.projectDir(project))),
+        prompt: builderChatPrompt(project, message, `${languageInstruction(message)}\nHANDOFF:\n${JSON.stringify(handoff)}\nACTIVITY LOG:\n${activityText}\nHISTORY:\n${history}\nDIAGNOSIS:\n${JSON.stringify(diagnosis)}\nRUNTIME:\n${JSON.stringify({ status: runtimeNow.status, error: runtimeNow.error, previewPath: runtimeNow.previewPath })}\n${context}\n${attachContext}`, await attachmentList(projects.projectDir(project))),
         projectId: project.id,
         images: [...imageInputs(incomingFiles), ...(await imageInputsFromAttachments(projects.projectDir(project)))],
       });
@@ -486,6 +488,25 @@ export function registerPipeline(app) {
     payload.brief = formatUserBrief({ action, runtime: latestRuntime, diagnosis, reply, next: payload.next, language: userLanguage, reports: payload.reports });
     await gcDocker({ keepImage: latestRuntime.image || null, keepContainer: latestRuntime.status === 'passed' ? latestRuntime.container : null, log }).catch(() => {});
     await projects.chat(project, payload.brief, 'assistant', { action, next: payload.next });
+    const failCard = describeFailure({
+      error: latestRuntime.error || payload.reports.find((s) => s.status === 'failed')?.error || '',
+      logs: latestRuntime.logs || '',
+      findings: diagnosis.findings || [],
+      action,
+    });
+    payload.fix = failCard.fix;
+    payload.copyForAi = latestRuntime.status === 'passed' ? null : failCard.copy;
+    const prevActivity = Array.isArray(activity) ? activity : [];
+    await projects.saveMetadata(project, 'activity.json', [
+      ...prevActivity,
+      {
+        t: new Date().toISOString(),
+        action,
+        status: latestRuntime.status || (payload.reports.some((s) => s.status === 'failed') ? 'failed' : 'done'),
+        detail: failCard.what,
+        next: payload.next,
+      },
+    ].slice(-40));
     await projects.saveMetadata(project, 'handoff.json', {
       updatedAt: new Date().toISOString(),
       userLanguage,
@@ -876,12 +897,14 @@ function formatUserBrief({ action, runtime, diagnosis, reply, next, language = '
     : runtime?.error ? t.failed : action === 'reply' ? (reply || t.finished) : t.finished;
   const done = runtime?.status === 'passed' ? t.image : action;
   const missing = diagnosis?.findings?.length ? diagnosis.findings.map((f) => f.title).join('; ') : (runtime?.status === 'passed' ? t.none : (classifyLogs(runtime?.error || runtime?.logs || '')?.title || t.needRun));
-  const why = runtime?.status === 'failed' && runtime.error ? String(runtime.error).split('\n')[0].slice(0, 220) : '';
+  const card = describeFailure({ error: runtime?.error || '', logs: runtime?.logs || '', findings: diagnosis?.findings || [], action });
+  const why = runtime?.status === 'failed' ? card.what : (runtime?.error ? String(runtime.error).split('\n')[0].slice(0, 220) : '');
   const extra = reply && !/RESULT:/i.test(reply) ? reply : '';
   const reportLines = Array.isArray(reports) && reports.length
     ? reports.map((s) => `${s.status === 'done' ? '✅' : '⚠️'} ${s.action}: ${String(s.goal || '').slice(0, 80)}${s.error ? ` (${s.error})` : ''}`).join('\n')
     : '';
-  return [`RESULT: ${result}`, why ? `WHY: ${why}` : '', `DONE: ${done}`, `MISSING: ${missing}`, `NEXT: ${next}`, reportLines, extra].filter(Boolean).join('\n');
+  const failBlock = runtime?.status === 'failed' ? [`FIX: ${card.fix}`, `COPY_FOR_AI:\n${card.copy}`] : [];
+  return [`RESULT: ${result}`, why ? `WHY: ${why}` : '', `DONE: ${done}`, `MISSING: ${missing}`, `NEXT: ${next}`, ...failBlock, reportLines, extra].filter(Boolean).join('\n');
 }
 
 function briefRun(runtime) {
@@ -895,11 +918,14 @@ function briefRun(runtime) {
 }
 
 function briefFail(reason) {
+  const card = describeFailure({ error: reason || '' });
   return [
     `RESULT: Not ready.`,
-    `WHY: ${String(reason || 'Unknown error').slice(0, 280)}`,
+    `WHY: ${card.what}`,
+    `FIX: ${card.fix}`,
     `MISSING: a passing run.`,
-    `NEXT: I can read the error and try a fix. Send the problem in chat.`,
+    `NEXT: Use the FIX above, or send COPY_FOR_AI to chat.`,
+    `COPY_FOR_AI:\n${card.copy}`,
   ].join('\n');
 }
 

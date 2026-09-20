@@ -75,3 +75,11 @@ test('sandbox benchmark template is bundled', () => {
   assert.equal(fs.existsSync(new URL('server.js', root)), true);
   assert.equal(fs.existsSync(new URL('public/index.html', root)), true);
 });
+
+test('describeFailure includes a copy-for-AI block and a fix', async () => {
+  const { describeFailure } = await import('../src/scripts/ops.js');
+  const card = describeFailure({ error: 'Cannot find module \'express\'', action: 'run' });
+  assert.match(card.copy, /APP BUILDER ERROR REPORT/);
+  assert.match(card.fix, /./);
+  assert.equal(card.code, 'missing_express');
+});

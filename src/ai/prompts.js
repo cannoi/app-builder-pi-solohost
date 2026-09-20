@@ -156,13 +156,22 @@ Do not include .env, credentials, node_modules, or host Docker socket mounts.`;
 }
 
 export function patchPrompt(project, error, files, feedback = '') {
-  return `${languageInstruction(feedback || project.idea)}\n\nRepair or improve this app with the smallest safe complete patch.\nProject: ${project.name}
+  return `${languageInstruction(feedback || project.idea)}\n
+HARD REPAIR RULES (do not violate):
+- Diagnose the exact error first. If the error is missing, do not invent a rewrite.
+- Change the smallest number of files. Prefer a few-line patch over a new file set.
+- Never replace a working UI, game loop, or API with a different architecture.
+- Never drop CSS, images, public/ files, or package.json scripts that already exist.
+- Return only files that must change. Omit unchanged files.
+- If you are unsure, return zero files and explain in explanation.
+
+Project: ${project.name}
 User feedback: ${feedback}
 Error: ${error}
 Relevant files:\n${files}
 
 Return JSON:
-{"root_cause":"","files":[{"path":"","content":"full new file content"}],"explanation":"plain language"}`;
+{"root_cause":"one sentence","files":[{"path":"","content":"full new file content only if this file must change"}],"explanation":"plain language","risk":"low|medium"}`;
 }
 
 export function reviewPrompt(project, manifest) {
@@ -179,7 +188,9 @@ User message: ${message}
 Project context:\n${context}
 Attachments:\n${JSON.stringify(attachments)}
 
+Use ACTIVITY LOG to see what the user just did and which errors already happened. Do not repeat a failed identical patch.
 Decide the next useful action. Do not pretend an action was completed.
+If the user reports a bug, set action=improve and put the concrete error + suggested fix in feedback. Never return a vague "something failed".
 Return JSON:
 {
  "reply":"short response in the user's language. Put RESULT first, then DONE, MISSING, NEXT.",

@@ -213,6 +213,7 @@ async function spawnApp(sourcePath, port, pkgIn = null) {
       BIND: '127.0.0.1',
       HOST: '127.0.0.1',
       NODE_ENV: 'test',
+      PREVIEW_ONLINE: process.env.PREVIEW_ONLINE || 'true',
     },
     detached: true,
     stdio: 'ignore',

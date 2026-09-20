@@ -28,3 +28,8 @@
 ## 1.4.19
 - ZIP import uses system unzip first so CSS/images from Windows/macOS zips extract fully.
 - Preview searches public/dist/www/static/assets and falls back to disk if the live preview port 404s an asset.
+
+## 1.4.20
+- Preview/sandbox DNS + PREVIEW_ONLINE so product apps can use the Internet.
+- Failures include WHY, FIX, and COPY_FOR_AI.
+- Repair prompt forbids full rewrites. Activity log is stored and sent to AI.

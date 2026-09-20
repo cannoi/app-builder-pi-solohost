@@ -57,6 +57,26 @@ export function classifyLogs(logs = '') {
   return null;
 }
 
+export function describeFailure({ error = '', logs = '', findings = [], action = '' } = {}) {
+  const raw = String(error || logs || '').trim();
+  const crash = classifyLogs(`${error}\n${logs}`);
+  const evidence = raw.split('\n').filter(Boolean).slice(0, 8).join('\n').slice(0, 900);
+  const findingText = (findings || []).map((f) => f.title || f.detail || f.check).filter(Boolean).slice(0, 5);
+  const what = crash?.title || (raw ? raw.split('\n')[0].slice(0, 180) : 'The last action did not finish cleanly.');
+  const why = crash?.hint || findingText[0] || 'The preview, build, or file check returned an error.';
+  const fix = crash?.hint || (action === 'run' ? 'Tap Run after the files exist. If it still fails, send the COPY_FOR_AI block below.' : 'Apply the smallest patch to the file named in EVIDENCE. Do not rewrite the app.');
+  const copy = [
+    'APP BUILDER ERROR REPORT',
+    `WHAT: ${what}`,
+    `WHY: ${why}`,
+    findingText.length ? `CHECKS: ${findingText.join(' | ')}` : '',
+    evidence ? `EVIDENCE:\n${evidence}` : '',
+    `FIX: ${fix}`,
+    'CONSTRAINT: Preserve existing working files. Change only the files needed for this error.',
+  ].filter(Boolean).join('\n');
+  return { code: crash?.code || 'unknown', what, why, fix, evidence, copy };
+}
+
 export async function diagnoseSource(sourceDir) {
   const files = await listFiles(sourceDir).catch(() => []);
   const findings = [];
