@@ -119,3 +119,23 @@ test('SoloHost config schema keeps fields and fixed_values as arrays', () => {
   assert.match(text, /fixed_values:\n\s+- name: PREVIEW_MODE/);
   assert.match(text, /- name: PODMAN_API_URL/);
 });
+
+
+test('queue exposes the current running job for duplicate-action recovery', async () => {
+  const src = readFileSync(path.join(ROOT, 'src/jobs/queue.js'), 'utf8');
+  assert.match(src, /runningJob\(projectId = null\)/);
+  assert.match(src, /status IN \('queued','running'\)/);
+});
+
+test('Builder never equates browser page success with Internet verification', async () => {
+  const src = readFileSync(path.join(ROOT, 'src/jobs/pipeline.js'), 'utf8');
+  assert.match(src, /Internet browsing is not yet verified/);
+  assert.match(src, /runtime\.internet\?\.ok === true/);
+});
+
+test('network repair prompt traces the real proxy request path', async () => {
+  const src = readFileSync(path.join(ROOT, 'src/ai/prompts.js'), 'utf8');
+  assert.match(src, /browser URL → app route → target URL parsing/);
+  assert.match(src, /Do not merely describe a fix/);
+  assert.match(src, /Never call a passing \/health or page-load check proof that Internet browsing works/);
+});

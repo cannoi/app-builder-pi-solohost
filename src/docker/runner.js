@@ -165,7 +165,7 @@ export class BuildRunner {
       return {
         status: 'passed', runtime: 'podman-sandbox', engine: 'podman-api', image, container: containerName, containerId,
         containerIp: proxyTarget.host, hostPort: port, proxyHost: proxyTarget.host, proxyPort: proxyTarget.port, url: localUrl, previewPath: `/preview/${safeSlug}/`, duration: Math.round((Date.now() - started) / 1000), health: true,
-        logs: clip(logs), e2e, keptRunning: Boolean(keepRunning), sandbox: { memoryMb: 512, cpus: 1, hostBind: '127.0.0.1' },
+        logs: clip(logs), e2e, internet: e2e.internet || null, keptRunning: Boolean(keepRunning), sandbox: { memoryMb: 512, cpus: 1, hostBind: '127.0.0.1' },
       };
     } catch (err) {
       await this.stopApp({ projectSlug: safeSlug, removeImage: false }).catch(() => {});
