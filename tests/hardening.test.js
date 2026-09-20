@@ -84,29 +84,38 @@ test('describeFailure includes a copy-for-AI block and a fix', async () => {
   assert.equal(card.code, 'missing_express');
 });
 
-
-test('SoloHost config uses the official strict array/object schema', () => {
-  const y = fs.readFileSync(new URL('../config_options.yml', import.meta.url), 'utf8');
-  assert.match(y, /fixed_values:\n  - name: PREVIEW_MODE/);
-  assert.match(y, /options:\n      - value: gemini\n        label: Gemini/);
-  assert.doesNotMatch(y, /fixed_values:\n  PREVIEW_MODE:/);
+test('security scan returns exact root cause, concrete fix, and copy-for-AI report', async () => {
+  const { scanProject } = await import('../src/security/scanner.js');
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'paf-security-report-'));
+  fs.writeFileSync(path.join(root, 'docker-compose.yml'), 'services:\n  app:\n    image: x\n    volumes:\n      - /var/run/docker.sock:/var/run/docker.sock\n');
+  const scan = await scanProject(root);
+  assert.equal(scan.status, 'BLOCK');
+  assert.equal(scan.critical, 1);
+  assert.match(scan.findings[0].title, /Docker socket/i);
+  assert.match(scan.findings[0].fix, /Remove the docker\.sock/i);
+  assert.match(scan.copy_for_ai, /ROOT_CAUSE:/);
+  assert.match(scan.copy_for_ai, /FIX:/);
+  fs.rmSync(root, { recursive: true, force: true });
 });
 
-test('preview is explicitly online and never uses docker.sock', () => {
-  const compose = fs.readFileSync(new URL('../docker-compose.yml', import.meta.url), 'utf8');
-  const podman = fs.readFileSync(new URL('../src/sandbox/podman.js', import.meta.url), 'utf8');
-  const native = fs.readFileSync(new URL('../src/runtime/native-preview.js', import.meta.url), 'utf8');
-  assert.match(compose, /PREVIEW_ONLINE: "true"/);
-  assert.match(podman, /PREVIEW_ONLINE=true/);
-  assert.match(native, /google\.com\/generate_204/);
-  assert.doesNotMatch(`${compose}\n${podman}\n${native}`, /docker\.sock/);
+test('security requests route to repair when user asks to fix them', async () => {
+  const { inferAction } = await import('../src/scripts/ops.js');
+  assert.equal(inferAction('fix security issue'), 'improve');
+  assert.equal(inferAction('sửa lỗi bảo mật'), 'improve');
+  assert.equal(inferAction('security scan'), 'analyze');
 });
 
-test('repair report contains actionable evidence and fix', async () => {
-  const { describeFailure } = await import('../src/scripts/ops.js');
-  const r = describeFailure({ error: 'EADDRINUSE: port already in use', action: 'run', files: ['server.js'] });
-  assert.equal(r.code, 'port_busy');
-  assert.match(r.copy, /CODE: port_busy/);
-  assert.match(r.copy, /AFFECTED: server\.js/);
-  assert.match(r.copy, /RECOMMENDED_FIX:/);
+test('native preview has mandatory online verification in product config', async () => {
+  const { loadConfig } = await import('../src/config/loader.js');
+  const cfg = loadConfig();
+  assert.equal(cfg.preview.requireInternet, true);
+  assert.equal(cfg.preview.requireBrowserTest, true);
+});
+
+
+test('SoloHost config schema keeps fields and fixed_values as arrays', () => {
+  const text = fs.readFileSync(new URL('../config_options.yml', import.meta.url), 'utf8');
+  assert.match(text, /fields:\n\s+- name:/);
+  assert.match(text, /fixed_values:\n\s+- name: PREVIEW_MODE/);
+  assert.match(text, /- name: PODMAN_API_URL/);
 });

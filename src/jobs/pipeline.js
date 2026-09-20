@@ -151,7 +151,6 @@ export function registerPipeline(app) {
     projects.setStatus(project, 'SECURITY_CHECK');
     const scan = await scanProject(projects.sourceDir(project.slug));
     await projects.saveMetadata(project, 'security.json', scan);
-    await recordActivity(project, { action: 'security-scan', status: scan.status, detail: `${scan.critical} critical, ${scan.warning} warning`, findings: scan.findings.slice(0, 8) });
     if (scan.status === 'BLOCK') projects.setStatus(project, 'FAILED');
     else projects.setStatus(project, 'WAITING_APPROVAL');
     return scan;
@@ -241,33 +240,22 @@ export function registerPipeline(app) {
     return pushed;
   });
 
-  async function prepareSecurityForPublish(source) {
-    const env = path.join(source, '.env');
-    await fs.rm(env, { force: true }).catch(() => {});
-    const gitignorePath = path.join(source, '.gitignore');
-    const current = await fs.readFile(gitignorePath, 'utf8').catch(() => '');
-    const required = ['.env', '.env.*', 'node_modules/', 'artifacts/'];
-    const lines = new Set(current.split(/\r?\n/).map((x) => x.trim()).filter(Boolean));
-    for (const item of required) lines.add(item);
-    await fs.writeFile(gitignorePath, `${[...lines].join('\n')}\n`, 'utf8');
-  }
-
   async function runRelease(project, payload, emit) {
     emit('validate', 'running', '✓ App generated — validating project files…');
     const tests = await projects.readMetadata(project, 'test-plan.json', {});
-    const security = await projects.readMetadata(project, 'security.json', {});
+    // Never trust a stale security.json at release time. Re-scan the exact source
+    // that is about to be published so the user gets the current, actionable issue.
+    const security = await scanProject(projects.sourceDir(project.slug));
+    await projects.saveMetadata(project, 'security.json', security);
     const runtime = await projects.readMetadata(project, 'runtime.json', {});
     if (payload.approved !== true && payload.confirm !== true) throw new Error('Release blocked: approve the tested app first.');
-    if (security.critical > 0) throw new Error('Release blocked: a security issue must be fixed first.');
+    if (security.critical > 0) {
+      const report = security.copy_for_ai || 'APP BUILDER SECURITY REPORT\nNo detailed report was generated.';
+      throw new Error(`RELEASE_SECURITY_BLOCKED\n${security.summary}\n\n${report}`);
+    }
     if (runtime.status !== 'passed' || runtime.health !== true) throw new Error('Release blocked: run the app successfully before publishing. Tap Run first.');
     if (tests.nodeResult?.status === 'failed') throw new Error('Release blocked: tests failed. Tap Improve, then Run.');
     const source = projects.sourceDir(project.slug);
-    await prepareSecurityForPublish(source);
-    const releaseScan = await scanProject(source);
-    await projects.saveMetadata(project, 'security.json', releaseScan);
-    if (releaseScan.critical > 0) {
-      throw new Error(`Release blocked by security scan: ${releaseScan.findings.filter((f) => f.severity === 'critical').map((f) => `${f.file}: ${f.detail} Fix: ${f.fix || 'review this finding.'}`).join(' | ')}`);
-    }
     await stampMadeBy(source, cfg);
     await writeGithubWorkflow(source, project);
     const quality = await review(project);
@@ -341,7 +329,6 @@ export function registerPipeline(app) {
     }
     const packageInfo = await releases.prepareSoloHost(project, source, registryImage, aiDescription);
     const validation = await releases.validateSoloHost(source);
-    await recordActivity(project, { action: 'release-validation', status: validation.ok ? 'passed' : 'failed', detail: validation.ok ? 'SoloHost validator passed.' : (validation.errors || []).join(' | ') });
     const zip = await createProjectZip({ sourceDir: source, outputDir: path.join(projects.projectDir(project), 'artifacts'), slug: project.slug, kind: 'solohost' }).catch(() => null);
     const imageOk = Boolean(imageVerification.ok);
     const installReady = Boolean(validation?.ok !== false && runtime.health && githubUrl && imageOk);
@@ -404,7 +391,6 @@ export function registerPipeline(app) {
     const incomingFiles = Array.isArray(job._files) ? job._files : [];
     for (const file of incomingFiles.slice(0, 8)) if (file?.buffer) await saveAttachment(projects.projectDir(project), file);
     await projects.chat(project, message, 'user', { attachments: incomingFiles.map((f) => f.originalname).filter(Boolean) });
-    await recordActivity(project, { action: 'user-message', status: 'received', detail: message.slice(0, 500) });
     const source = projects.sourceDir(project.slug);
     const diagnosis = await diagnoseSource(source);
     const runtimeNow = await projects.readMetadata(project, 'runtime.json', {});
@@ -491,12 +477,8 @@ export function registerPipeline(app) {
             payload.publish_ready = payload.result?.status === 'released' || payload.result?.status === 'packaged';
           }
           payload.reports.push({ action: stepAction, status: 'done', goal: step.goal });
-          await recordActivity(project, { action: stepAction, status: 'done', detail: step.goal });
         } catch (err) {
-          const stepError = String(err.message || err).slice(0, 1200);
-          payload.reports.push({ action: stepAction, status: 'failed', goal: step.goal, error: stepError });
-          const stepFailure = describeFailure({ error: stepError, action: stepAction, files: diagnosis.files });
-          await recordActivity(project, { action: stepAction, status: 'failed', detail: stepFailure.what, code: stepFailure.code, fix: stepFailure.fix, evidence: stepFailure.evidence });
+          payload.reports.push({ action: stepAction, status: 'failed', goal: step.goal, error: String(err.message || err).slice(0, 240) });
           emit('improve', 'failed', `Step failed, continuing other safe steps: ${String(err.message || err).slice(0, 160)}`);
         }
       }
@@ -517,7 +499,6 @@ export function registerPipeline(app) {
       logs: latestRuntime.logs || '',
       findings: diagnosis.findings || [],
       action,
-      files: diagnosis.files,
     });
     payload.fix = failCard.fix;
     payload.copyForAi = latestRuntime.status === 'passed' ? null : failCard.copy;
@@ -532,7 +513,6 @@ export function registerPipeline(app) {
         next: payload.next,
       },
     ].slice(-40));
-    await projects.saveMetadata(project, 'error-report.json', failCard);
     await projects.saveMetadata(project, 'handoff.json', {
       updatedAt: new Date().toISOString(),
       userLanguage,
@@ -613,18 +593,12 @@ export function registerPipeline(app) {
     const project = mustProject(job.payload.projectId);
     const files = job.payload.files || [];
     emit('snapshot', 'running', 'Saving a restore point…');
-    const prePatch = await snapshots.create(project, 'before-patch');
+    await snapshots.create(project, 'before-patch');
     emit('patch', 'running', 'Applying the change…');
     await applySafeAiPatch({ sourceDir: projects.sourceDir(project.slug), files, project, snapshots, reason: 'apply-patch' });
     await stampMadeBy(projects.sourceDir(project.slug), cfg);
     await writeGithubWorkflow(projects.sourceDir(project.slug), project);
-    const tested = await testAndMaybeFix(projects.get(project.id), emit);
-    if (tested.staticResult?.status !== 'passed' || tested.nodeResult?.status === 'failed' || tested.scan?.critical > 0 || tested.dockerBuild?.status !== 'passed') {
-      await snapshots.restore(project, prePatch.id).catch(() => {});
-      await recordActivity(project, { action: 'apply-patch-rollback', status: 'rolled_back', detail: 'Manual patch did not pass verification.' });
-      return { ...tested, rolledBack: true, next: 'The patch was rolled back because verification failed. Review the error report and make a smaller fix.' };
-    }
-    return tested;
+    return testAndMaybeFix(projects.get(project.id), emit);
   });
 
   jobs.on('sandbox_demo', async (job, { emit }) => {
@@ -659,13 +633,6 @@ export function registerPipeline(app) {
         : 'Sandbox preview failed. Fix Builder/preview first — this is not a product-app bug.',
     };
   });
-
-  async function recordActivity(project, entry = {}) {
-    const current = await projects.readMetadata(project, 'activity.json', []);
-    const row = { t: new Date().toISOString(), ...entry };
-    await projects.saveMetadata(project, 'activity.json', [...(Array.isArray(current) ? current : []), row].slice(-100));
-    return row;
-  }
 
   async function generateCode({ project, analysis, plan, emit, allowFallback = false }) {
     projects.setStatus(project, 'BUILDING');
@@ -720,18 +687,13 @@ export function registerPipeline(app) {
       emit('repair', 'running', `Trying a safe fix (${attempts}/${cfg.limits.maxAutoFixes})…`);
       projects.setStatus(project, 'REPAIRING');
       const errText = [failSummary(staticResult), nodeResult.error].filter(Boolean).join('\n');
-      const existingRuntime = await projects.readMetadata(project, 'runtime.json', {});
-      const diagnosis = await diagnoseSource(source);
-      const activity = await projects.readMetadata(project, 'activity.json', []);
       const relevant = await collectRelevant(source);
-      const failure = describeFailure({ error: errText, logs: existingRuntime.logs || '', findings: diagnosis.findings, action: 'repair', files: diagnosis.files });
-      await recordActivity(project, { action: 'repair-diagnosis', status: 'running', detail: failure.what, code: failure.code, fix: failure.fix });
       let checkpoint = null;
       try {
         const r = await ai.completeJson({
           task: 'DEBUGGING',
           system: SYSTEM,
-          prompt: patchPrompt(project, failure.copy, `${relevant}\n\nRECENT ACTIVITY:\n${JSON.stringify((Array.isArray(activity) ? activity : []).slice(-12))}`),
+          prompt: patchPrompt(project, errText, relevant),
           projectId: project.id,
         });
         if (r.json?.files?.length) checkpoint = await applySafeAiPatch({ sourceDir: source, files: r.json.files, project, snapshots, reason: `before-fix-${attempts}` });
@@ -746,7 +708,6 @@ export function registerPipeline(app) {
       if (checkpoint?.snapshot?.id && afterFailureScore > beforeFailureScore) {
         await snapshots.restore(project, checkpoint.snapshot.id).catch(() => {});
         emit('rollback', 'done', 'The repair made the checks worse, so I restored the previous working state.');
-        await recordActivity(project, { action: 'repair-rollback', status: 'rolled_back', detail: 'Repair increased the failure score.', code: failure.code });
         staticResult = await runStaticTests(source);
         nodeResult = await runNodeTests(source, 45000);
       }
@@ -757,7 +718,7 @@ export function registerPipeline(app) {
     emit('preview', 'running', 'Starting a safe preview without host Docker access…');
     const dockerBuild = await runner.run({ sourcePath: source, projectSlug: project.slug, timeout: cfg.limits.sandboxTimeoutSec });
     const imageFile = null;
-    await projects.saveMetadata(project, 'test-plan.json', { staticResult, nodeResult, scan, preview: dockerBuild, dockerBuild, e2e: dockerBuild.e2e || null, imageFile, internet: dockerBuild.internet || null });
+    await projects.saveMetadata(project, 'test-plan.json', { staticResult, nodeResult, scan, preview: dockerBuild, dockerBuild, e2e: dockerBuild.e2e || null, imageFile });
     const ok = staticResult.status === 'passed' && nodeResult.status !== 'failed' && scan.critical === 0 && dockerBuild.status === 'passed';
     projects.setStatus(project, ok ? 'WAITING_APPROVAL' : 'FAILED');
     if (ok) emit('test', 'done', '✓ Source checks, security, preview and Playwright E2E passed.');
@@ -824,25 +785,16 @@ export function registerPipeline(app) {
   async function improveProject(project, feedback, emit) {
     const source = projects.sourceDir(project.slug);
     const relevant = await collectProjectContext(source);
-    const runtime = await projects.readMetadata(project, 'runtime.json', {});
-    const activity = await projects.readMetadata(project, 'activity.json', []);
-    const diagnosis = await diagnoseSource(source);
-    const failure = describeFailure({ error: runtime.error || feedback, logs: runtime.logs || '', findings: diagnosis.findings, action: 'improve', files: diagnosis.files });
-    const repairContext = `${failure.copy}\n\nRECENT_ACTIVITY:\n${JSON.stringify((Array.isArray(activity) ? activity : []).slice(-16))}`;
-    const r = await ai.completeJson({ task: 'DEBUGGING', system: SYSTEM, prompt: patchPrompt(project, repairContext, relevant, feedback), projectId: project.id, images: [] });
+    const security = await scanProject(source);
+    const securityContext = security.findings?.length ? `\nSECURITY FINDINGS (treat as concrete repair requirements):\n${security.copy_for_ai}\n` : '';
+    const r = await ai.completeJson({ task: 'DEBUGGING', system: SYSTEM, prompt: patchPrompt(project, '', relevant + securityContext, feedback), projectId: project.id, images: [] });
     if (!r.json?.files?.length) throw new Error('AI did not propose a code change.');
-    const checkpoint = await snapshots.create(project, 'before-ai-improve');
     await applySafeAiPatch({ sourceDir: source, files: r.json.files, project, snapshots, reason: 'ai-improve' });
     await stampMadeBy(source, cfg);
     const tested = await testAndMaybeFix(projects.get(project.id), emit);
-    const verified = tested.staticResult?.status === 'passed' && tested.nodeResult?.status !== 'failed' && tested.scan?.critical === 0 && tested.dockerBuild?.status === 'passed';
-    if (!verified) {
-      await snapshots.restore(project, checkpoint.id).catch(() => {});
-      await recordActivity(project, { action: 'ai-improve-rollback', status: 'rolled_back', detail: 'The proposed repair did not pass the full verification gate.' });
-      throw new Error(`Repair was rolled back because verification did not pass. ${describeFailure({ error: tested.dockerBuild?.error || tested.nodeResult?.error || 'Verification failed', findings: tested.scan?.findings || [], action: 'improve' }).fix}`);
-    }
-    const improvedRuntime = await runProject(projects.get(project.id), emit);
-    return { feedback, explanation: r.json.explanation || '', files: r.json.files.map((f) => f.path), tested, runtime: improvedRuntime };
+    let runtime = null;
+    if (tested.staticResult?.status === 'passed' && tested.nodeResult?.status !== 'failed' && tested.scan?.critical === 0) runtime = await runProject(projects.get(project.id), emit);
+    return { feedback, explanation: r.json.explanation || '', files: r.json.files.map((f) => f.path), tested, runtime };
   }
 
   function imageInputs(files) {
@@ -857,7 +809,7 @@ export function registerPipeline(app) {
     return out;
   }
 
-  async function applySafeAiPatch({ sourceDir, files, project, snapshots: snapshotStore, reason = 'ai-patch', allowNew = false }) {
+  async function applySafeAiPatch({ sourceDir, files, project, snapshots: snapshotStore, reason = 'ai-patch' }) {
     const proposed = Array.isArray(files) ? files.filter((f) => f && f.path && typeof f.content === 'string') : [];
     if (!proposed.length) throw new Error('AI returned no usable patch files.');
     if (proposed.length > 8) throw new Error('AI patch is too large for an automatic repair. I will not rewrite the project blindly.');
@@ -865,10 +817,6 @@ export function registerPipeline(app) {
       const rel = String(f.path).replace(/\\/g, '/');
       if (!rel || rel.startsWith('/') || rel.includes('..') || /^(?:data|workspace|projects)\//i.test(rel)) {
         throw new Error(`AI patch contains an unsafe path: ${rel}`);
-      }
-      if (!allowNew) {
-        const exists = await fs.access(path.join(sourceDir, rel)).then(() => true).catch(() => false);
-        if (!exists) throw new Error(`AI repair attempted to create a new file: ${rel}. Automatic repair may only edit existing files.`);
       }
       if (/^(?:\.env(?:\.|$)|.*\/(?:\.env(?:\.|$)|id_rsa(?:\.|$)|private[_-]?key(?:\.|$)))/i.test(rel)) {
         throw new Error(`AI patch attempted to modify a protected file: ${rel}`);

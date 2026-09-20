@@ -26,7 +26,7 @@ export function inferAction(message) {
   if (/\b(zip|download|tải về|xuất file|export zip|file cài đặt|install kit)\b/.test(m)) return 'export';
   if (/\b(chạy app|run the app|preview|test link|mở app|cho tôi link)\b/.test(m)) return 'run';
   if (/\b(sửa lỗi|hãy sửa|fix (it|the)|crash|không chạy được|không hoạt động|bị lỗi|lỗi|sự cố|vấn đề|error|failed|failure|unauthorized|forbidden|permission|cannot start|couldn't start|doesn't work|not working|broken|registry|pull image)\b/.test(m)) return 'improve';
-  if (/\b(quét bảo mật|security scan|analyze app|inspect container)\b/.test(m)) return 'analyze';
+  if (/\b(security|bảo mật|quét bảo mật|security scan|fix security|sửa bảo mật|unsafe|vulnerability)\b/.test(m)) return /\b(fix|sửa|repair|remove|khắc phục)\b/.test(m) ? 'improve' : 'analyze';
   if (/\b(build lại|viết code|scaffold|tạo app|build the app)\b/.test(m)) return 'build';
   return null;
 }
@@ -52,38 +52,30 @@ export function classifyLogs(logs = '') {
   if (/eaddrinuse/i.test(t)) return { code: 'port_busy', title: 'Port is already in use.', hint: 'Stop the previous preview and Run again.' };
   if (/syntaxerror|unexpected token/i.test(t)) return { code: 'syntax', title: 'The server file has a syntax error.', hint: 'I will patch the file and Run again.' };
   if (/fetch failed|econnrefused|couldn't connect|preview port is not open/i.test(t)) {
-    return { code: 'preview_connection', title: 'Preview could not open the test page.', hint: 'Check the preview process, assigned port, and server startup log. If the app calls an external API, also verify the API URL and Internet access.' };
-  }
-  if (/no confirmed internet|internet access|ENOTFOUND|EAI_AGAIN|network is unreachable/i.test(t)) {
-    return { code: 'preview_internet', title: 'Preview has no confirmed Internet access.', hint: 'Keep Preview Online enabled and verify DNS/network access from the preview runtime before testing external APIs.' };
+    return { code: 'preview_connection', title: 'Preview could not open the test page.', hint: 'Tap Run again. App Builder will serve the app files directly if the generated server is not ready.' };
   }
   return null;
 }
 
-export function describeFailure({ error = '', logs = '', findings = [], action = '', files = [] } = {}) {
+export function describeFailure({ error = '', logs = '', findings = [], action = '' } = {}) {
   const raw = String(error || logs || '').trim();
   const crash = classifyLogs(`${error}\n${logs}`);
-  const evidence = raw.split('\n').filter(Boolean).slice(0, 12).join('\n').slice(0, 1800);
-  const findingText = (findings || []).map((f) => f.title || f.detail || f.check).filter(Boolean).slice(0, 8);
-  const what = crash?.title || (raw ? raw.split('\n')[0].slice(0, 220) : 'The last action did not finish cleanly.');
-  const why = crash?.hint || findingText[0] || 'The preview, build, test, or security check returned an error.';
-  const affected = files.length ? files.slice(0, 12).join(', ') : 'See EVIDENCE and the project files involved in the failing check.';
-  let fix = crash?.hint;
-  if (!fix && findings?.length) fix = findings.slice(0, 3).map((f) => f.fix || f.detail || 'Review this finding.').join(' ');
-  if (!fix) fix = action === 'run' ? 'Inspect the startup error, patch only the affected file, then Run again.' : 'Apply the smallest patch to the affected file. Do not rewrite the app.';
+  const evidence = raw.split('\n').filter(Boolean).slice(0, 8).join('\n').slice(0, 900);
+  const findingText = (findings || []).map((f) => f.title || f.detail || f.check).filter(Boolean).slice(0, 5);
+  const what = crash?.title || (raw ? raw.split('\n')[0].slice(0, 180) : 'The last action did not finish cleanly.');
+  const security = (findings || []).find((f) => f.fix || f.rootCause);
+  const why = crash?.hint || security?.rootCause || findingText[0] || 'The preview, build, or file check returned an error.';
+  const fix = crash?.hint || security?.fix || (action === 'run' ? 'Run the app again after the files exist. If it still fails, send the COPY_FOR_AI block below.' : 'Apply the smallest targeted patch to the affected file. Do not rewrite the app.');
   const copy = [
-    'APP BUILDER ERROR REPORT v1',
-    `CODE: ${crash?.code || 'unknown'}`,
-    `STAGE: ${action || 'unknown'}`,
-    `SYMPTOM: ${what}`,
-    `LIKELY_CAUSE: ${why}`,
-    `AFFECTED: ${affected}`,
+    'APP BUILDER ERROR REPORT',
+    `WHAT: ${what}`,
+    `WHY: ${why}`,
     findingText.length ? `CHECKS: ${findingText.join(' | ')}` : '',
     evidence ? `EVIDENCE:\n${evidence}` : '',
-    `RECOMMENDED_FIX: ${fix}`,
-    'REPAIR_RULE: Diagnose first; checkpoint; change only affected files; retest; rollback if worse; never rewrite unrelated working features.',
+    `FIX: ${fix}`,
+    'CONSTRAINT: Preserve existing working files. Change only the files needed for this error.',
   ].filter(Boolean).join('\n');
-  return { code: crash?.code || 'unknown', what, why, fix, evidence, affected, copy };
+  return { code: crash?.code || 'unknown', what, why, fix, evidence, copy };
 }
 
 export async function diagnoseSource(sourceDir) {

@@ -13,6 +13,10 @@ export function loadConfig() {
       mode: process.env.PREVIEW_MODE || 'auto',
       podman: { apiUrl: process.env.PODMAN_API_URL || '' },
     },
+    preview: {
+      requireInternet: String(process.env.PREVIEW_REQUIRE_INTERNET || 'true').toLowerCase() === 'true',
+      requireBrowserTest: String(process.env.PREVIEW_REQUIRE_BROWSER_TEST || 'true').toLowerCase() === 'true',
+    },
     ai: {
       provider: process.env.AI_PROVIDER || 'deepseek',
       mode: (process.env.AI_MODE || 'single').toLowerCase() === 'council' ? 'council' : 'single',

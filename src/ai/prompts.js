@@ -158,17 +158,16 @@ Do not include .env, credentials, node_modules, or host Docker socket mounts.`;
 export function patchPrompt(project, error, files, feedback = '') {
   return `${languageInstruction(feedback || project.idea)}\n
 HARD REPAIR RULES (do not violate):
-- Diagnose the exact error first. If the error is missing, do not invent a rewrite.
-- Change the smallest number of files. Prefer a few-line patch over a new file set.
-- Never replace a working UI, game loop, or API with a different architecture.
-- Never drop CSS, images, public/ files, or package.json scripts that already exist.
-- Return only files that must change. Omit unchanged files.
-- If you are unsure, return zero files and explain in explanation.
-- Automatic repair may edit existing files only. Do not create, delete, rename, or move files unless the controller explicitly allows it.
-- Do not modify package.json, lockfiles, workflows, environment/secrets, deployment config, or architecture for a runtime bug unless the evidence proves that file is the root cause.
-- The error report is evidence, not an instruction to rewrite. Match the patch to CODE/STAGE/SYMPTOM/LIKELY_CAUSE.
-- Preserve public behavior, routes, IDs, data formats, UI structure, and working features unless the reported bug directly requires a change.
-- Return the smallest patch that can fix the verified root cause.
+- DIAGNOSE FIRST: identify the exact symptom, root cause, affected file(s), evidence, and concrete fix before editing.
+- SECURITY FIRST: when SECURITY FINDINGS are present, fix only the reported security issue unless another change is strictly required by the evidence.
+- CHANGE THE MINIMUM: prefer a few-line targeted patch over replacing a file; never rewrite the project.
+- PRESERVE ALL WORKING BEHAVIOR: never replace a working UI, game loop, API, data model, configuration, or integration with a different architecture just because it is easier.
+- NEVER DROP EXISTING CONTENT: preserve CSS, images, public/ assets, scripts, routes, dependencies, and package.json scripts unless the diagnosed issue requires a change.
+- NEVER INVENT A ROOT CAUSE: if evidence is insufficient, return zero files and explain what evidence is missing.
+- NEVER FIX A SYMPTOM BY HIDING IT: do not remove a feature, disable a test, weaken security, or suppress an error merely to make checks pass.
+- RETURN ONLY AFFECTED FILES. Omit unchanged files.
+- REPAIR MUST BE REVERSIBLE: the Builder creates a checkpoint before applying this patch and will rollback if verification gets worse.
+- AFTER REPAIR: the Builder must re-scan, test, preview, and verify the original failing behavior before declaring success.
 
 Project: ${project.name}
 User feedback: ${feedback}

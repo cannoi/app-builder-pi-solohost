@@ -6,17 +6,14 @@ output_file: .env
 after_save: "Settings saved. Start the app if a provider or GitHub setting does not update immediately."
 fixed_values:
   - name: PREVIEW_MODE
-    value: "auto"
-  - name: PREVIEW_ONLINE
-    value: "true"
+    value: auto
   - name: PODMAN_API_URL
     value: ""
 fields:
   - name: AI_PROVIDER
     label: AI provider
     type: select
-    required: true
-    default: "gemini"
+    default: gemini
     options:
       - value: gemini
         label: Gemini
