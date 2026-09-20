@@ -6,7 +6,7 @@ export async function writeSoloHostPackage({ project, sourceDir, image, hostPort
   await ensureDir(out);
   const yamlSafe = (value) => JSON.stringify(String(value || '').replace(/\r?\n/g, ' ').slice(0, 220));
   const compose = `services:\n  app:\n    image: ${image}\n    restart: unless-stopped\n    labels:\n      pi.ui.primary: "true"\n    ports:\n      - "127.0.0.1:${hostPort}:8080"\n`;
-  const config = `title: ${yamlSafe(project.name)}\neyebrow: SoloHost App\ndescription: ${yamlSafe(project.idea)}\nfooter_hint: Ready to run on Pi Desktop SoloHost.\noutput_file: .env\nafter_save: Saved. Start the app from SoloHost.\nfields: []\n`;
+  const config = `title: ${yamlSafe(project.name)}\neyebrow: SoloHost App\ndescription: ${yamlSafe(project.idea)}\nfooter_hint: Ready to run on Pi Desktop SoloHost.\noutput_file: .env\nafter_save: Saved. Start the app from SoloHost.\nfixed_values:\n  - name: PREVIEW_ONLINE\n    value: "true"\nfields: []\n`;
   const blurb = normalizeDescription(description) || professionalBlurb(project);
   const appInfo = `# ${project.name}\n\nSuggested app name: ${project.name}\nSuggested description: ${blurb}\n\nDocker image:\n${image}\n\nDo not install until this image address exists on GHCR.\n`;
   const logoPrompt = `Create a wide horizontal logo banner for "${project.name}".\nAspect ratio 16:5 or 3:1 rectangle, not square.\nLeft: a simple recognizable icon. Right: short English name.\nTransparent background, crisp edges, readable at 160x50px, no fake screenshot, no extra UI chrome.\n`;

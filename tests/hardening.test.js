@@ -83,3 +83,30 @@ test('describeFailure includes a copy-for-AI block and a fix', async () => {
   assert.match(card.fix, /./);
   assert.equal(card.code, 'missing_express');
 });
+
+
+test('SoloHost config uses the official strict array/object schema', () => {
+  const y = fs.readFileSync(new URL('../config_options.yml', import.meta.url), 'utf8');
+  assert.match(y, /fixed_values:\n  - name: PREVIEW_MODE/);
+  assert.match(y, /options:\n      - value: gemini\n        label: Gemini/);
+  assert.doesNotMatch(y, /fixed_values:\n  PREVIEW_MODE:/);
+});
+
+test('preview is explicitly online and never uses docker.sock', () => {
+  const compose = fs.readFileSync(new URL('../docker-compose.yml', import.meta.url), 'utf8');
+  const podman = fs.readFileSync(new URL('../src/sandbox/podman.js', import.meta.url), 'utf8');
+  const native = fs.readFileSync(new URL('../src/runtime/native-preview.js', import.meta.url), 'utf8');
+  assert.match(compose, /PREVIEW_ONLINE: "true"/);
+  assert.match(podman, /PREVIEW_ONLINE=true/);
+  assert.match(native, /google\.com\/generate_204/);
+  assert.doesNotMatch(`${compose}\n${podman}\n${native}`, /docker\.sock/);
+});
+
+test('repair report contains actionable evidence and fix', async () => {
+  const { describeFailure } = await import('../src/scripts/ops.js');
+  const r = describeFailure({ error: 'EADDRINUSE: port already in use', action: 'run', files: ['server.js'] });
+  assert.equal(r.code, 'port_busy');
+  assert.match(r.copy, /CODE: port_busy/);
+  assert.match(r.copy, /AFFECTED: server\.js/);
+  assert.match(r.copy, /RECOMMENDED_FIX:/);
+});

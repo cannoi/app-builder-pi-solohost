@@ -56,7 +56,8 @@ test('native preview serves index.html and /health without Docker', async () => 
   const root = fs.mkdtempSync('/tmp/paf-native-preview-');
   fs.mkdirSync(`${root}/public`);
   fs.writeFileSync(`${root}/public/index.html`, '<html><body>Calculator</body></html>');
-  const preview = new NativePreview({ cfg: {}, log: { warn() {} } });
+  const browserFactory = async () => ({ async newPage() { return { async goto() {}, async title() { return 'Preview'; }, async screenshot() {}, async close() {} }; }, async close() {} });
+  const preview = new NativePreview({ cfg: {}, log: { warn() {} }, browserFactory });
   const result = await preview.run({ sourcePath: root, projectSlug: 'calc-preview', timeout: 10, keepRunning: true });
   assert.equal(result.status, 'passed');
   assert.equal(result.health, true);
@@ -75,7 +76,8 @@ test('native preview still serves UI when package.json start script crashes', as
   fs.writeFileSync(`${root}/public/index.html`, '<html><body>Snake</body></html>');
   fs.writeFileSync(`${root}/package.json`, JSON.stringify({ name: 'snake', scripts: { start: 'node server.js' }, main: 'server.js' }));
   fs.writeFileSync(`${root}/server.js`, 'process.exit(1)');
-  const preview = new NativePreview({ cfg: {}, log: { warn() {} } });
+  const browserFactory = async () => ({ async newPage() { return { async goto() {}, async title() { return 'Preview'; }, async screenshot() {}, async close() {} }; }, async close() {} });
+  const preview = new NativePreview({ cfg: {}, log: { warn() {} }, browserFactory });
   const result = await preview.run({ sourcePath: root, projectSlug: 'snake-preview', timeout: 10, keepRunning: true });
   assert.equal(result.status, 'passed');
   const page = await fetch(`http://127.0.0.1:${result.hostPort}/`);

@@ -58,7 +58,7 @@ export class PodmanClient {
     const body = {
       Image: image,
       name,
-      Env: ['PORT=8080', 'BIND=0.0.0.0'],
+      Env: ['PORT=8080', 'BIND=0.0.0.0', 'PREVIEW_ONLINE=true'],
       Labels: { 'com.pi.app-factory.project': name.replace(/^paf-app-/, ''), 'com.pi.app-factory.sandbox': 'preview' },
       HostConfig: {
         AutoRemove: true,

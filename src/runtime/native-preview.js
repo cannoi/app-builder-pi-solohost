@@ -77,7 +77,8 @@ export class NativePreview {
     }
 
     const localUrl = `http://127.0.0.1:${port}`;
-    let e2e = { status: 'skipped', error: null };
+    const internet = await checkPreviewInternet();
+    let e2e = { status: 'failed', error: 'Browser test did not run.' };
     try {
       const artifactDir = path.join(path.dirname(sourcePath), 'artifacts');
       await fs.mkdir(artifactDir, { recursive: true });
@@ -88,10 +89,13 @@ export class NativePreview {
         browserFactory: this.browserFactory,
       });
     } catch (err) {
-      e2e = { status: 'skipped', error: String(err.message || err).slice(0, 300) };
+      e2e = { status: 'failed', error: String(err.message || err).slice(0, 300) };
     }
 
     if (!keepRunning) await this.stop({ projectSlug: safe });
+      if (e2e.status !== 'success') {
+      return { status: 'failed', runtime: 'native-preview', engine: 'native-preview', hostPort: port, url: localUrl, health: true, internet, e2e, logs: clip(`${state.stdout}\n${state.stderr}`), error: `Browser preview test failed: ${e2e.error || 'unknown browser test error'}` };
+    }
     return {
       status: 'passed',
       runtime: 'native-preview',
@@ -107,6 +111,7 @@ export class NativePreview {
       duration: Math.round((Date.now() - started) / 1000),
       health: true,
       logs: clip(`${state.stdout}\n${state.stderr}`),
+      internet,
       e2e,
       previewPath: `/preview/${encodeURIComponent(safe)}/`,
       keptRunning: Boolean(keepRunning),
@@ -261,6 +266,18 @@ async function waitForHttp(port, timeoutSec) {
     await sleep(150);
   }
   return { ok: false, error: last };
+}
+
+async function checkPreviewInternet() {
+  if (String(process.env.PREVIEW_ONLINE || 'true').toLowerCase() === 'false') {
+    return { ok: false, error: 'PREVIEW_ONLINE is disabled.' };
+  }
+  try {
+    const response = await fetch('https://www.google.com/generate_204', { redirect: 'manual', signal: AbortSignal.timeout(2000) });
+    return { ok: response.status >= 200 && response.status < 500, enabled: true, url: 'https://www.google.com/generate_204', status: response.status };
+  } catch (err) {
+    return { ok: false, enabled: true, url: 'https://www.google.com/generate_204', error: String(err?.message || err).slice(0, 300) };
+  }
 }
 
 function slug(value) { return String(value || 'app').toLowerCase().replace(/[^a-z0-9-]/g, '-').slice(0, 50) || 'app'; }

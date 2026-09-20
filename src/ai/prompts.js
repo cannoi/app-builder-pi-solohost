@@ -164,6 +164,11 @@ HARD REPAIR RULES (do not violate):
 - Never drop CSS, images, public/ files, or package.json scripts that already exist.
 - Return only files that must change. Omit unchanged files.
 - If you are unsure, return zero files and explain in explanation.
+- Automatic repair may edit existing files only. Do not create, delete, rename, or move files unless the controller explicitly allows it.
+- Do not modify package.json, lockfiles, workflows, environment/secrets, deployment config, or architecture for a runtime bug unless the evidence proves that file is the root cause.
+- The error report is evidence, not an instruction to rewrite. Match the patch to CODE/STAGE/SYMPTOM/LIKELY_CAUSE.
+- Preserve public behavior, routes, IDs, data formats, UI structure, and working features unless the reported bug directly requires a change.
+- Return the smallest patch that can fix the verified root cause.
 
 Project: ${project.name}
 User feedback: ${feedback}
