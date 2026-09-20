@@ -1,0 +1,29 @@
+services:
+  app-builder:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: app-builder-pi-solohost:1.4.21
+    restart: unless-stopped
+    labels:
+      pi.ui.primary: "true"
+    ports:
+      - "127.0.0.1:18781:8080"
+    environment:
+      AI_PROVIDER: "${AI_PROVIDER:-gemini}"
+      GEMINI_API_KEY: "${GEMINI_API_KEY:-}"
+      DEEPSEEK_API_KEY: "${DEEPSEEK_API_KEY:-}"
+      GITHUB_OWNER: "${GITHUB_OWNER:-}"
+      GITHUB_TOKEN: "${GITHUB_TOKEN:-}"
+      PREVIEW_MODE: "auto"
+      PREVIEW_ONLINE: "true"
+      PODMAN_API_URL: ""
+    volumes:
+      - app_builder_data:/app/data
+      - app_builder_projects:/app/projects
+      - app_builder_workspace:/app/workspace
+
+volumes:
+  app_builder_data:
+  app_builder_projects:
+  app_builder_workspace:

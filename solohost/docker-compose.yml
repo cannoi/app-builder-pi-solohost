@@ -1,20 +1,26 @@
 services:
-  app:
-    image: paf-app:solohost-browser-hub
+  app-builder:
+    image: ghcr.io/cannoi/app-builder-pi-solohost:1.4.21
     restart: unless-stopped
     labels:
       pi.ui.primary: "true"
-      solohost.app: "true"
-      solohost.app.id: "browser"
-      solohost.app.name: "SoloHost Browser"
-      solohost.app.route: "/"
     ports:
-      - "127.0.0.1:18080:8080"
+      - "127.0.0.1:18781:8080"
     environment:
-      PORT: "8080"
-      SOLOHOST_DEMO_APPS: "1"
+      AI_PROVIDER: "${AI_PROVIDER}"
+      GEMINI_API_KEY: "${GEMINI_API_KEY}"
+      DEEPSEEK_API_KEY: "${DEEPSEEK_API_KEY}"
+      GITHUB_OWNER: "${GITHUB_OWNER}"
+      GITHUB_TOKEN: "${GITHUB_TOKEN}"
+      PREVIEW_MODE: "auto"
+      PREVIEW_ONLINE: "true"
+      PODMAN_API_URL: ""
     volumes:
-      - solohost-browser-data:/app/data
+      - app_builder_data:/app/data
+      - app_builder_projects:/app/projects
+      - app_builder_workspace:/app/workspace
 
 volumes:
-  solohost-browser-data:
+  app_builder_data:
+  app_builder_projects:
+  app_builder_workspace:

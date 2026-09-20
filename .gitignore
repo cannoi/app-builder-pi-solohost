@@ -1,5 +1,13 @@
-node_modules/
 .env
+node_modules
+data/*
+!data/.gitkeep
+workspace/*
+!workspace/.gitkeep
+projects/*
+!projects/.gitkeep
 *.log
 .DS_Store
-data/*.db
+coverage
+artifacts
+tmp
