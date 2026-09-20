@@ -1079,6 +1079,7 @@ NETWORK DEBUGGING CONTRACT:
 - If Sandbox Internet is available, inspect the actual app gateway/proxy, DNS lookup, HTTPS request, redirects, timeouts, response status, CORS/CSP, and browser-facing routing.
 - Do not merely describe a fix: when the root cause is in source code, return the smallest concrete file patch.
 - Re-test the real browsing flow after patching.
+- Never call a passing /health or page-load check proof that Internet browsing works.
 
 Return JSON with full file contents for every changed file:
 {

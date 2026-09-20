@@ -57,3 +57,24 @@ test('project exporter creates source and SoloHost ZIPs without secrets', async 
   assert.match(listInstall, /docker-compose\.yml/);
   assert.doesNotMatch(listInstall, /index\.html/);
 });
+
+test('top-level Builder compose keeps SoloHost-compatible runtime environment', async () => {
+  const fs = await import('node:fs/promises');
+  const yml = await fs.readFile(new URL('../docker-compose.yml', import.meta.url), 'utf8');
+  assert.match(yml, /image:\s*ghcr\.io\/cannoi\/app-builder-pi-solohost:latest/);
+  assert.match(yml, /127\.0\.0\.1:18781:8080/);
+  assert.doesNotMatch(yml, /PREVIEW_REQUIRE_INTERNET/);
+  assert.doesNotMatch(yml, /PREVIEW_REQUIRE_BROWSER_TEST/);
+});
+
+test('SoloHost install kit contains only the compose/config contract files', async () => {
+  const fs = await import('node:fs/promises');
+  const path = await import('node:path');
+  const os = await import('node:os');
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'paf-kit-'));
+  const { writeSoloHostPackage } = await import('../src/release/solohost.js');
+  const r = await writeSoloHostPackage({ project: { name: 'Demo', idea: 'Simple app' }, sourceDir: dir, image: 'ghcr.io/demo/demo:1.0.0' });
+  assert.deepEqual(r.files.sort(), ['APP_INFO.md','INSTALL.md','LOGO_PROMPT.txt','README.md','config_options.yml','docker-compose.yml'].sort());
+  assert.match(await fs.readFile(path.join(dir, 'solohost', 'docker-compose.yml'), 'utf8'), /image:\s*ghcr\.io\/demo\/demo:1\.0\.0/);
+  assert.doesNotMatch(await fs.readFile(path.join(dir, 'solohost', 'docker-compose.yml'), 'utf8'), /\bbuild:/);
+});
