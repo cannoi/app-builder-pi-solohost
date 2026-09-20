@@ -201,17 +201,8 @@ export function registerPipeline(app) {
     const source = projects.sourceDir(project.slug);
     const relevant = await collectProjectContext(source);
     emit('ai', 'running', 'AI is turning your feedback into a change…');
-    const r = await ai.completeJson({ task: 'DEBUGGING', system: SYSTEM, prompt: improvePrompt(project, feedback, relevant), projectId: project.id });
-    if (!r.json?.files?.length) throw new Error('AI did not propose a code change.');
-    emit('patch', 'running', 'Applying the improvement…');
-    const patchCheckpoint = await applySafeAiPatch({ sourceDir: source, files: r.json.files, project, snapshots, reason: 'ai-improve' });
-    const tested = await testAndMaybeFix(projects.get(project.id), emit);
-    if (tested.staticResult?.status === 'passed' && tested.nodeResult?.status !== 'failed') {
-      emit('run', 'running', 'Refreshing the safe preview…');
-      const runtime = await runner.runApp({ sourcePath: source, projectSlug: project.slug, timeout: cfg.limits.sandboxTimeoutSec, keepRunning: true });
-      await projects.saveMetadata(project, 'runtime.json', { ...runtime, image: runtime.image || null, lastSeenAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
-    }
-    return { feedback, rootCause: r.json.root_cause || '', explanation: r.json.explanation || '', files: r.json.files.map((f) => f.path), tested };
+    const result = await improveProject(project, feedback, emit);
+    return result;
   });
 
   jobs.on('sandbox', async (job, { emit }) => {
@@ -872,6 +863,8 @@ export function registerPipeline(app) {
     const securityContext = security.findings?.length ? `\nSECURITY FINDINGS (treat as concrete repair requirements):\n${security.copy_for_ai}\n` : '';
     const r = await ai.completeJson({ task: 'DEBUGGING', system: SYSTEM, prompt: patchPrompt(project, '', relevant + recentContext + networkContext + securityContext, feedback), projectId: project.id, images: [] });
     if (!r.json?.files?.length) throw new Error('AI did not propose a code change.');
+    const declaredRisk = String(r.json.risk || 'medium').toLowerCase();
+    if (declaredRisk !== 'low') throw new Error('NEEDS_USER_ACTION: AI marked this change as medium/high risk. No files were changed; review and confirm the requested change before applying it.');
     const patchCheckpoint = await applySafeAiPatch({ sourceDir: source, files: r.json.files, project, snapshots, reason: 'ai-improve' });
     await stampMadeBy(source, cfg);
     const tested = await testAndMaybeFix(projects.get(project.id), emit);
@@ -917,6 +910,7 @@ export function registerPipeline(app) {
     if (proposed.length > 8) throw new Error('AI patch is too large for an automatic repair. I will not rewrite the project blindly.');
     for (const f of proposed) {
       const rel = String(f.path).replace(/\\/g, '/');
+      if (Buffer.byteLength(f.content, 'utf8') > 1024 * 1024) throw new Error(`AI patch file is too large for a safe automatic change: ${rel}`);
       if (!rel || rel.startsWith('/') || rel.includes('..') || /^(?:data|workspace|projects)\//i.test(rel)) {
         throw new Error(`AI patch contains an unsafe path: ${rel}`);
       }

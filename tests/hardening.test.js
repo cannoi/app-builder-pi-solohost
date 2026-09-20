@@ -31,11 +31,13 @@ test('preview uses a project-aware back link and proxy target', () => {
   assert.match(src, /x-frame-options/);
 });
 
-test('short Safe Edit Rule is embedded in the system prompt', async () => {
-  const { SYSTEM } = await import('../src/ai/prompts.js');
-  for (const phrase of ['[SAFE EDIT RULE]', 'Preserve working code', 'Make the smallest necessary change', 'Protect secrets', 'Checkpoint before risky changes', 'Validate build']) {
-    assert.match(SYSTEM, new RegExp(phrase.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
-  }
+test('action-specific safety rules are defined and compact', async () => {
+  const { SAFE_CHANGE_RULES } = await import('../src/ai/gateway.js');
+  for (const task of ['CODING', 'DEBUGGING', 'SECURITY', 'CODE_REVIEW']) assert.ok(SAFE_CHANGE_RULES[task]);
+  assert.match(SAFE_CHANGE_RULES.DEBUGGING, /Preserve working features/);
+  assert.match(SAFE_CHANGE_RULES.DEBUGGING, /only what is required|smallest/);
+  assert.match(SAFE_CHANGE_RULES.DEBUGGING, /roll back/i);
+  assert.match(SAFE_CHANGE_RULES.CODE_REVIEW, /INSPECT ONLY/);
 });
 
 test('Gemini selection prefers highest available version >= 2.5', async () => {

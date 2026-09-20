@@ -38,15 +38,6 @@ Rules:
 - Explain failures in short plain language. Never dump stack traces as the main answer.
 - When asked for JSON, return ONLY JSON. The "reply" field inside JSON must still use the user's language.
 
-[SAFE EDIT RULE]
-Inspect first. Preserve working code and features.
-Make the smallest necessary change.
-Do not rewrite unrelated code or remove working functionality.
-Protect secrets, credentials, wallet data, host/Docker access and system files.
-Checkpoint before risky changes.
-Validate build → start → health → functional test.
-If uncertain, stop and explain; never guess.
-
 ${SOLOHOST_CONTRACT}
 
 SMART BUILD MODE:
@@ -139,12 +130,13 @@ Do not include .env, credentials, node_modules, or host Docker socket mounts.`;
 
 export function patchPrompt(project, error, files, feedback = '') {
   return `${languageInstruction(feedback || project.idea)}\n
-SAFE REPAIR TASK:
-- Inspect evidence first: symptom → root cause → affected files → smallest patch.
-- Return only affected files; never rewrite unrelated code.
-- If evidence is insufficient, return files:[] and explain.
-- Never hide failures by removing features, weakening security, or disabling tests.
-- Builder checkpoints and validates the patch before declaring success.
+[ACTION: SAFE REPAIR — MANDATORY]
+- Inspect evidence and identify the root cause before editing.
+- Change only the affected files and only what is required to fix the cause.
+- Preserve all working features, behavior, architecture, UI flow, configuration, and data.
+- Never weaken security, disable tests, hide errors, expose secrets, or change host/Docker/system access.
+- If evidence is insufficient or the fix is risky, return files:[] and explain.
+- The Builder will checkpoint, validate, and roll back if verification becomes worse.
 
 Project: ${project.name}
 User feedback: ${feedback}

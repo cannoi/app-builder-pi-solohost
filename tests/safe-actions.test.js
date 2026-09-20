@@ -2,30 +2,41 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 test('AI gateway appends the short Safe Edit Rule to every request', async () => {
-  const { SAFE_EDIT_RULE } = await import('../src/ai/gateway.js');
-  assert.match(SAFE_EDIT_RULE, /Inspect first/);
-  assert.match(SAFE_EDIT_RULE, /smallest necessary change/);
-  assert.match(SAFE_EDIT_RULE, /Validate build/);
-  assert.ok(SAFE_EDIT_RULE.length < 700);
+  const { SAFE_CHANGE_RULES } = await import('../src/ai/gateway.js');
+  assert.match(SAFE_CHANGE_RULES.DEBUGGING, /Inspect evidence/);
+  assert.match(SAFE_CHANGE_RULES.DEBUGGING, /only what is required|smallest/);
+  assert.match(SAFE_CHANGE_RULES.DEBUGGING, /roll back/i);
+  assert.ok(SAFE_CHANGE_RULES.DEBUGGING.length < 900);
 });
 
 test('gateway sends the rule to provider requests', async () => {
-  const { AIGateway, SAFE_EDIT_RULE } = await import('../src/ai/gateway.js');
+  const { AIGateway, SAFE_CHANGE_RULES } = await import('../src/ai/gateway.js');
+  const db = { setting(){ return ''; }, setSetting(){}, run(){} };
+  const cfg = { ai:{ provider:'deepseek', mode:'single', deepseekKey:'x', geminiKey:'', deepseekModel:'deepseek-chat', geminiModel:'gemini-2.5-flash' } };
+  const ai = new AIGateway({cfg, db, log:{warn(){}}});
+  let seen = null;
+  ai.deepseek.complete = async (o) => { seen=o; return {provider:'deepseek',model:'deepseek-chat',text:'ok',durationMs:1,tokens:1}; };
+  await ai.complete({task:'DEBUGGING', prompt:'repair bug', system:'system'});
+  assert.match(seen.prompt, /\[ACTION: SAFE REPAIR — MANDATORY\]/);
+  assert.match(seen.system, /\[ACTION: SAFE REPAIR — MANDATORY\]/);
+  assert.equal(seen.prompt.includes(SAFE_CHANGE_RULES.DEBUGGING), true);
+});
+
+test('system prompt does not contain the old long safety contract', async () => {
+  const { SYSTEM } = await import('../src/ai/prompts.js');
+  assert.doesNotMatch(SYSTEM, /AI HARD SAFETY CONTRACT:/);
+  assert.doesNotMatch(SYSTEM, /\[SAFE EDIT RULE\]/);
+});
+
+test('chat is not forced into a code-change safety mode', async () => {
+  const { AIGateway } = await import('../src/ai/gateway.js');
   const db = { setting(){ return ''; }, setSetting(){}, run(){} };
   const cfg = { ai:{ provider:'deepseek', mode:'single', deepseekKey:'x', geminiKey:'', deepseekModel:'deepseek-chat', geminiModel:'gemini-2.5-flash' } };
   const ai = new AIGateway({cfg, db, log:{warn(){}}});
   let seen = null;
   ai.deepseek.complete = async (o) => { seen=o; return {provider:'deepseek',model:'deepseek-chat',text:'ok',durationMs:1,tokens:1}; };
   await ai.complete({task:'USER_CHAT', prompt:'hello', system:'system'});
-  assert.match(seen.prompt, /\[SAFE EDIT RULE\]/);
-  assert.match(seen.system, /\[SAFE EDIT RULE\]/);
-  assert.equal(seen.prompt.includes(SAFE_EDIT_RULE), true);
-});
-
-test('system prompt does not contain the old long hard safety contract heading', async () => {
-  const { SYSTEM } = await import('../src/ai/prompts.js');
-  assert.doesNotMatch(SYSTEM, /AI HARD SAFETY CONTRACT:/);
-  assert.match(SYSTEM, /\[SAFE EDIT RULE\]/);
+  assert.doesNotMatch(seen.prompt, /SAFE REPAIR|SAFE BUILD|SAFE SECURITY CHANGE|INSPECT ONLY/);
 });
 
 test('natural edit/change requests route to the existing improve action', async () => {
