@@ -174,8 +174,9 @@ User feedback: ${feedback}
 Error: ${error}
 Relevant files:\n${files}
 
-Return JSON:
-{"root_cause":"one sentence","files":[{"path":"","content":"full new file content only if this file must change"}],"explanation":"plain language","risk":"low|medium"}`;
+Return exactly one valid JSON object:
+{"root_cause":"one sentence","files":[{"path":"","content":"full new file content only if this file must change"}],"explanation":"plain language","risk":"low|medium"}
+JSON RULES: no markdown, no comments, no trailing commas. Escape quotes/newlines correctly inside content. Return only affected files. If no safe change can be determined, return files:[] and explain the missing evidence.`;
 }
 
 export function reviewPrompt(project, manifest) {

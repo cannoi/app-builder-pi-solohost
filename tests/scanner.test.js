@@ -34,3 +34,13 @@ test('static tests pass on the bundled template', async () => {
   const result = await runStaticTests(dir);
   assert.equal(result.status, 'passed', JSON.stringify(result.checks, null, 2));
 });
+
+test('scanner does not block a documentation-only docker.sock warning', async () => {
+  await withDir({
+    'README.md': 'Never mount /var/run/docker.sock into generated apps. Use the Builder Sandbox/Podman API instead.\n',
+  }, async (dir) => {
+    const scan = await scanProject(dir);
+    assert.equal(scan.status, 'PASS');
+    assert.equal(scan.critical, 0);
+  });
+});

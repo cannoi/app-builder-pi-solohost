@@ -79,7 +79,7 @@ function scanFile(rel, text, findings) {
       autoFix: false,
     });
   }
-  if (/docker\.sock/.test(text)) {
+  if (hasOperationalDockerSocket(rel, text)) {
     push(findings, {
       id: `docker-socket:${rel}`, severity: 'critical', check: 'DOCKER_CHECK', file: rel,
       title: 'Docker socket access is present.',
@@ -139,6 +139,22 @@ function scanFile(rel, text, findings) {
       autoFix: false,
     });
   }
+}
+
+function hasOperationalDockerSocket(rel, text) {
+  if (!/docker\.sock/i.test(text)) return false;
+  const lower = String(rel || '').toLowerCase();
+  // Documentation may legitimately explain that host Docker socket access is
+  // forbidden. Do not block publication merely because README/INSTALL contains
+  // the literal name of the socket. Runtime/config files are still scanned.
+  if (/^(readme|install|changelog)(\.|$)/i.test(lower) || /(^|\/)docs?(\/|$)/i.test(lower)) return false;
+  if (/docker-compose\.(ya?ml)$/i.test(lower)) {
+    return /(?:volumes|mounts|source|target|bind|device)[:\s-]*[^\n]*docker\.sock/i.test(text)
+      || /-\s*[^\n]*docker\.sock/i.test(text);
+  }
+  // Source/Dockerfile access is operational unless it is clearly a comment.
+  const activeLines = String(text).split(/\r?\n/).filter((line) => !/^\s*(?:#|\/\/|\*)/.test(line));
+  return activeLines.some((line) => /docker\.sock/i.test(line));
 }
 
 function buildSecurityReport({ critical, warning, findings }) {

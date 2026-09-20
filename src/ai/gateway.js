@@ -77,16 +77,32 @@ export class AIGateway {
 
   async completeJson(opts) {
     const council = (this.cfg.ai.mode === 'council') && ['CODING', 'DEBUGGING', 'CODE_REVIEW'].includes(opts.task);
-    if (!council) {
-      const first = await this.complete({ ...opts, json: true });
-      let parsed = extractJson(first.text);
-      if (parsed) return { ...first, json: parsed };
-      const retry = await this.complete({ ...opts, json: true, prompt: `${opts.prompt}\n\nReturn ONLY a valid JSON object. No markdown.` });
-      parsed = extractJson(retry.text);
-      if (!parsed) throw Object.assign(new Error('AI returned invalid JSON twice'), { code: 'AI_BAD_JSON' });
-      return { ...retry, json: parsed };
+    if (council) return this.completeCouncil(opts);
+
+    // JSON is a hard contract for Builder actions. A malformed response must not
+    // stop the workflow when another configured provider can safely answer.
+    // Try the normal provider once, then a different configured provider once
+    // with a stricter prompt. This avoids repeating the same broken response twice.
+    const first = await this.complete({ ...opts, json: true });
+    let parsed = extractJson(first.text);
+    if (parsed) return { ...first, json: parsed };
+
+    const fallbackName = first.provider === 'gemini' ? 'deepseek' : 'gemini';
+    const fallback = this.providerByName(fallbackName);
+    if (fallback?.configured()) {
+      const strictPrompt = `${opts.prompt}\n\nJSON OUTPUT CONTRACT:\n- Return exactly one valid JSON object.\n- No markdown fences.\n- No commentary before or after JSON.\n- Escape all quotes and newlines inside string values.\n- Preserve file content exactly as JSON strings.\n- If you cannot produce a valid JSON object, return {"root_cause":"FORMAT_ERROR","files":[],"explanation":"Unable to produce valid JSON."}.`;
+      try {
+        const retry = await fallback.complete({ ...opts, json: true, prompt: strictPrompt });
+        this.record({ projectId: opts.projectId || null, task: opts.task, provider: retry.provider, model: retry.model, success: 1, durationMs: retry.durationMs, tokens: retry.tokens, error: null });
+        parsed = extractJson(retry.text);
+        if (parsed) return { ...retry, json: parsed, fallbackFrom: first.provider };
+      } catch (err) {
+        this.record({ projectId: opts.projectId || null, task: opts.task, provider: fallbackName, model: fallback.model, success: 0, durationMs: 0, tokens: null, error: err.message });
+        this.log.warn('AI JSON fallback failed', { provider: fallbackName, task: opts.task, error: err.message });
+      }
     }
-    return this.completeCouncil(opts);
+
+    throw Object.assign(new Error(`AI response format was invalid. ${first.provider || 'Primary AI'} did not return valid JSON${fallback?.configured() ? ' and the fallback could not recover it' : ''}. No files were changed.`), { code: 'AI_BAD_JSON' });
   }
 
   async completeCouncil(opts) {

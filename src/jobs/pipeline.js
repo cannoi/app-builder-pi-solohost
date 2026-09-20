@@ -442,6 +442,10 @@ export function registerPipeline(app) {
       if (pieces.length > 1) planned.push(...pieces.map((goal) => ({ action: inferAction(goal) || action, goal })));
       else planned.push({ action, goal: String(r.json?.feedback || message) });
     }
+    // A failed prerequisite must not be followed by a dependent Run/Publish.
+    // Independent safe analysis steps may still continue, but never let a later
+    // successful preview hide an earlier failed repair.
+    let prerequisiteFailed = false;
     if (action === 'question' && Array.isArray(r.json.questions) && r.json.questions.length) {
       await projects.saveMetadata(project, 'chat-question.json', { questions: r.json.questions });
       projects.setStatus(project, 'WAITING_INPUT');
@@ -449,6 +453,11 @@ export function registerPipeline(app) {
     } else {
       for (const step of planned) {
         let stepAction = step.action;
+        if (prerequisiteFailed && ['run', 'publish', 'export'].includes(stepAction)) {
+          payload.reports.push({ action: stepAction, status: 'blocked', goal: step.goal, error: 'Blocked because the previous repair/build step failed.' });
+          emit(stepAction, 'failed', `Skipped ${stepAction}: the previous required step failed. Fix that issue first.`);
+          continue;
+        }
         const gatedStep = gateAction(stepAction, { files: diagnosis.files, runtime: runtimeNow, githubConfigured: github.configured() });
         if (gatedStep.lock) stepAction = gatedStep.action;
         try {
@@ -479,8 +488,10 @@ export function registerPipeline(app) {
           }
           payload.reports.push({ action: stepAction, status: 'done', goal: step.goal });
         } catch (err) {
-          payload.reports.push({ action: stepAction, status: 'failed', goal: step.goal, error: String(err.message || err).slice(0, 240) });
-          emit('improve', 'failed', `Step failed, continuing other safe steps: ${String(err.message || err).slice(0, 160)}`);
+          const error = String(err.message || err).slice(0, 240);
+          payload.reports.push({ action: stepAction, status: 'failed', goal: step.goal, error });
+          prerequisiteFailed = true;
+          emit(stepAction, 'failed', `Step failed: ${error}`);
         }
       }
     }
@@ -714,16 +725,45 @@ export function registerPipeline(app) {
       }
     }
     emit('security', 'running', 'Looking for secrets and unsafe settings…');
-    const scan = await scanProject(source);
-    await projects.saveMetadata(project, 'security.json', scan);
+    let scan = await scanProject(source);
+    let securityRepair = null;
+    // Safe, deterministic gate: if every blocking finding explicitly permits
+    // automatic repair, let the repair AI attempt one targeted fix immediately.
+    // This keeps ordinary users from having to copy a security report manually.
+    if (scan.critical > 0 && scan.findings.every((f) => f.autoFix)) {
+      emit('repair', 'running', 'A safe security fix is available. Applying one targeted repair…');
+      try {
+        const relevant = await collectProjectContext(source);
+        const r = await ai.completeJson({
+          task: 'SECURITY',
+          system: SYSTEM,
+          prompt: patchPrompt(project, scan.copy_for_ai, relevant, 'Automatically repair the blocking security findings above. Change only the affected files. Preserve all existing app behavior.'),
+          projectId: project.id,
+        });
+        if (!r.json?.files?.length) throw new Error('AI did not return a safe security patch.');
+        await applySafeAiPatch({ sourceDir: source, files: r.json.files, project, snapshots, reason: 'before-security-fix' });
+        securityRepair = { status: 'attempted', files: r.json.files.map((f) => f.path) };
+        scan = await scanProject(source);
+        if (scan.critical === 0) emit('security', 'done', '✓ Security issue fixed and re-scanned.');
+        else emit('security', 'failed', 'Security fix was applied, but the re-scan still found a blocking issue.');
+      } catch (err) {
+        securityRepair = { status: 'failed', error: String(err.message || err).slice(0, 500) };
+        emit('repair', 'failed', `Security repair could not be applied automatically: ${securityRepair.error}`);
+      }
+    }
+    await projects.saveMetadata(project, 'security.json', { ...scan, repair: securityRepair });
+    if (scan.critical > 0) {
+      emit('security', 'failed', scan.copy_for_ai);
+      throw new Error(`RELEASE_SECURITY_BLOCKED\n${scan.copy_for_ai}\nNEXT: Fix the blocking security issue, then Run/Publish again.`);
+    }
     emit('preview', 'running', 'Starting a safe preview without host Docker access…');
     const dockerBuild = await runner.run({ sourcePath: source, projectSlug: project.slug, timeout: cfg.limits.sandboxTimeoutSec });
     const imageFile = null;
-    await projects.saveMetadata(project, 'test-plan.json', { staticResult, nodeResult, scan, preview: dockerBuild, dockerBuild, e2e: dockerBuild.e2e || null, imageFile });
+    await projects.saveMetadata(project, 'test-plan.json', { staticResult, nodeResult, scan, preview: dockerBuild, dockerBuild, e2e: dockerBuild.e2e || null, imageFile, securityRepair });
     const ok = staticResult.status === 'passed' && nodeResult.status !== 'failed' && scan.critical === 0 && dockerBuild.status === 'passed';
     projects.setStatus(project, ok ? 'WAITING_APPROVAL' : 'FAILED');
     if (ok) emit('test', 'done', '✓ Source checks, security, preview and Playwright E2E passed.');
-    return { staticResult, nodeResult, scan, dockerBuild, e2e: dockerBuild.e2e || null, imageFile, autoFixes: attempts, next: ok ? 'Open the preview with Run, Improve if needed, or Publish when ready.' : 'Fix the blocking issue shown above, then Build again.' };
+    return { staticResult, nodeResult, scan, dockerBuild, e2e: dockerBuild.e2e || null, imageFile, autoFixes: attempts, securityRepair, next: ok ? 'Open the preview with Run, Improve if needed, or Publish when ready.' : 'Fix the blocking issue shown above, then Run again.' };
   }
 
   async function review(project) {
@@ -787,8 +827,14 @@ export function registerPipeline(app) {
     const source = projects.sourceDir(project.slug);
     const relevant = await collectProjectContext(source);
     const security = await scanProject(source);
+    const activity = await projects.readMetadata(project, 'activity.json', []);
+    const recentJobs = jobs.list({ projectId: project.id, limit: 8 }).map((row) => {
+      const full = jobs.get(row.id) || row;
+      return { id: row.id, type: row.type, status: row.status, stage: row.stage, error: row.error, events: (full.events || []).slice(-6) };
+    });
+    const recentContext = `\nRECENT ACTIVITY (use as evidence; do not repeat a failed identical action):\n${JSON.stringify(Array.isArray(activity) ? activity.slice(-12) : [])}\nRECENT JOBS: ${JSON.stringify(recentJobs)}\n`;
     const securityContext = security.findings?.length ? `\nSECURITY FINDINGS (treat as concrete repair requirements):\n${security.copy_for_ai}\n` : '';
-    const r = await ai.completeJson({ task: 'DEBUGGING', system: SYSTEM, prompt: patchPrompt(project, '', relevant + securityContext, feedback), projectId: project.id, images: [] });
+    const r = await ai.completeJson({ task: 'DEBUGGING', system: SYSTEM, prompt: patchPrompt(project, '', relevant + recentContext + securityContext, feedback), projectId: project.id, images: [] });
     if (!r.json?.files?.length) throw new Error('AI did not propose a code change.');
     await applySafeAiPatch({ sourceDir: source, files: r.json.files, project, snapshots, reason: 'ai-improve' });
     await stampMadeBy(source, cfg);
@@ -901,11 +947,18 @@ function formatUserBrief({ action, runtime, diagnosis, reply, next, language = '
     French: { running: 'L’application est en cours d’exécution.', failed: 'L’application ne reste pas active.', finished: 'L’action est terminée.', none: 'aucun.', needRun: 'une exécution réussie.', image: 'l’image a été construite, le conteneur démarré et /health validé.' },
   };
   const t = templates[language] || templates.English;
-  const result = runtime?.status === 'passed'
-    ? t.running
-    : runtime?.error ? t.failed : action === 'reply' ? (reply || t.finished) : t.finished;
-  const done = runtime?.status === 'passed' ? t.image : action;
-  const missing = diagnosis?.findings?.length ? diagnosis.findings.map((f) => f.title).join('; ') : (runtime?.status === 'passed' ? t.none : (classifyLogs(runtime?.error || runtime?.logs || '')?.title || t.needRun));
+  const failedReports = Array.isArray(reports) ? reports.filter((s) => s.status === 'failed' || s.status === 'blocked') : [];
+  const result = failedReports.length
+    ? t.failed
+    : runtime?.status === 'passed'
+      ? t.running
+      : runtime?.error ? t.failed : action === 'reply' ? (reply || t.finished) : t.finished;
+  const done = failedReports.length
+    ? reports.filter((s) => s.status === 'done').map((s) => s.action).join(', ') || action
+    : runtime?.status === 'passed' ? t.image : action;
+  const missing = failedReports.length
+    ? failedReports.map((s) => `${s.action}: ${String(s.error || 'not completed').slice(0, 180)}`).join('; ')
+    : diagnosis?.findings?.length ? diagnosis.findings.map((f) => f.title).join('; ') : (runtime?.status === 'passed' ? t.none : (classifyLogs(runtime?.error || runtime?.logs || '')?.title || t.needRun));
   const card = describeFailure({ error: runtime?.error || '', logs: runtime?.logs || '', findings: diagnosis?.findings || [], action });
   const why = runtime?.status === 'failed' ? card.what : (runtime?.error ? String(runtime.error).split('\n')[0].slice(0, 220) : '');
   const extra = reply && !/RESULT:/i.test(reply) ? reply : '';

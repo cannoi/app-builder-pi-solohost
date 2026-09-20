@@ -225,12 +225,18 @@ async function watch(jobId) {
       state.seenEvents = events.length;
       if (job.status === 'done' || job.status === 'failed' || job.status === 'cancelled') {
         clearInterval(state.poll); state.poll = null; setBusy(false);
+        const result = job.result || {};
         if (job.status === 'failed') {
           const failure = String(job.error || 'The action failed.');
           add('ai', failure);
           renderRepairAction(failure);
         }
-        const result = job.result || {};
+        const reportFailure = Array.isArray(result.reports) && result.reports.find((r) => r.status === 'failed' || r.status === 'blocked');
+        if (reportFailure) {
+          const failure = `Step ${reportFailure.action} was not completed: ${reportFailure.error || 'blocked by a previous failure.'}`;
+          add('ai', failure);
+          renderRepairAction(failure);
+        }
         if (result.brief) add('ai', result.brief);
         else if (result.reply) add('ai', result.reply);
         if (result.projectId && result.projectId !== state.projectId) { state.projectId = result.projectId; await loadProjects(); await openProject(result.projectId, false); }
@@ -289,7 +295,7 @@ function renderRepairAction(errorText) {
 function summarizeResult(result, status) {
   const runtime = extractRuntime(result);
   if (status === 'failed' && !result.brief) {
-    add('ai', result.error || 'RESULT: Not ready.\nNEXT: Send the error back to me and I will fix it.');
+    add('ai', result.error || 'RESULT: Not ready.\nNEXT: Use Diagnose & Fix above, or tell me what you want changed.');
     return;
   }
   if (runtime?.status === 'passed' && (runtime.previewPath || runtime.url || runtime.publicUiUrl)) {

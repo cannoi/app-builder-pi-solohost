@@ -231,3 +231,8 @@ test('imported zip wrapper folder is flattened', async () => {
   assert.ok(names.includes('package.json'));
   assert.ok(names.includes('public'));
 });
+
+test('summary requests are analysis, not automatic code repair', () => {
+  assert.equal(inferAction('tổng hợp các lỗi hiện có trong app'), 'analyze');
+  assert.equal(inferAction('summarize all current errors'), 'analyze');
+});

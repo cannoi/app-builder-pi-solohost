@@ -20,6 +20,7 @@ export function splitUserSteps(message) {
 
 export function inferAction(message) {
   const m = String(message || '').toLowerCase();
+  if (/(tổng hợp|liệt kê|summary|summarize|list)[\s\S]*(lỗi|error|issue|problem|failure|warning|security)|(lỗi|error|issue|problem|failure)[\s\S]*(tổng hợp|liệt kê|summary|summarize|list)|(diagnose|diagnosis|kiểm tra toàn bộ|check all)/i.test(m)) return 'analyze';
   if (isQuestion(m)) return 'reply';
   if (/\b(lỗi|sự cố|vấn đề|error|failed|failure|unauthorized|forbidden|permission|cannot start|couldn't start|doesn't work|not working|broken|problem|issue|crash|không chạy được|không hoạt động|bị lỗi)\b/.test(m)) return 'improve';
   if ((/github|ghcr/.test(m) && /xuất|đăng|publish|release|push|upload/.test(m)) || (/solo\s*host/.test(m) && /xuất bản|publish|release|đăng/.test(m))) return 'publish';
