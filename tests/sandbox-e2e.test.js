@@ -121,6 +121,10 @@ test('sandbox benchmark includes deterministic Internet and DNS test', async () 
   assert.match(file, /\/api\/internet-test/);
   assert.match(file, /DNS_UNAVAILABLE/);
   assert.match(file, /DNS_OK_BUT_HTTPS_BLOCKED/);
+  assert.match(file, /BENCHMARK_ENGINE/);
+  assert.match(file, /Promise\.all\(targets\.map/);
   const ui = await fs.readFile(new URL('../templates/sandbox-benchmark/public/index.html', import.meta.url), 'utf8');
   assert.match(ui, /Sandbox Internet \+ DNS/);
+  assert.match(ui, /var total = 7/);
+  assert.match(ui, /TEST_T0/);
 });

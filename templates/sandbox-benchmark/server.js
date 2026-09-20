@@ -63,6 +63,7 @@ function health() {
     service: "sandbox-app-benchmark",
     version: "3.0.0",
     node: process.version,
+    sandbox_engine: process.env.BENCHMARK_ENGINE || "unknown",
     platform: process.platform,
     arch: process.arch,
     pid: process.pid,
@@ -137,10 +138,8 @@ async function httpsProbe(url) {
 
 async function runInternetTest() {
   const targets = ["example.com", "www.google.com", "cloudflare.com"];
-  const dnsResults = [];
-  for (const host of targets) dnsResults.push(await dnsProbe(host));
-  const httpsResults = [];
-  for (const host of targets) httpsResults.push(await httpsProbe(`https://${host}/`));
+  const dnsResults = await Promise.all(targets.map((host) => dnsProbe(host)));
+  const httpsResults = await Promise.all(targets.map((host) => httpsProbe(`https://${host}/`)));
   const dnsOk = dnsResults.filter((x) => x.ok).length;
   const httpsOk = httpsResults.filter((x) => x.ok).length;
   let diagnosis = "INTERNET_OK";
