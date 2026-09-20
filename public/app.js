@@ -5,11 +5,7 @@ async function api(url, options = {}) {
   const r = await fetch(url, { headers: { 'Content-Type': 'application/json', ...(options.headers || {}) }, ...options });
   const text = await r.text(); let data = {};
   try { data = text ? JSON.parse(text) : {}; } catch { data = { error: text }; }
-  if (!r.ok) {
-    const err = Object.assign(new Error(data.error || `HTTP ${r.status}`), { data, status: r.status });
-    if (data.jobId) err.jobId = data.jobId;
-    throw err;
-  }
+  if (!r.ok) throw Object.assign(new Error(data.error || `HTTP ${r.status}`), { data, status: r.status });
   return data;
 }
 function add(role, text, meta = {}) {
@@ -107,12 +103,6 @@ async function openProject(id, announce = true) {
   state.projectId = id; rememberProject(id); await loadProjects();
   const p = await api(`/api/projects/${id}`);
   $('chat').innerHTML = '';
-  const recent = Array.isArray(p.releases) ? p.releases : [];
-  const activity = await api(`/api/activity?projectId=${encodeURIComponent(id)}`).catch(() => ({items:[]}));
-  const running = activity.items?.find((x) => x.running);
-  if (running) add('system', `↻ ${running.type} is still running · ${running.stage || 'working'}`);
-  const last = activity.items?.find((x) => !x.running);
-  if (last?.status === 'failed' && last.error) add('system', `⚠ Last issue: ${String(last.error).split('\n')[0].slice(0, 220)}`);
   if (p.chat?.length) p.chat.forEach((m) => add(m.role === 'user' ? 'user' : m.role === 'assistant' ? 'ai' : 'system', m.message));
   else add('ai', `I’m ready to build ${p.name}. Tell me what you want next.`);
   if (announce) add('system', `Project: ${p.name}`);
@@ -145,13 +135,7 @@ async function sendMessage() {
     if (!r.ok) throw new Error(data.error || 'Builder could not start.');
     if (data.reply) { setBusy(false); add('ai', data.reply); return; }
     watch(data.jobId);
-  } catch (e) {
-    setBusy(false);
-    if (e.jobId) {
-      add('ai', `An action is already running (${e.data?.stage || 'working'}). I will follow that job instead of starting another one.`);
-      watch(e.jobId);
-    } else add('ai', e.message, { small: 'Nothing was changed.' });
-  }
+  } catch (e) { setBusy(false); add('ai', e.message, { small: 'Nothing was changed.' }); }
 }
 async function downloadZip(projectId, kind) {
   const url = `/api/projects/${projectId}/download?kind=${encodeURIComponent(kind || 'project')}`;
@@ -224,7 +208,7 @@ async function quick(action) {
   try {
     let r;
     if (action === 'publish') r = await api(`/api/projects/${state.projectId}/release`, { method: 'POST', body: JSON.stringify({ approved: true, confirm: true, push: true }) });
-    else if (action === 'improve') r = await api(`/api/projects/${state.projectId}/improve`, { method: 'POST', body: JSON.stringify({ feedback: 'Diagnose the latest reported problem from source, logs, runtime, and activity first. Apply the smallest safe root-cause fix, then re-test the affected flow. Preserve all unrelated working behavior.' }) });
+    else if (action === 'improve') r = await api(`/api/projects/${state.projectId}/improve`, { method: 'POST', body: JSON.stringify({ feedback: 'Improve the app based on my latest feedback and make the result more polished, reliable, and ready to test.' }) });
     else r = await api(`/api/projects/${state.projectId}/${action}`, { method: 'POST', body: '{}' });
     if (r.needsConfirmation) { setBusy(false); add('ai', `I need your approval before ${actionText(action).toLowerCase()}.`); return; }
     watch(r.jobId);

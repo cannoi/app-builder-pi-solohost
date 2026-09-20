@@ -7,8 +7,6 @@ after_save: "Settings saved. Start the app if a provider or GitHub setting does 
 fixed_values:
   - name: PREVIEW_MODE
     value: auto
-  - name: PREVIEW_ONLINE
-    value: "true"
   - name: PODMAN_API_URL
     value: ""
 fields:

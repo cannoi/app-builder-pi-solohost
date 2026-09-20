@@ -33,8 +33,3 @@
 - Preview/sandbox DNS + PREVIEW_ONLINE so product apps can use the Internet.
 - Failures include WHY, FIX, and COPY_FOR_AI.
 - Repair prompt forbids full rewrites. Activity log is stored and sent to AI.
-
-## 1.4.21
-- SoloHost compose pins ghcr.io/cannoi/app-builder-pi-solohost:1.4.21, drops custom DNS, adds named volumes.
-- INSTALL-SOLOHOST.md explains infinite Downloading = private/missing GHCR image.
-- docker-compose.build.yml builds locally without a registry pull.

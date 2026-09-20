@@ -20,13 +20,7 @@ export function registerRoutes(r, app) {
 
   const ensureFree = (projectId, res) => {
     if (!jobs.isBusy(projectId)) return true;
-    const current = jobs.runningJob(projectId);
-    res.status(409).json({
-      busy: true,
-      jobId: current?.id || null,
-      stage: current?.stage || 'running',
-      error: 'An action is already running. I kept the current job; wait for its result instead of starting a duplicate action.'
-    });
+    res.status(409).json({ busy: true, error: 'Another action is still running. Please wait for it to finish.' });
     return false;
   };
 

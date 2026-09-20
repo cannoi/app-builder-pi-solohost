@@ -61,16 +61,6 @@ export class JobQueue {
     );
   }
 
-  runningJob(projectId = null) {
-    const rows = this.db.all(
-      projectId
-        ? "SELECT id,project_id,type,status,stage,error,created_at,updated_at FROM jobs WHERE project_id = ? AND status IN ('queued','running') ORDER BY created_at DESC LIMIT 1"
-        : "SELECT id,project_id,type,status,stage,error,created_at,updated_at FROM jobs WHERE status IN ('queued','running') ORDER BY created_at DESC LIMIT 1"
-      , ...(projectId ? [projectId] : [])
-    );
-    return rows[0] || null;
-  }
-
   isBusy(projectId = null) {
     for (const id of this.active) {
       const job = this.db.get('SELECT project_id FROM jobs WHERE id = ?', id);

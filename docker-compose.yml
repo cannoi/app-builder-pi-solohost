@@ -1,6 +1,6 @@
 services:
   app-builder:
-    image: ghcr.io/cannoi/app-builder-pi-solohost:1.4.21
+    image: ghcr.io/cannoi/app-builder-pi-solohost:latest
     restart: unless-stopped
     labels:
       pi.ui.primary: "true"
@@ -14,13 +14,9 @@ services:
       GITHUB_TOKEN: "${GITHUB_TOKEN}"
       PREVIEW_MODE: "auto"
       PREVIEW_ONLINE: "true"
+      PREVIEW_REQUIRE_INTERNET: "true"
+      PREVIEW_REQUIRE_BROWSER_TEST: "true"
       PODMAN_API_URL: ""
-    volumes:
-      - app_builder_data:/app/data
-      - app_builder_projects:/app/projects
-      - app_builder_workspace:/app/workspace
-
-volumes:
-  app_builder_data:
-  app_builder_projects:
-  app_builder_workspace:
+    dns:
+      - "8.8.8.8"
+      - "1.1.1.1"

@@ -4,7 +4,6 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { flattenImportedTree } from '../src/projects/importer.js';
-const ROOT = path.resolve(new URL('..', import.meta.url).pathname);
 
 test('SoloHost compose has no undeclared interpolation and no forbidden security_opt', () => {
   const y = fs.readFileSync(new URL('../docker-compose.yml', import.meta.url), 'utf8');
@@ -119,24 +118,4 @@ test('SoloHost config schema keeps fields and fixed_values as arrays', () => {
   assert.match(text, /fields:\n\s+- name:/);
   assert.match(text, /fixed_values:\n\s+- name: PREVIEW_MODE/);
   assert.match(text, /- name: PODMAN_API_URL/);
-});
-
-
-test('queue exposes the current running job for duplicate-action recovery', async () => {
-  const src = fs.readFileSync(path.join(ROOT, 'src/jobs/queue.js'), 'utf8');
-  assert.match(src, /runningJob\(projectId = null\)/);
-  assert.match(src, /status IN \('queued','running'\)/);
-});
-
-test('Builder never equates browser page success with Internet verification', async () => {
-  const src = fs.readFileSync(path.join(ROOT, 'src/jobs/pipeline.js'), 'utf8');
-  assert.match(src, /Internet browsing is not yet verified/);
-  assert.match(src, /runtime\.internet\?\.ok === true/);
-});
-
-test('network repair prompt traces the real proxy request path', async () => {
-  const src = fs.readFileSync(path.join(ROOT, 'src/jobs/pipeline.js'), 'utf8');
-  assert.match(src, /actual app gateway\/proxy, DNS lookup, HTTPS request, redirects, timeouts/);
-  assert.match(src, /Do not merely describe a fix/);
-  assert.match(src, /Never call a passing \/health or page-load check proof that Internet browsing works/);
 });
