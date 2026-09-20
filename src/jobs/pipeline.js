@@ -172,7 +172,7 @@ export function registerPipeline(app) {
     await projects.saveMetadata(project, 'test-plan.json', { ...tests, preview: result, e2e: result.e2e || null });
     if (result.status === 'passed') {
       projects.setStatus(project, 'WAITING_APPROVAL');
-      emit('run', 'done', '✓ Preview started and browser check passed.');
+      emit('run', 'done', runtime.internet?.ok === true ? '✓ Preview started; health, browser, and Internet checks passed.' : '✓ Preview started and browser check passed. Internet browsing is not yet verified.');
     } else {
       projects.setStatus(project, 'FAILED');
       const message = result.error || 'The app could not start or pass browser testing.';
@@ -862,7 +862,14 @@ export function registerPipeline(app) {
     const tested = await testAndMaybeFix(projects.get(project.id), emit);
     let runtime = null;
     if (tested.staticResult?.status === 'passed' && tested.nodeResult?.status !== 'failed' && tested.scan?.critical === 0) runtime = await runProject(projects.get(project.id), emit);
-    return { feedback, explanation: r.json.explanation || '', files: r.json.files.map((f) => f.path), tested, runtime };
+    const networkIssue = /\b(internet|offline|online|network|dns|proxy|gateway|browse|browsing|fetch|connection|kết nối|mạng|truy cập web)\b/i.test(feedback);
+    if (networkIssue && runtime?.status === 'passed' && runtime?.internet?.ok !== true) {
+      runtime.status = 'failed';
+      runtime.error = 'Internet browsing is still not verified after the repair. The app page/health works, but the outbound Internet check failed or was unavailable.';
+      runtime.brief = briefFail(runtime.error);
+      emit('run', 'failed', runtime.error);
+    }
+    return { feedback, rootCause: r.json.root_cause || '', explanation: r.json.explanation || '', files: r.json.files.map((f) => f.path), tested, runtime };
   }
 
   function imageInputs(files) {
@@ -994,7 +1001,7 @@ function briefRun(runtime) {
   return [
     `RESULT: App is running.`,
     `TEST LINK: ${runtime.previewPath || runtime.url}`,
-    `DONE: Safe preview started, health check and browser test passed.`,
+    `DONE: Safe preview started; health and browser checks passed.${runtime.internet?.ok === true ? ' Outbound Internet was also verified.' : ' Outbound Internet is not verified by this test.'}`,
     `MISSING: none for a test run.`,
     `NEXT: Open the test link, then tell me what to change. Tap Publish when you are happy.`,
   ].join('\n');

@@ -30,7 +30,12 @@ export async function runSandboxE2E({ podman, image, appId, previewBaseUrl = '',
     if (!port) return e2eResult({ status: 'failed', ui_url: publicUrl(previewBaseUrl, id), test_metrics: { page_title: '', load_time_ms: 0 }, error: 'Preview port was not published by the Container Sandbox.' });
     const localUrl = `http://127.0.0.1:${port}`;
     const tested = await runPlaywrightE2E({ uiUrl: localUrl, screenshotPath: screenshotPath || path.join('/tmp', `${id}-preview.png`), timeoutMs: Math.min(Number(timeoutSec || 180) * 1000, 60000), browserFactory });
-    return e2eResult({ ...tested, ui_url: publicUrl(previewBaseUrl, id) });
+    const internet = tested.internet || null;
+    const status = tested.status === 'passed' && (!internet || internet.ok === true) ? 'passed' : 'failed';
+    const error = tested.status !== 'passed'
+      ? tested.error || 'Browser E2E failed.'
+      : (!internet || internet.ok === true) ? null : 'Browser preview can load the app, but outbound Internet access was not verified.';
+    return e2eResult({ ...tested, status, error, ...(internet ? { internet } : {}), ui_url: publicUrl(previewBaseUrl, id) });
   } catch (err) {
     return e2eResult({ status: 'failed', ui_url: publicUrl(previewBaseUrl, id), test_metrics: { page_title: '', load_time_ms: 0 }, error: String(err?.message || err).slice(0, 2000) });
   } finally {
