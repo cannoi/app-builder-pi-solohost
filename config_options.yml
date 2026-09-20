@@ -1,7 +1,46 @@
-title: "SoloHost Browser"
+title: "App Builder — Pi SoloHost"
 eyebrow: SoloHost App
-description: "Lightweight freeform browser and local app hub for SoloHost."
-footer_hint: Ready to run on Pi Desktop SoloHost.
+description: "Build, test, repair, and publish simple SoloHost apps with AI."
+footer_hint: "Only enter the important AI and GitHub details you need. Secrets are password fields."
 output_file: .env
-after_save: Saved. Start the app from SoloHost.
-fields: []
+after_save: "Settings saved. Start the app if a provider or GitHub setting does not update immediately."
+fixed_values:
+  - name: PREVIEW_MODE
+    value: auto
+  - name: PODMAN_API_URL
+    value: ""
+fields:
+  - name: AI_PROVIDER
+    label: AI provider
+    type: select
+    default: gemini
+    options:
+      - value: gemini
+        label: Gemini
+      - value: deepseek
+        label: DeepSeek
+    help: "Choose the AI service used by the Builder."
+
+  - name: GEMINI_API_KEY
+    label: Gemini API key
+    type: password
+    preserve_if_blank: true
+    help: "Required when Gemini is selected. Model selection is automatic."
+
+  - name: DEEPSEEK_API_KEY
+    label: DeepSeek API key
+    type: password
+    preserve_if_blank: true
+    help: "Required when DeepSeek is selected."
+
+  - name: GITHUB_OWNER
+    label: GitHub owner
+    type: text
+    preserve_if_blank: true
+    help: "Your GitHub username or organization used for publishing."
+
+  - name: GITHUB_TOKEN
+    label: GitHub token
+    type: password
+    preserve_if_blank: true
+    help: "Required only for GitHub publishing. Keep this token private."
