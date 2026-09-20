@@ -1,7 +1,7 @@
-title: "App Builder — Pi SoloHost"
+title: "SoloHost Browser"
 eyebrow: SoloHost App
-description: "Create, test, improve and publish simple SoloHost apps with AI."
-footer_hint: AI Builder · Safe preview · GitHub publishing.
+description: "Lightweight freeform browser and local app hub for SoloHost."
+footer_hint: Ready to run on Pi Desktop SoloHost.
 output_file: .env
 after_save: Saved. Start the app from SoloHost.
 fields: []

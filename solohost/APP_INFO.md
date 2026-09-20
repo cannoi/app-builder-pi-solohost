@@ -1,9 +1,7 @@
-# pi-app-factory
+# SoloHost Browser
 
-Suggested app name: pi-app-factory
-Suggested description: pi-app-factory: Imported running container: pi-app-factory
+Suggested app name: SoloHost Browser
+Suggested description: Lightweight freeform browser and local app hub for SoloHost.
 
 Docker image:
-paf-app:pi-app-factory
-
-Do not install until this image address exists on GHCR.
+paf-app:solohost-browser-hub

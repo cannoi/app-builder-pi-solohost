@@ -1,8 +1,20 @@
 services:
   app:
-    image: ghcr.io/cannoi/app-builder-pi-solohost:latest
+    image: paf-app:solohost-browser-hub
     restart: unless-stopped
     labels:
       pi.ui.primary: "true"
+      solohost.app: "true"
+      solohost.app.id: "browser"
+      solohost.app.name: "SoloHost Browser"
+      solohost.app.route: "/"
     ports:
       - "127.0.0.1:18080:8080"
+    environment:
+      PORT: "8080"
+      SOLOHOST_DEMO_APPS: "1"
+    volumes:
+      - solohost-browser-data:/app/data
+
+volumes:
+  solohost-browser-data:

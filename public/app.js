@@ -1,499 +1,658 @@
-const $ = (id) => document.getElementById(id);
-const state = { projectId: null, projects: [], busy: false, jobId: null, poll: null, seenEvents: 0, files: [], settings: null };
+(() => {
+  const $ = (id) => document.getElementById(id);
 
-async function api(url, options = {}) {
-  const r = await fetch(url, { headers: { 'Content-Type': 'application/json', ...(options.headers || {}) }, ...options });
-  const text = await r.text(); let data = {};
-  try { data = text ? JSON.parse(text) : {}; } catch { data = { error: text }; }
-  if (!r.ok) throw Object.assign(new Error(data.error || `HTTP ${r.status}`), { data, status: r.status });
-  return data;
-}
-function add(role, text, meta = {}) {
-  if (!text) return;
-  const stick = chatNearBottom();
-  const el = document.createElement('div'); el.className = `msg ${role}`; el.textContent = text;
-  if (meta.small) { const s = document.createElement('span'); s.className = 'small'; s.textContent = meta.small; el.appendChild(s); }
-  $('chat').appendChild(el); if (stick) $('chat').scrollTop = $('chat').scrollHeight; else maybeJump();
-}
-function event(stage, status, message) {
-  const el = document.createElement('div'); el.className = `event ${status}`; el.textContent = `${status === 'done' ? '✓' : status === 'failed' ? '⚠' : '•'} ${message}`;
-  $('chat').appendChild(el); if (chatNearBottom()) $('chat').scrollTop = $('chat').scrollHeight; else maybeJump();
-}
-function toast(message) { add('system', message); }
-function setLive(on) {
-  const btn = $('liveBtn');
-  if (!btn) return;
-  btn.hidden = !on;
-}
-async function stopLive() {
-  if (!state.projectId || state.busy) return;
-  setBusy(true, 'Stopping the test app…');
-  try {
-    const r = await api(`/api/projects/${state.projectId}/stop`, { method: 'POST', body: '{}' });
-    await api('/api/docker/gc', { method: 'POST', body: JSON.stringify({ projectId: state.projectId }) }).catch(() => ({}));
-    setLive(false);
-    add('ai', 'Test app stopped. Extra Builder containers and unused images were removed.');
-    if (r.jobId) watch(r.jobId);
-    else setBusy(false);
-  } catch (e) { setBusy(false); add('ai', e.message); }
-}
-function setBusy(on, text = 'Working…') {
-  state.busy = on;
-  $('busyBar').hidden = !on;
-  $('busyText').textContent = on ? text : 'Ready';
-  if ($('workPill')) { $('workPill').textContent = on ? 'Working' : 'Ready'; $('workPill').className = on ? 'pill work' : 'pill ready'; }
-  document.querySelectorAll('.quickGroups button,#attachBtn,#message').forEach((x) => { x.disabled = on; });
-  if ($('projectSelect')) $('projectSelect').disabled = on;
-  // Send button turns into a Stop button while a job is running, instead of being disabled.
-  const sendBtn = $('sendBtn');
-  if (sendBtn) {
-    sendBtn.disabled = false;
-    sendBtn.textContent = on ? '■' : '➤';
-    sendBtn.title = on ? 'Stop / cancel current action' : 'Send';
-    sendBtn.classList.toggle('stopMode', on);
-  }
-}
-async function cancelCurrentJob() {
-  if (!state.busy) return;
-  const jobId = state.jobId;
-  clearInterval(state.poll); state.poll = null;
-  setBusy(false);
-  add('system', '⏹ Cancelled. The step may still finish in the background, but you can send a new message now.');
-  if (jobId) { try { await api(`/api/jobs/${jobId}/cancel`, { method: 'POST', body: '{}' }); } catch {} }
-}
-function chatNearBottom() {
-  const el = $('chat');
-  return el.scrollHeight - el.scrollTop - el.clientHeight < 80;
-}
-function maybeJump() {
-  const el = $('chat');
-  $('jumpDown').hidden = chatNearBottom() || el.scrollHeight <= el.clientHeight + 20;
-}
-function project() { return state.projects.find((p) => p.id === state.projectId) || null; }
-function actionText(action) { return ({ build:'Build the app', run:'Run the app', improve:'Improve the app', analyze:'Check the app', publish:'Prepare the release', sandbox:'Test the sandbox' })[action] || action; }
-
-async function loadStatus() {
-  try {
-    const s = await api('/api/status'); state.settings = s;
-    const mode = s.ai?.mode === 'council' ? 'council' : (s.ai?.provider || 'deepseek');
-    if ($('aiSelect')) $('aiSelect').value = mode;
-    if ($('setProvider')) $('setProvider').value = mode;
-  } catch {}
-}
-function rememberProject(id) {
-  try {
-    if (id) localStorage.setItem('paf.projectId', id);
-    else localStorage.removeItem('paf.projectId');
-  } catch {}
-}
-function savedProjectId() {
-  try {
-    const q = new URLSearchParams(location.search).get('p');
-    if (q) return q;
-    return localStorage.getItem('paf.projectId');
-  } catch { return null; }
-}
-async function loadProjects() {
-  state.projects = await api('/api/projects');
-  const select = $('projectSelect');
-  select.innerHTML = '<option value="">New app</option>' + state.projects.map((p) => `<option value="${p.id}">${esc(p.name)}</option>`).join('');
-  select.value = state.projectId || '';
-}
-async function openProject(id, announce = true) {
-  state.projectId = id; rememberProject(id); await loadProjects();
-  const p = await api(`/api/projects/${id}`);
-  $('chat').innerHTML = '';
-  if (p.chat?.length) p.chat.forEach((m) => add(m.role === 'user' ? 'user' : m.role === 'assistant' ? 'ai' : 'system', m.message));
-  else add('ai', `I’m ready to build ${p.name}. Tell me what you want next.`);
-  if (announce) add('system', `Project: ${p.name}`);
-  setLive(p.runtime?.status === 'passed');
-}
-async function sendMessage() {
-  if (state.busy) return;
-  const message = $('message').value.trim();
-  if (!message && !state.files.length) return;
-  if (state.awaitingChoices && state.projectId && message) {
-    $('message').value = '';
-    add('user', message);
-    state.awaitingChoices = false;
-    setBusy(true, 'Saving your custom answers…');
-    try {
-      const r = await api(`/api/projects/${state.projectId}/answer`, { method: 'POST', body: JSON.stringify({ answers: { custom: message, ...state.pendingAnswers } }) });
-      watch(r.jobId);
-    } catch (e) { setBusy(false); add('ai', e.message); }
-    return;
-  }
-  const files = state.files.slice(); state.files = []; renderFiles();
-  if (message) { add('user', message); $('message').value = ''; }
-  setBusy(true, state.projectId ? 'AI is working on your app…' : 'AI is creating your app…');
-  try {
-    const url = state.projectId ? `/api/projects/${state.projectId}/chat` : '/api/chat';
-    const form = new FormData(); form.append('message', message || 'Analyze these files and build the right app.');
-    for (const f of files) form.append('files', f);
-    const r = await fetch(url, { method: 'POST', body: form });
-    const data = await r.json().catch(() => ({}));
-    if (!r.ok) throw new Error(data.error || 'Builder could not start.');
-    if (data.reply) { setBusy(false); add('ai', data.reply); return; }
-    watch(data.jobId);
-  } catch (e) { setBusy(false); add('ai', e.message, { small: 'Nothing was changed.' }); }
-}
-async function downloadZip(projectId, kind) {
-  const url = `/api/projects/${projectId}/download?kind=${encodeURIComponent(kind || 'project')}`;
-  const r = await fetch(url);
-  if (!r.ok) {
-    const data = await r.json().catch(() => ({}));
-    throw new Error(data.error || 'Could not create the ZIP.');
-  }
-  const blob = await r.blob();
-  const name = (r.headers.get('content-disposition') || '').match(/filename="([^"]+)"/)?.[1] || `${kind}.zip`;
-  const href = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = href; a.download = name; document.body.appendChild(a); a.click(); a.remove();
-  setTimeout(() => URL.revokeObjectURL(href), 2000);
-  add('ai', `ZIP ready: ${name}`);
-}
-function pickImportZip() {
-  const input = $('importZipInput');
-  if (!input) { add('ai', 'Import is not available in this screen.'); return; }
-  input.onchange = async () => {
-    const file = input.files?.[0];
-    input.value = '';
-    if (!file) return;
-    setBusy(true, 'Importing ZIP…');
-    try {
-      const form = new FormData();
-      form.append('file', file);
-      form.append('idea', `Imported ZIP: ${file.name}`);
-      const url = state.projectId ? `/api/projects/${state.projectId}/import` : '/api/projects/import';
-      const r = await fetch(url, { method: 'POST', body: form });
-      const data = await r.json().catch(() => ({}));
-      if (!r.ok) throw new Error(data.error || 'Import failed.');
-      add('ai', `Importing ${file.name}. I will unpack it and flatten a wrapper folder if needed.`);
-      watch(data.jobId);
-    } catch (e) { setBusy(false); add('ai', e.message); }
+  const els = {
+    chrome: $('chrome'),
+    greeting: $('greeting'),
+    form: $('search-form'),
+    input: $('search-input'),
+    suggest: $('suggest'),
+    constellation: $('constellation'),
+    sky: $('sky'),
+    statusLine: $('status-line'),
+    statusText: $('status-text'),
+    viewHome: $('view-home'),
+    viewBrowser: $('view-browser'),
+    iframe: $('browser-iframe'),
+    browserError: $('browser-error'),
+    browserErrorTitle: $('browser-error-title'),
+    browserErrorDesc: $('browser-error-desc'),
+    browserErrorRetry: $('browser-error-retry'),
+    tabs: $('tabs'),
+    back: $('btn-back'),
+    forward: $('btn-forward'),
+    reload: $('btn-reload'),
+    neu: $('btn-new'),
+    glow: $('pointer-glow'),
+    toast: $('toast')
   };
-  input.click();
-}
-async function startSandboxDemo() {
-  setBusy(true, 'Testing sandbox…');
-  try {
-    const r = await api('/api/projects/sandbox-demo', { method: 'POST', body: '{}' });
-    add('ai', 'Starting Sandbox Benchmark. If this preview works, Builder/preview is healthy. Then build your own app.');
-    watch(r.jobId);
-  } catch (e) { setBusy(false); add('ai', e.message); }
-}
-async function quick(action) {
-  if (state.busy) return;
-  if (action === 'support') return openSupport();
-  if (action === 'docker') return inspectDocker();
-  if (action === 'sandbox') return startSandboxDemo();
-  if (action === 'import') return pickImportZip();
-  if (action === 'run') {
-    try {
-      const probe = await api('/api/sandbox-status');
-      if (!probe?.ok) {
-        add('ai', 'Tip: tap 🧪 Sandbox first. If that preview fails, the problem is Builder/preview — not your app. If it works, then ▶ Run tests the product.');
-      }
-    } catch {}
+
+  const ICONS = {
+    calculator: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="5" y="3.5" width="14" height="17" rx="3"/><path d="M8 8h8M8 12h.01M12 12h.01M16 12h.01M8 16h.01M12 16h.01M16 16h.01"/></svg>',
+    music: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M9 18V6l10-2v12"/><circle cx="7" cy="18" r="2.4"/><circle cx="17" cy="16" r="2.4"/></svg>',
+    ai: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="3.2"/><path d="M12 4v2.2M12 17.8V20M4 12h2.2M17.8 12H20M6.4 6.4l1.6 1.6M16 16l1.6 1.6M17.6 6.4 16 8M8 16l-1.6 1.6"/></svg>',
+    node: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 3 20 7.5v9L12 21 4 16.5v-9L12 3z"/><path d="M12 12 20 7.5M12 12v9M12 12 4 7.5"/></svg>',
+    favorites: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="m12 4.5 2.2 4.6 5 .7-3.6 3.6.9 5.1L12 16.3 7.5 18.5l.9-5.1L4.8 9.8l5-.7L12 4.5z"/></svg>',
+    apps: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 8h.01M12 8h.01M16 8h.01M8 12h.01M12 12h.01M16 12h.01M8 16h.01M12 16h.01M16 16h.01"/></svg>',
+    app: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="5" y="5" width="14" height="14" rx="4"/></svg>'
+  };
+
+  const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const coarse = window.matchMedia('(pointer: coarse)').matches;
+  const lowPower = navigator.hardwareConcurrency && navigator.hardwareConcurrency <= 2;
+
+  const state = {
+    apps: [],
+    bookmarks: [],
+    history: [],
+    tabs: [{ id: 'home', title: 'Home', url: '', kind: 'home' }],
+    active: 'home',
+    online: true,
+    appsError: false,
+    searchOpen: false,
+    pendingUrl: null,
+    loadTimer: null
+  };
+
+  function greeting() {
+    const h = new Date().getHours();
+    if (h < 5) return 'Good night';
+    if (h < 12) return 'Good morning';
+    if (h < 18) return 'Good afternoon';
+    return 'Good evening';
   }
-  if (action === 'export') {
-    if (!state.projectId) { add('ai', 'Create an app first, then tap Zip.'); return; }
-    add('ai', 'Preparing a ZIP of your app…');
-    try { await downloadZip(state.projectId, 'project'); }
-    catch (e) { add('ai', e.message); }
-    return;
+
+  function toast(msg) {
+    els.toast.textContent = msg;
+    els.toast.classList.add('show');
+    clearTimeout(toast._t);
+    toast._t = setTimeout(() => els.toast.classList.remove('show'), 1800);
   }
-  if (!state.projectId) { add('ai', 'Start with your app idea in the chat. I’ll create the project first.'); return; }
-  setBusy(true, `${actionText(action)}…`);
-  try {
-    let r;
-    if (action === 'publish') r = await api(`/api/projects/${state.projectId}/release`, { method: 'POST', body: JSON.stringify({ approved: true, confirm: true, push: true }) });
-    else if (action === 'improve') r = await api(`/api/projects/${state.projectId}/improve`, { method: 'POST', body: JSON.stringify({ feedback: 'Improve the app based on my latest feedback and make the result more polished, reliable, and ready to test.' }) });
-    else r = await api(`/api/projects/${state.projectId}/${action}`, { method: 'POST', body: '{}' });
-    if (r.needsConfirmation) { setBusy(false); add('ai', `I need your approval before ${actionText(action).toLowerCase()}.`); return; }
-    watch(r.jobId);
-  } catch (e) { setBusy(false); add('ai', e.message); }
-}
-async function watch(jobId) {
-  state.jobId = jobId; state.seenEvents = 0;
-  clearInterval(state.poll);
-  state.poll = setInterval(async () => {
-    try {
-      const job = await api(`/api/jobs/${jobId}`);
-      const events = job.events || [];
-      for (let i = state.seenEvents; i < events.length; i++) event(events[i].stage, events[i].status, events[i].message);
-      state.seenEvents = events.length;
-      if (job.status === 'done' || job.status === 'failed' || job.status === 'cancelled') {
-        clearInterval(state.poll); state.poll = null; setBusy(false);
-        if (job.status === 'failed') add('ai', job.error || 'The action failed. I showed the error above so we can fix it.');
-        const result = job.result || {};
-        if (result.brief) add('ai', result.brief);
-        else if (result.reply) add('ai', result.reply);
-        if (result.projectId && result.projectId !== state.projectId) { state.projectId = result.projectId; await loadProjects(); await openProject(result.projectId, false); }
-        else if (state.projectId) { await loadProjects(); }
-        summarizeResult(result, job.status);
-        if (result.guide) renderGuide(result.guide);
-        const live = extractRuntime(result);
-        if (live?.status === 'passed') setLive(true);
-        if (live?.status === 'stopped' || result.status === 'released') setLive(Boolean(live?.status === 'passed'));
-        maybeJump();
-      }
-    } catch (e) { clearInterval(state.poll); state.poll = null; setBusy(false); add('ai', `Connection lost while checking the job: ${e.message}`); }
-  }, 700);
-}
-// Fix: `result.runtime` can be either the preview engine name as a plain string
-// (e.g. "native-preview", set by src/runtime/native-preview.js) or, in older/other
-// result shapes, an object carrying { status, previewPath, url, ... }. Treating the
-// string case as the object silently made `runtime.status` always undefined, so the
-// "Open the test UI" link (and the Live indicator) never rendered even after a
-// successful Run. This only reads it as the runtime object when it actually is one.
-function extractRuntime(result) {
-  if (result?.runtime && typeof result.runtime === 'object') return result.runtime;
-  if (result?.result?.runtime && typeof result.result.runtime === 'object') return result.result.runtime;
-  if (result?.previewPath || result?.url || result?.publicUiUrl) return result;
-  return null;
-}
-function summarizeResult(result, status) {
-  const runtime = extractRuntime(result);
-  if (status === 'failed' && !result.brief) {
-    add('ai', result.error || 'RESULT: Not ready.\nNEXT: Send the error back to me and I will fix it.');
-    return;
+
+  function iconSvg(name) {
+    const key = String(name || 'app').toLowerCase();
+    return ICONS[key] || ICONS.app;
   }
-  if (runtime?.status === 'passed' && (runtime.previewPath || runtime.url || runtime.publicUiUrl)) {
-    addLink('Open the test UI', runtime.publicUiUrl || runtime.previewPath || runtime.url, runtime.publicUiUrl || runtime.previewPath || runtime.url);
+
+  function measureSky() {
+    const w = Math.max(
+      els.sky.clientWidth,
+      els.constellation.clientWidth,
+      els.viewHome.clientWidth,
+      window.innerWidth - 48
+    );
+    const h = Math.max(
+      els.sky.clientHeight,
+      els.constellation.clientHeight,
+      Math.round(window.innerHeight * 0.38)
+    );
+    return { w, h };
   }
-  if (Array.isArray(result.downloads)) {
-    result.downloads.forEach((d) => addLink(
-      d.kind === 'image' ? 'Download Docker image (.tar)' :
-        (d.kind === 'solohost' ? 'Download SoloHost install kit' :
-          (d.kind === 'github-fallback' ? 'Download Windows GitHub fallback (.ps1)' : 'Download project ZIP')),
-      d.url, d.filename));
-  } else if (result.imageFile?.status === 'passed' && result.imageFile?.filename) {
-    addLink('Download Docker image (.tar)', `/api/projects/${state.projectId}/image`, result.imageFile.filename);
-  }
-  if (result.next) add('ai', `Next: ${result.next}`);
-  if (Array.isArray(result.questions) && result.questions.length) renderQuestions(result.questions);
-  if (Array.isArray(result.checklist)) add('system', result.checklist.join('\n'));
-  if (result.installReady) add('ai', 'Ready to install. The required file is available above.');
-  if (result.fallback?.steps && !result.installReady) add('ai', result.fallback.steps.join('\n'));
-  if (result.repoChoice && Array.isArray(result.choices)) renderRepoChoices(result.choices);
-  if (result.githubPublish?.guide?.classic) {
-    add('ai', '🔐 GitHub setup guide:\n' + result.githubPublish.guide.classic.join('\n') + '\n\n⚙ Workflow permission:\n' + (result.githubPublish.guide.workflow || []).join('\n'));
-    if (result.githubPublish.guide.tokenUrl) addLink('Open GitHub token page', result.githubPublish.guide.tokenUrl, result.githubPublish.guide.tokenUrl);
-  }
-}
-function renderRepoChoices(choices) {
-  const box = document.createElement('div'); box.className = 'msg ai';
-  const title = document.createElement('div'); title.textContent = '📦 Repository already exists'; box.appendChild(title);
-  const row = document.createElement('div'); row.className = 'actionCard';
-  (choices || []).slice(0, 2).forEach((choice) => {
-    const b = document.createElement('button'); b.textContent = choice.label; b.onclick = async () => {
-      if (state.busy) return; setBusy(true, 'Publishing…');
-      try {
-        const body = { approved: true, confirm: true, push: true, existingAction: choice.action, repoName: choice.repoName };
-        const r = await api(`/api/projects/${state.projectId}/release`, { method: 'POST', body: JSON.stringify(body) });
-        watch(r.jobId);
-      } catch (e) { setBusy(false); add('ai', e.message); }
-    }; row.appendChild(b);
-  });
-  box.appendChild(row); $('chat').appendChild(box); maybeJump();
-}
-function addLink(label, href, text) {
-  const el = document.createElement('div'); el.className = 'msg ai';
-  const p = document.createElement('div'); p.textContent = label; el.appendChild(p);
-  // Fix: many embedded WebViews (including Pi Desktop's) don't support opening a new
-  // tab/window at all — target="_blank" and window.open() silently do nothing when
-  // tapped there. Resolve to an absolute URL (relative "/preview/..." only worked by
-  // accident, and breaks if copied elsewhere) and, on click, try a new tab first;
-  // if the environment blocks/ignores that, fall back to same-tab navigation, which
-  // works everywhere. Desktop-browser users keep normal right-click/long-press.
-  let absolute = href;
-  try { absolute = new URL(href, window.location.origin).href; } catch {}
-  const a = document.createElement('a');
-  a.href = absolute; a.rel = 'noopener'; a.textContent = text || absolute; a.style.color = '#8b7cff'; a.style.fontWeight = '700';
-  a.addEventListener('click', (e) => {
-    // Same-tab is the reliable path in Pi Desktop WebViews. The preview page
-    // itself has a project-aware Back link, so browser history cannot land on New App.
-    e.preventDefault();
-    window.location.assign(absolute);
-  });
-  el.appendChild(a);
-  $('chat').appendChild(el); $('chat').scrollTop = $('chat').scrollHeight;
-}
-function renderQuestions(questions) {
-  const list = (questions || []).slice(0, 3);
-  if (!list.length) return;
-  state.pendingAnswers = {};
-  state.awaitingChoices = true;
-  const box = document.createElement('div'); box.className = 'msg ai';
-  const title = document.createElement('div'); title.textContent = 'Choose every option below, or type your own answers in chat.'; box.appendChild(title);
-  list.forEach((q, i) => {
-    const key = q.id || `q${i}`;
-    const qEl = document.createElement('div'); qEl.style.marginTop = '8px'; qEl.textContent = `${i + 1}. ${q.question}`; box.appendChild(qEl);
-    const row = document.createElement('div'); row.className = 'actionCard';
-    (q.options || []).slice(0, 4).forEach((option) => {
-      const b = document.createElement('button'); b.textContent = option;
-      b.onclick = () => {
-        if (state.busy) return;
-        state.pendingAnswers[key] = option;
-        row.querySelectorAll('button').forEach((x) => { x.style.outline = ''; });
-        b.style.outline = '2px solid #8b7cff';
-        const left = list.filter((item, idx) => !state.pendingAnswers[item.id || `q${idx}`]).length;
-        hint.textContent = left ? `${left} choice(s) left. Or type a custom answer in chat.` : 'All choices picked. Tap Continue.';
-        go.disabled = left > 0;
+
+  function layoutFractions(n, narrow) {
+    if (n <= 0) return [];
+    const desktop = {
+      1: [[0.50, 0.46]],
+      2: [[0.38, 0.44], [0.62, 0.52]],
+      3: [[0.34, 0.38], [0.66, 0.34], [0.52, 0.66]],
+      4: [[0.33, 0.36], [0.64, 0.30], [0.44, 0.64], [0.70, 0.60]],
+      5: [[0.30, 0.34], [0.52, 0.24], [0.74, 0.38], [0.38, 0.66], [0.66, 0.70]],
+      6: [[0.28, 0.30], [0.50, 0.22], [0.74, 0.32], [0.34, 0.62], [0.56, 0.56], [0.76, 0.68]]
+    };
+    const mobile = {
+      1: [[0.50, 0.42]],
+      2: [[0.32, 0.38], [0.68, 0.50]],
+      3: [[0.30, 0.30], [0.70, 0.38], [0.50, 0.68]],
+      4: [[0.30, 0.28], [0.70, 0.34], [0.38, 0.64], [0.68, 0.72]],
+      5: [[0.28, 0.24], [0.72, 0.30], [0.50, 0.48], [0.30, 0.72], [0.70, 0.76]],
+      6: [[0.28, 0.22], [0.70, 0.26], [0.46, 0.44], [0.24, 0.66], [0.54, 0.70], [0.78, 0.62]]
+    };
+    const table = (narrow ? mobile : desktop)[n];
+    if (table) return table.map(([x, y]) => ({ x, y }));
+    const golden = Math.PI * (3 - Math.sqrt(5));
+    return Array.from({ length: n }, (_, i) => {
+      const t = i + 0.6;
+      const r = 0.16 + Math.sqrt(t) * 0.055;
+      const a = t * golden - 0.35;
+      return {
+        x: Math.min(0.86, Math.max(0.14, 0.5 + Math.cos(a) * r * 1.15)),
+        y: Math.min(0.84, Math.max(0.16, 0.48 + Math.sin(a) * r * 0.72))
       };
-      row.appendChild(b);
     });
-    box.appendChild(row);
-  });
-  const hint = document.createElement('div'); hint.className = 'small'; hint.textContent = 'Pick every choice, or type your own answers and send.'; box.appendChild(hint);
-  const go = document.createElement('button'); go.textContent = 'Continue'; go.disabled = true; go.style.marginTop = '8px';
-  go.onclick = () => submitQuestionAnswers(list);
-  box.appendChild(go);
-  $('chat').appendChild(box); $('chat').scrollTop = $('chat').scrollHeight;
-}
-async function submitQuestionAnswers(questions) {
-  if (state.busy) return;
-  if (!state.projectId) { add('ai', 'Create the project first, then answer the choices.'); return; }
-  const answers = { ...(state.pendingAnswers || {}) };
-  questions.forEach((q, i) => { if (!answers[q.id || `q${i}`] && q.question) answers[q.id || `q${i}`] = q.question; });
-  state.awaitingChoices = false;
-  setBusy(true, 'Saving your choices…');
-  try {
-    const r = await api(`/api/projects/${state.projectId}/answer`, { method: 'POST', body: JSON.stringify({ answers }) });
-    watch(r.jobId);
-  } catch (e) { setBusy(false); add('ai', e.message); }
-}
-async function inspectDocker() {
-  if (state.busy) return;
-  setBusy(true, 'Reading Docker apps…');
-  try {
-    const data = await api('/api/docker/containers?all=0');
-    if (data.status !== 'passed') throw new Error(data.reason || data.error || 'Docker is not available.');
-    if (!data.items.length) add('ai', 'No running Docker apps were found.');
-    else {
-      add('ai', `I found ${data.items.length} running Docker app(s). Pick one to analyze:`);
-      data.items.slice(0, 20).forEach((c) => {
-        const box = document.createElement('div'); box.className = 'msg system';
-        const title = document.createElement('div'); title.textContent = `🐳 ${c.name} · ${c.image} · ${c.status}`; box.appendChild(title);
-        const row = document.createElement('div'); row.className = 'actionCard';
-        for (const [label, fn] of [['🔎 Check', () => inspectNamedContainer(c.name)], ['📥 Copy', () => importContainer(c.name)]]) { const b = document.createElement('button'); b.textContent = label; b.onclick = fn; row.appendChild(b); }
-        box.appendChild(row); $('chat').appendChild(box);
-      });
-      $('chat').scrollTop = $('chat').scrollHeight;
-      add('ai', 'Choose Check to inspect an app, or Copy to turn it into a project for upgrades.');
-    }
-  } catch (e) { add('ai', e.message); }
-  finally { setBusy(false); }
-}
-async function inspectNamedContainer(name) {
-  if (state.busy) return;
-  setBusy(true, 'Analyzing Docker app…');
-  try {
-    const r = await api(`/api/docker/containers/${encodeURIComponent(name)}/analyze`, { method: 'POST', body: '{}' });
-    add('ai', `${r.container.name || name}\nImage: ${r.container.image}\nState: ${r.container.state}\nHealth: ${r.container.health}\nFindings: ${r.findings.length}`);
-    if (r.logs) add('system', r.logs.slice(-3500), { small: 'Recent container logs' });
-    if (r.findings.length) r.findings.forEach((f) => add(f.severity === 'critical' ? 'error' : 'system', `${f.title}: ${f.detail}`));
-    add('ai', 'If you want, I can copy this running app into a project and work on it like any other app.');
-  } catch (e) { add('ai', e.message); }
-  finally { setBusy(false); }
-}
-async function handleTextCommand(text) {
-  const m = text.match(/^(?:analyze|inspect|check)\s+(?:docker\s+)?(?:app|container)?\s*[:#]?\s*(\S+)$/i);
-  if (m && !state.projectId) return inspectNamedContainer(m[1]);
-  const c = text.match(/^(?:copy|import)\s+(?:docker\s+)?(?:app|container)?\s*[:#]?\s*(\S+)$/i);
-  if (c && !state.projectId) return importContainer(c[1]);
-  return sendMessage();
-}
-async function importContainer(name) {
-  if (state.busy) return;
-  setBusy(true, 'Copying Docker app into a project…');
-  try { const r = await api(`/api/docker/containers/${encodeURIComponent(name)}/import`, { method: 'POST', body: '{}' }); state.projectId = r.projectId; await loadProjects(); await openProject(r.projectId, false); add('ai', 'The running Docker app is now a project. I can inspect, fix, test, and improve it here.'); } catch (e) { add('ai', e.message); } finally { setBusy(false); }
-}
-function renderFiles() { $('attachments').innerHTML = state.files.map((f, i) => `<span class="attachment">📎 ${esc(f.name)} <button data-remove="${i}">×</button></span>`).join(''); }
-function esc(v) { return String(v || '').replace(/[&<>'"]/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c])); }
-async function loadSettings() {
-  try { state.settings = await api('/api/settings'); $('setProvider').value = state.settings.ai?.provider || 'deepseek'; } catch {}
-}
-async function saveSettings() {
-  try {
-    const raw = $('setProvider').value;
-    const body = { AI_PROVIDER: raw === 'council' ? 'deepseek' : raw, AI_MODE: raw === 'council' ? 'council' : 'single', DEEPSEEK_API_KEY: $('setDeepseek').value, GEMINI_API_KEY: $('setGemini').value, GITHUB_TOKEN: $('setGhToken').value, GITHUB_OWNER: $('setGhOwner').value, setupComplete: true };
-    const r = await api('/api/settings', { method: 'POST', body: JSON.stringify(body) });
-    $('setDeepseek').value = ''; $('setGemini').value = ''; $('setGhToken').value = ''; $('settingsState').textContent = 'Saved.'; $('settings').hidden = true; await loadStatus();
-    add('system', r.discovery?.model ? `Gemini model selected: ${r.discovery.model}` : 'Settings saved.');
-  } catch (e) { $('settingsState').textContent = e.message; }
-}
-function renderGuide(guide) {
-  if (!guide?.label) return;
-  const box = document.createElement('div'); box.className = 'msg ai';
-  const t = document.createElement('div'); t.textContent = `Next step ${guide.step || ''}: ${guide.title || ''}`.trim(); box.appendChild(t);
-  const d = document.createElement('div'); d.className = 'small'; d.textContent = guide.detail || ''; box.appendChild(d);
-  if (guide.label && guide.action) {
-    const row = document.createElement('div'); row.className = 'actionCard';
-    const b = document.createElement('button'); b.textContent = guide.label; b.onclick = () => { if (state.busy) return; quick(guide.action); }; row.appendChild(b);
-    box.appendChild(row);
   }
-  $('chat').appendChild(box); maybeJump();
-}
-async function applyAiNow(value) {
-  const council = value === 'council';
-  const provider = council ? 'deepseek' : value;
-  try {
-    await api('/api/settings', { method: 'POST', body: JSON.stringify({ AI_PROVIDER: provider, AI_MODE: council ? 'council' : 'single' }) });
-    add('system', council ? 'Council on: one model builds, the other reviews.' : `AI switched to ${provider}.`);
-    await loadStatus();
-  } catch (e) { add('system', e.message); }
-}
-function renderWelcome() {
-  $('chat').innerHTML = '';
-  add('ai', 'I will take you to a published SoloHost app in three taps:\n1) Tell me the idea\n2) I Build + Run and give you a test link\n3) You tap Publish');
-  renderGuide({ step: 1, title: 'Send your idea', action: null, label: '', detail: 'Example: “Build a snake game that saves high scores.”' });
-}
-$('sendBtn').onclick = () => { if (state.busy) return cancelCurrentJob(); return handleTextCommand($('message').value.trim()); };
-$('message').addEventListener('keydown', (e) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); handleTextCommand($('message').value.trim()); } });
-document.querySelectorAll('[data-action]').forEach((b) => b.onclick = () => quick(b.dataset.action));
-if ($('liveBtn')) $('liveBtn').onclick = () => stopLive();
-$('attachBtn').onclick = () => $('fileInput').click();
-$('fileInput').onchange = () => { state.files.push(...Array.from($('fileInput').files || [])); renderFiles(); $('fileInput').value = ''; };
-$('attachments').onclick = (e) => { const b = e.target.closest('[data-remove]'); if (b) { state.files.splice(Number(b.dataset.remove),1); renderFiles(); } };
-$('settingsBtn').onclick = () => { loadSettings(); $('settings').hidden = false; };
-$('closeSettings').onclick = () => $('settings').hidden = true;
-$('saveSettings').onclick = saveSettings;
-if ($('aiSelect')) $('aiSelect').onchange = () => applyAiNow($('aiSelect').value);
-if ($('setProvider')) $('setProvider').onchange = () => applyAiNow($('setProvider').value);
-$('projectSelect').onchange = async () => { if (state.busy) return; state.projectId = $('projectSelect').value || null; if (state.projectId) await openProject(state.projectId); else { rememberProject(null); renderWelcome(); } };
-$('jumpDown').onclick = () => { $('chat').scrollTop = $('chat').scrollHeight; $('jumpDown').hidden = true; };
-$('chat').addEventListener('scroll', maybeJump);
-setBusy(false, 'Ready');
-$('chat').addEventListener('click', (e) => { const b = e.target.closest('[data-container]'); if (b) inspectNamedContainer(b.dataset.container); });
 
-function openSupport() {
-  $('supportModal').hidden = false;
-  add('ai', 'Thank you for supporting App Builder — Pi SoloHost. Choose Pi Wallet or MB Bank, copy the details, and send what you can.');
-}
-function bindSupport() {
-  const modal = $('supportModal');
-  if (!modal) return;
-  $('closeSupport').onclick = () => { modal.hidden = true; };
-  modal.querySelectorAll('.supportTab').forEach((tab) => {
-    tab.onclick = () => {
-      modal.querySelectorAll('.supportTab').forEach((x) => x.classList.toggle('on', x === tab));
-      $('supportPi').hidden = tab.dataset.support !== 'pi';
-      $('supportMb').hidden = tab.dataset.support !== 'mb';
-    };
-  });
-  modal.querySelectorAll('[data-copy]').forEach((btn) => {
-    btn.onclick = async () => {
-      try { await navigator.clipboard.writeText(btn.dataset.copy); add('system', 'Copied. Thank you for supporting this project.'); }
-      catch { add('system', btn.dataset.copy); }
-    };
-  });
-}
-bindSupport();
+  function layoutPositions(n, width, height) {
+    const padX = 56;
+    const padY = 44;
+    const w = Math.max(320, width);
+    const h = Math.max(220, height);
+    if (n <= 0) return [];
 
-Promise.all([loadStatus(), loadProjects(), loadSettings()]).then(async () => {
-  const id = savedProjectId();
-  if (id && state.projects.some((p) => p.id === id)) await openProject(id, false);
-  else renderWelcome();
-}).catch(() => renderWelcome());
+    const narrow = w < 700;
+    const desktop = {
+      1: [[0.50, 0.46]],
+      2: [[0.38, 0.44], [0.62, 0.52]],
+      3: [[0.34, 0.38], [0.66, 0.34], [0.52, 0.66]],
+      4: [[0.33, 0.36], [0.64, 0.30], [0.44, 0.64], [0.70, 0.60]],
+      5: [[0.30, 0.34], [0.52, 0.24], [0.74, 0.38], [0.38, 0.66], [0.66, 0.70]],
+      6: [[0.28, 0.30], [0.50, 0.22], [0.74, 0.32], [0.34, 0.62], [0.56, 0.56], [0.76, 0.68]]
+    };
+    const mobile = {
+      1: [[0.50, 0.42]],
+      2: [[0.32, 0.38], [0.68, 0.50]],
+      3: [[0.30, 0.30], [0.70, 0.38], [0.50, 0.68]],
+      4: [[0.30, 0.28], [0.70, 0.34], [0.38, 0.64], [0.68, 0.72]],
+      5: [[0.28, 0.24], [0.72, 0.30], [0.50, 0.48], [0.30, 0.72], [0.70, 0.76]],
+      6: [[0.28, 0.22], [0.70, 0.26], [0.46, 0.44], [0.24, 0.66], [0.54, 0.70], [0.78, 0.62]]
+    };
+
+    const presets = narrow ? mobile : desktop;
+    if (presets[n]) {
+      return presets[n].map(([x, y]) => ({
+        x: Math.min(w - padX, Math.max(padX, x * w)),
+        y: Math.min(h - padY, Math.max(padY, y * h))
+      }));
+    }
+
+    const cx = w * 0.5;
+    const cy = h * 0.48;
+    const golden = Math.PI * (3 - Math.sqrt(5));
+    const positions = [];
+    for (let i = 0; i < n; i++) {
+      const t = i + 0.6;
+      const radius = 70 + Math.sqrt(t) * Math.min(w, h) * 0.10;
+      const a = t * golden - 0.35;
+      positions.push({
+        x: Math.min(w - padX, Math.max(padX, cx + Math.cos(a) * radius * 1.15)),
+        y: Math.min(h - padY, Math.max(padY, cy + Math.sin(a) * radius * 0.72))
+      });
+    }
+    return separate(positions, 96, w, h, padX, padY);
+  }
+
+  function separate(positions, minDist, w, h, padX, padY) {
+    const out = positions.map((p) => ({ ...p }));
+    for (let pass = 0; pass < 8; pass++) {
+      for (let i = 0; i < out.length; i++) {
+        for (let j = i + 1; j < out.length; j++) {
+          const dx = out[j].x - out[i].x;
+          const dy = out[j].y - out[i].y;
+          const d = Math.hypot(dx, dy) || 0.01;
+          if (d < minDist) {
+            const push = (minDist - d) / 2;
+            const ux = dx / d;
+            const uy = dy / d;
+            out[i].x -= ux * push;
+            out[i].y -= uy * push;
+            out[j].x += ux * push;
+            out[j].y += uy * push;
+          }
+        }
+        out[i].x = Math.min(w - padX, Math.max(padX, out[i].x));
+        out[i].y = Math.min(h - padY, Math.max(padY, out[i].y));
+      }
+    }
+    return out;
+  }
+
+  function renderConstellation() {
+    const host = els.constellation;
+    const sky = measureSky();
+    host.innerHTML = '';
+
+    if (state.appsError) {
+      host.innerHTML = `
+        <div class="error-space">
+          <div class="empty-mark">${iconSvg('apps')}</div>
+          <h2>My Apps unavailable</h2>
+          <p>The registry could not be reached. Browsing still works.</p>
+          <button class="retry" type="button" id="retry-apps">Retry</button>
+        </div>`;
+      const retry = document.getElementById('retry-apps');
+      if (retry) retry.addEventListener('click', () => loadApps());
+      return;
+    }
+
+    if (!state.apps.length) {
+      host.innerHTML = `
+        <div class="empty-space">
+          <div class="empty-mark">${iconSvg('apps')}</div>
+          <h2>No apps yet</h2>
+          <p>Apps installed on SoloHost will appear here.</p>
+        </div>`;
+      return;
+    }
+
+    const spots = layoutFractions(state.apps.length, window.matchMedia('(max-width: 720px)').matches);
+    state.apps.forEach((app, i) => {
+      const pos = spots[i] || { x: 0.5, y: 0.5 };
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'app-node';
+      btn.style.left = `${pos.x * 100}%`;
+      btn.style.top = `${pos.y * 100}%`;
+      btn.dataset.route = app.route;
+      btn.dataset.id = app.id;
+      btn.setAttribute('aria-label', `${app.name}, ${app.status || 'unknown'}`);
+      btn.innerHTML = `
+        <span class="app-dot ${app.status || 'offline'}" aria-hidden="true"></span>
+        <span class="app-glyph">${iconSvg(app.icon || app.id)}</span>
+        <span class="app-label">${escapeHtml(app.name)}</span>`;
+      btn.addEventListener('click', (e) => openApp(app, e.currentTarget));
+      host.appendChild(btn);
+    });
+  }
+
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, (c) => ({
+      '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+    }[c]));
+  }
+
+  function renderTabs() {
+    els.tabs.innerHTML = '';
+    state.tabs.forEach((tab) => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'tab' + (tab.id === state.active ? ' active' : '');
+      b.textContent = tab.title;
+      b.setAttribute('role', 'tab');
+      b.setAttribute('aria-selected', tab.id === state.active ? 'true' : 'false');
+      b.addEventListener('click', () => activateTab(tab.id));
+      els.tabs.appendChild(b);
+    });
+  }
+
+  function activateTab(id) {
+    const tab = state.tabs.find((t) => t.id === id);
+    if (!tab) return;
+    state.active = id;
+    renderTabs();
+    if (tab.kind === 'home') {
+      showHome();
+    } else {
+      showBrowser(tab.url, false);
+    }
+  }
+
+  function showHome() {
+    document.body.classList.remove('browsing');
+    els.chrome.classList.remove('browsing');
+    els.viewBrowser.hidden = true;
+    els.viewHome.hidden = false;
+    els.input.value = '';
+    els.input.placeholder = 'Search the Web';
+    state.active = 'home';
+    state.pendingUrl = null;
+    clearLoadTimer();
+    hideNetError();
+    if (!state.tabs.some((t) => t.id === 'home')) {
+      state.tabs.unshift({ id: 'home', title: 'Home', url: '', kind: 'home' });
+    }
+    renderTabs();
+    requestAnimationFrame(renderConstellation);
+  }
+
+  const PAGE_LOAD_TIMEOUT = 12000;
+
+  function hideNetError() {
+    els.browserError.hidden = true;
+  }
+
+  function showNetError(kind) {
+    if (kind === 'offline') {
+      els.browserErrorTitle.textContent = 'Không có kết nối Internet';
+      els.browserErrorDesc.textContent = 'Thiết bị hiện không có Internet. Kiểm tra kết nối mạng rồi thử lại.';
+    } else {
+      els.browserErrorTitle.textContent = 'Không thể tải trang';
+      els.browserErrorDesc.textContent = 'Trang mất quá lâu để phản hồi hoặc không thể truy cập. Kiểm tra kết nối Internet rồi thử lại.';
+    }
+    els.browserError.hidden = false;
+  }
+
+  function clearLoadTimer() {
+    if (state.loadTimer) {
+      clearTimeout(state.loadTimer);
+      state.loadTimer = null;
+    }
+  }
+
+  function showBrowser(url, record) {
+    document.body.classList.add('browsing');
+    els.chrome.classList.add('browsing');
+    els.viewHome.hidden = true;
+    els.viewBrowser.hidden = false;
+    els.input.value = url;
+    els.input.placeholder = 'Search or enter website';
+    state.pendingUrl = url;
+    clearLoadTimer();
+
+    if (!navigator.onLine) {
+      els.iframe.src = 'about:blank';
+      showNetError('offline');
+    } else {
+      hideNetError();
+      els.iframe.src = url;
+      state.loadTimer = setTimeout(() => {
+        if (state.pendingUrl === url) showNetError('timeout');
+      }, PAGE_LOAD_TIMEOUT);
+    }
+    if (record) remember(url);
+  }
+
+  const DOMAIN_RE = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+(:\d{1,5})?(\/\S*)?$/i;
+  const IPV4_RE = /^(\d{1,3}\.){3}\d{1,3}(:\d{1,5})?(\/\S*)?$/;
+  const LOCALHOST_RE = /^localhost(:\d{1,5})?(\/\S*)?$/i;
+
+  function looksLikeWebAddress(str) {
+    if (!str || /\s/.test(str)) return false;
+    return LOCALHOST_RE.test(str) || IPV4_RE.test(str) || DOMAIN_RE.test(str);
+  }
+
+  function openUrl(raw, title) {
+    let url = String(raw || '').trim();
+    if (!url) return;
+    if (url.startsWith('/')) {
+      // internal app route, use as-is
+    } else if (/^https?:\/\//i.test(url)) {
+      // already a full URL, use as-is
+    } else if (looksLikeWebAddress(url)) {
+      url = 'https://' + url;
+    } else {
+      url = 'https://www.google.com/search?q=' + encodeURIComponent(url);
+    }
+    const name = title || prettyTitle(url);
+    let tab = state.tabs.find((t) => t.url === url && t.kind === 'web');
+    if (!tab) {
+      tab = { id: 't' + Date.now(), title: name, url, kind: 'web' };
+      state.tabs.push(tab);
+    }
+    state.active = tab.id;
+    renderTabs();
+    showBrowser(url, true);
+  }
+
+  function prettyTitle(url) {
+    try {
+      if (url.startsWith('/apps/')) {
+        const id = url.split('/').pop();
+        const app = state.apps.find((a) => a.id === id || a.route === url);
+        return app ? app.name : id;
+      }
+      const u = new URL(url, location.origin);
+      return u.hostname.replace(/^www\./, '');
+    } catch {
+      return url.slice(0, 18);
+    }
+  }
+
+  function openApp(app, node) {
+    const go = () => openUrl(app.route, app.name);
+    if (reduceMotion || !node) return go();
+
+    const rect = node.querySelector('.app-glyph').getBoundingClientRect();
+    const ghost = document.createElement('div');
+    ghost.className = 'opening-ghost';
+    ghost.style.left = rect.left + 'px';
+    ghost.style.top = rect.top + 'px';
+    ghost.innerHTML = iconSvg(app.icon || app.id);
+    document.body.appendChild(ghost);
+    const destX = window.innerWidth / 2 - 28;
+    const destY = window.innerHeight / 2 - 28;
+    ghost.animate(
+      [
+        { transform: 'translate(0,0) scale(1)', opacity: 1 },
+        { transform: `translate(${destX - rect.left}px, ${destY - rect.top}px) scale(1.08)`, opacity: 0 }
+      ],
+      { duration: 220, easing: 'cubic-bezier(.22,.7,.28,1)' }
+    ).finished.then(() => {
+      ghost.remove();
+      go();
+    }).catch(go);
+  }
+
+  function remember(url) {
+    fetch('/api/history', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title: prettyTitle(url), url })
+    }).then(loadHistory).catch(() => {});
+  }
+
+  async function loadApps() {
+    try {
+      const res = await fetch('/api/apps');
+      if (!res.ok) throw new Error('unavailable');
+      const data = await res.json();
+      state.apps = data.apps || [];
+      state.appsError = false;
+      setStatus(true);
+    } catch {
+      state.appsError = true;
+      setStatus(false);
+    }
+    renderConstellation();
+    if (state.searchOpen) renderSuggest();
+  }
+
+  async function loadBookmarks() {
+    try {
+      const res = await fetch('/api/bookmarks');
+      const data = await res.json();
+      state.bookmarks = data.bookmarks || [];
+    } catch {
+      state.bookmarks = [];
+    }
+  }
+
+  async function loadHistory() {
+    try {
+      const res = await fetch('/api/history');
+      const data = await res.json();
+      state.history = data.history || [];
+    } catch {
+      state.history = [];
+    }
+  }
+
+  async function loadStatus() {
+    try {
+      const res = await fetch('/api/status');
+      const data = await res.json();
+      setStatus(data.solohost !== 'offline');
+    } catch {
+      setStatus(false);
+    }
+  }
+
+  function setStatus(online) {
+    state.online = online;
+    els.statusLine.classList.toggle('online', online);
+    els.statusLine.classList.toggle('offline', !online);
+    els.statusText.textContent = online ? 'Online' : 'Offline';
+  }
+
+  function renderSuggest() {
+    const q = els.input.value.trim().toLowerCase();
+    const groups = [];
+
+    const apps = state.apps.filter((a) => !q || a.name.toLowerCase().includes(q)).slice(0, 6);
+    const favs = state.bookmarks.filter((b) => !q || (b.title + b.url).toLowerCase().includes(q)).slice(0, 4);
+    const recents = state.history.filter((h) => !q || (h.title + h.url).toLowerCase().includes(q)).slice(0, 4);
+
+    if (apps.length) groups.push({ label: 'My Apps', items: apps.map((a) => ({ label: a.name, url: a.route, kind: 'app', app: a })) });
+    if (favs.length) groups.push({ label: 'Favorites', items: favs.map((b) => ({ label: b.title, url: b.url })) });
+    if (recents.length) groups.push({ label: 'Recent', items: recents.map((h) => ({ label: h.title, url: h.url })) });
+
+    if (!groups.length) {
+      els.suggest.hidden = true;
+      els.suggest.innerHTML = '';
+      return;
+    }
+
+    els.suggest.hidden = false;
+    els.suggest.innerHTML = '';
+    groups.forEach((g) => {
+      const lab = document.createElement('div');
+      lab.className = 'suggest-label';
+      lab.textContent = g.label;
+      els.suggest.appendChild(lab);
+      g.items.forEach((item) => {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'chip';
+        b.textContent = item.label;
+        b.addEventListener('click', () => {
+          if (item.kind === 'app') openApp(item.app);
+          else openUrl(item.url, item.label);
+          closeSearch();
+        });
+        els.suggest.appendChild(b);
+      });
+    });
+  }
+
+  function openSearch() {
+    state.searchOpen = true;
+    els.form.classList.add('is-focus');
+    els.input.placeholder = 'Search or enter website';
+    renderSuggest();
+  }
+
+  function closeSearch() {
+    state.searchOpen = false;
+    els.form.classList.remove('is-focus');
+    if (!document.body.classList.contains('browsing')) {
+      els.input.placeholder = 'Search the Web';
+    }
+    els.suggest.hidden = true;
+  }
+
+  function submitSearch(ev) {
+    ev.preventDefault();
+    const val = els.input.value.trim();
+    if (!val) {
+      els.input.focus();
+      return;
+    }
+    openUrl(val);
+    closeSearch();
+  }
+
+  function bindPointer() {
+    if (reduceMotion || coarse || lowPower) return;
+    const glow = els.glow;
+    let x = 0, y = 0, tx = 0, ty = 0, raf = 0;
+    const loop = () => {
+      x += (tx - x) * 0.16;
+      y += (ty - y) * 0.16;
+      glow.style.transform = `translate3d(${x}px, ${y}px, 0)`;
+      raf = requestAnimationFrame(loop);
+    };
+    window.addEventListener('pointermove', (e) => {
+      if (e.pointerType !== 'mouse') return;
+      tx = e.clientX;
+      ty = e.clientY;
+      glow.classList.add('on');
+      if (!raf) raf = requestAnimationFrame(loop);
+    }, { passive: true });
+    window.addEventListener('pointerleave', () => glow.classList.remove('on'));
+  }
+
+  function bindParallax() {
+    if (reduceMotion || coarse) return;
+    const radial = document.querySelector('.atmosphere .radial');
+    window.addEventListener('pointermove', (e) => {
+      if (e.pointerType !== 'mouse') return;
+      const dx = (e.clientX / window.innerWidth - 0.5) * 4;
+      const dy = (e.clientY / window.innerHeight - 0.5) * 3;
+      radial.style.transform = `translate(${dx}px, ${dy}px)`;
+    }, { passive: true });
+  }
+
+  els.form.addEventListener('submit', submitSearch);
+  els.input.addEventListener('focus', openSearch);
+  els.input.addEventListener('input', renderSuggest);
+  document.addEventListener('click', (e) => {
+    if (!els.form.contains(e.target) && !els.suggest.contains(e.target)) closeSearch();
+  });
+
+  els.back.addEventListener('click', () => {
+    const idx = state.tabs.findIndex((t) => t.id === state.active);
+    if (idx > 0) activateTab(state.tabs[idx - 1].id);
+    else showHome();
+  });
+  els.forward.addEventListener('click', () => {
+    const idx = state.tabs.findIndex((t) => t.id === state.active);
+    if (idx >= 0 && idx < state.tabs.length - 1) activateTab(state.tabs[idx + 1].id);
+  });
+  els.reload.addEventListener('click', () => {
+    if (document.body.classList.contains('browsing') && els.iframe.src) {
+      if (state.pendingUrl) {
+        showBrowser(state.pendingUrl, false);
+      } else {
+        try { els.iframe.contentWindow.location.reload(); } catch { els.iframe.src = els.iframe.src; }
+      }
+    } else {
+      loadApps();
+      loadStatus();
+    }
+  });
+  els.neu.addEventListener('click', showHome);
+
+  els.iframe.addEventListener('load', () => {
+    clearLoadTimer();
+    if (els.iframe.src && els.iframe.src !== 'about:blank') hideNetError();
+  });
+  els.iframe.addEventListener('error', () => {
+    clearLoadTimer();
+    showNetError('timeout');
+  });
+
+  els.browserErrorRetry.addEventListener('click', () => {
+    if (state.pendingUrl) showBrowser(state.pendingUrl, false);
+  });
+
+  window.addEventListener('online', () => {
+    if (document.body.classList.contains('browsing') && state.pendingUrl) {
+      showBrowser(state.pendingUrl, false);
+    }
+  });
+  window.addEventListener('offline', () => {
+    if (document.body.classList.contains('browsing')) {
+      clearLoadTimer();
+      els.iframe.src = 'about:blank';
+      showNetError('offline');
+    }
+  });
+
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'l' && (e.metaKey || e.ctrlKey)) {
+      e.preventDefault();
+      els.input.focus();
+    }
+    if (e.key === 'Escape') {
+      if (state.searchOpen) closeSearch();
+      else showHome();
+    }
+  });
+
+  let resizeT;
+  window.addEventListener('resize', () => {
+    clearTimeout(resizeT);
+    resizeT = setTimeout(renderConstellation, 80);
+  });
+
+  els.greeting.textContent = greeting();
+  bindPointer();
+  bindParallax();
+  renderTabs();
+  loadApps();
+  loadBookmarks();
+  loadHistory();
+  loadStatus();
+  setInterval(() => {
+    loadApps();
+    loadStatus();
+  }, 20000);
+})();

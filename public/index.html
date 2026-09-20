@@ -1,94 +1,97 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <title>App Builder — Pi SoloHost</title>
-  <meta name="theme-color" content="#0e1116">
-  <link rel="stylesheet" href="/styles.css?v=1.4.13">
-<style>.paf-made-by{position:fixed;right:8px;bottom:8px;width:min(72px,12vw);max-width:12vw;height:auto;object-fit:contain;opacity:.5;background:transparent;padding:0;border:0;box-shadow:none;filter:none;pointer-events:none;z-index:30}</style></head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="theme-color" content="#0c0d10">
+  <meta name="color-scheme" content="dark">
+  <title>SoloHost</title>
+  <link rel="stylesheet" href="style.css">
+  <style>
+    .paf-made-by{position:fixed;right:10px;bottom:10px;width:min(64px,11vw);max-width:11vw;height:auto;object-fit:contain;opacity:.42;background:transparent;padding:0;border:0;box-shadow:none;filter:none;pointer-events:none;z-index:40}
+  </style>
+</head>
 <body>
-  <div id="app">
-    <header class="hero">
-      <img src="/banner.png" alt="App Builder — Pi SoloHost">
-    </header>
-    <header class="top">
-      <div class="brand"><img class="logoMark" src="/app-logo.jpg" alt="App Builder logo"><div><h1>App Builder</h1><p>Pi SoloHost · idea in, app out</p></div></div>
-      <div class="topRight">
-        <span id="workPill" class="pill ready">Ready</span>
-        <button id="liveBtn" class="pill live" hidden type="button" title="Stop the test app and delete its container">Live · Stop</button>
-        <select id="aiSelect" aria-label="AI model">
-          <option value="deepseek">DeepSeek</option>
-          <option value="gemini">Gemini</option>
-          <option value="council">Council</option>
-        </select>
-        <select id="projectSelect" aria-label="Project"><option value="">New app</option></select>
-        <button id="settingsBtn" class="iconBtn" title="Settings">⚙</button>
-      </div>
-    </header>
-
-    <main class="chatShell">
-      <section id="chat" class="chat" aria-live="polite"></section>
-      <button id="jumpDown" class="jump" hidden title="Jump to new messages">↓</button>
-      <div id="busyBar" class="busy" hidden><span class="spinner"></span><span id="busyText">Working…</span></div>
-
-      <section class="composer">
-        <div class="quickGroups">
-          <div class="group"><span class="groupLabel">Build</span><button data-action="build">✨ Build</button><button data-action="run">▶ Run</button><button data-action="sandbox">🧪 Sandbox</button></div>
-          <div class="group"><span class="groupLabel">Refine</span><button data-action="improve">✦ Improve</button><button data-action="analyze">🔎 Check</button></div>
-          <div class="group"><span class="groupLabel">Ship</span><button data-action="publish">🚀 Publish</button><button data-action="export">⬇ Zip</button><button type="button" id="importZipBtn" data-action="import">⬆ Import</button></div>
-        <input id="importZipInput" type="file" accept=".zip,application/zip" hidden>
-          <div class="group"><span class="groupLabel">Help</span><button type="button" id="supportBtn" data-action="support">💛 Support</button></div>
-        </div>
-        <div class="inputRow">
-          <button id="attachBtn" class="attach" title="Attach files">📎</button>
-          <input id="fileInput" type="file" multiple hidden accept=".zip,.pdf,.txt,.md,.json,.yaml,.yml,.js,.ts,.jsx,.tsx,.html,.css,.py,.go,.rs,.java,.php,.sql,.csv,.png,.jpg,.jpeg,.gif,.webp">
-          <textarea id="message" rows="2" placeholder="Tell me the app you want. I will lead the rest."></textarea>
-          <button id="sendBtn" class="send">➤</button>
-        </div>
-        <div id="attachments" class="attachments"></div>
-        <p class="hint">1 Idea → 2 Run → 3 Publish. I keep the next step visible.</p>
-      </section>
-    </main>
+  <div class="atmosphere" aria-hidden="true">
+    <div class="wash"></div>
+    <div class="radial"></div>
+    <div class="grain"></div>
+    <div class="pointer-glow" id="pointer-glow"></div>
   </div>
 
-  <div id="supportModal" class="modal" hidden>
-    <div class="sheet">
-      <div class="sheetHead"><h2>💛 Support this project</h2><button id="closeSupport" class="iconBtn" type="button">✕</button></div>
-      <p class="info">Thank you for supporting App Builder — Pi SoloHost. Your gift keeps the tool free for Pioneers.</p>
-      <div class="supportTabs">
-        <button type="button" class="supportTab on" data-support="pi">Pi Wallet</button>
-        <button type="button" class="supportTab" data-support="mb">MB Bank</button>
-      </div>
-      <div id="supportPi" class="supportPane">
-        <img src="/support-pi-qr.jpg" alt="Pi Wallet QR" class="supportQr">
-        <p class="muted">Pi Wallet address</p>
-        <p class="mono" id="piAddr">GAQAZ5XLWREKQYMMN247A44PNPLAKRORZOPZNVG3CDPCSSFMEVFIYJJL</p>
-        <button type="button" class="primary wide" data-copy="GAQAZ5XLWREKQYMMN247A44PNPLAKRORZOPZNVG3CDPCSSFMEVFIYJJL">Copy address</button>
-      </div>
-      <div id="supportMb" class="supportPane" hidden>
-        <img src="https://img.vietqr.io/image/MB-0905428801-compact2.png" alt="MB Bank VietQR" class="supportQr">
-        <p class="muted">MB Bank · 0905428801</p>
-        <p class="mono" id="mbAddr">0905428801</p>
-        <button type="button" class="primary wide" data-copy="0905428801">Copy account</button>
-      </div>
+  <a class="skip" href="#search-input">Skip to search</a>
+
+  <header class="chrome" id="chrome">
+    <div class="nav-float" role="toolbar" aria-label="Navigation">
+      <button type="button" id="btn-back" title="Back" aria-label="Back">
+        <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M15.4 5.3 8.7 12l6.7 6.7 1.2-1.2L11.1 12l5.5-5.5z"/></svg>
+      </button>
+      <button type="button" id="btn-forward" title="Forward" aria-label="Forward">
+        <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="m8.6 5.3 6.7 6.7-6.7 6.7-1.2-1.2L13.9 12 7.4 6.5z"/></svg>
+      </button>
+      <button type="button" id="btn-reload" title="Reload" aria-label="Reload">
+        <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><path fill="currentColor" d="M12 6V3L8 7l4 4V8a4 4 0 1 1-3.5 5.8l-1.4.9A5.7 5.7 0 1 0 12 6z"/></svg>
+      </button>
     </div>
-  </div>
 
-  <div id="settings" class="modal" hidden>
-    <div class="sheet">
-      <div class="sheetHead"><h2>Settings</h2><button id="closeSettings" class="iconBtn">✕</button></div>
-      <label>AI provider<select id="setProvider"><option value="deepseek">DeepSeek</option><option value="gemini">Google Gemini</option><option value="council">Council (both)</option></select></label>
-      <label>DeepSeek API key<input id="setDeepseek" type="password" autocomplete="off" placeholder="Paste key"></label>
-      <label>Gemini API key<input id="setGemini" type="password" autocomplete="off" placeholder="Needed for Council"></label>
-      <label>GitHub token <span class="muted">optional</span><input id="setGhToken" type="password" autocomplete="off" placeholder="Personal access token (classic)"><span class="small">Use classic token: <b>repo</b> + <b>workflow</b> + <b>write:packages</b>. Create: github.com/settings/tokens/new</span></label>
-      <label>GitHub owner <span class="muted">optional</span><input id="setGhOwner" type="text" placeholder="username or org"></label><div class="info">If GitHub Actions says permission is read-only: Repository → Settings → Actions → General → Workflow permissions → <b>Read and write permissions</b> → Save.</div>
-      <div class="info">Council: one model writes, the other reviews. Trust scores prefer the model that finishes with fewer errors. No host Docker access is required.</div>
-      <button id="saveSettings" class="primary wide">Save</button>
-      <p id="settingsState" class="muted"></p>
-    </div>
-  </div>
+    <div class="tabs-float" id="tabs" role="tablist" aria-label="Open surfaces"></div>
 
-  <script src="/app.js?v=1.4.13"></script>
-<img class="paf-made-by" src="/made-by.png" alt="Made with App Builder — Pi SoloHost"></body>
+    <button type="button" id="btn-new" class="orb-btn" title="New tab" aria-label="New tab">＋</button>
+  </header>
+
+  <main class="stage" id="stage">
+    <section class="view home" id="view-home" data-view="home">
+      <div class="home-column">
+        <p class="brand" id="brand">SoloHost</p>
+        <h1 class="greeting" id="greeting">Good evening</h1>
+
+        <form class="search-surface" id="search-form" role="search" autocomplete="off">
+          <button type="submit" class="search-orb" aria-label="Search">
+            <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+              <circle cx="11" cy="11" r="6.2" fill="none" stroke="currentColor" stroke-width="1.6"/>
+              <path d="m16 16 4 4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+            </svg>
+          </button>
+          <label class="sr-only" for="search-input">Search or enter website</label>
+          <input
+            id="search-input"
+            name="q"
+            type="text"
+            placeholder="Search the Web"
+            spellcheck="false"
+            enterkeyhint="go"
+          >
+        </form>
+        <div class="suggest" id="suggest" hidden></div>
+      </div>
+
+      <div class="sky" id="sky">
+        <div class="constellation" id="constellation" aria-label="My Apps"></div>
+      </div>
+
+      <p class="status-line" id="status-line">
+        <span>SoloHost</span>
+        <span class="sep">•</span>
+        <span id="status-text">Online</span>
+      </p>
+    </section>
+
+    <section class="view browser" id="view-browser" hidden>
+      <iframe id="browser-iframe" title="Page" sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox"></iframe>
+      <div class="browser-error" id="browser-error" hidden role="alert">
+        <svg class="browser-error-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+          <path d="M4.9 15.5a10 10 0 0 1 14.2 0M1.4 11.9a15 15 0 0 1 21.2 0M8.5 19a5 5 0 0 1 7 0M12 20h.01"/>
+          <line x1="2.5" y1="2.5" x2="21.5" y2="21.5"/>
+        </svg>
+        <p class="browser-error-title" id="browser-error-title">Không có kết nối Internet</p>
+        <p class="browser-error-desc" id="browser-error-desc">Kiểm tra kết nối mạng của thiết bị rồi thử lại.</p>
+        <button type="button" class="browser-error-retry" id="browser-error-retry">Thử lại</button>
+      </div>
+    </section>
+  </main>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  <img class="paf-made-by" src="/made-by.png" alt="Made with App Builder — Pi SoloHost">
+  <script src="app.js?v=2"></script>
+</body>
 </html>
