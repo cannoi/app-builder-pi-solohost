@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import { inferAction, classifyLogs, isHostDockerCommand, isNpmOnEmptyRisk } from '../src/scripts/ops.js';
+import { inferAction, classifyLogs, describeFailure, isHostDockerCommand, isNpmOnEmptyRisk } from '../src/scripts/ops.js';
 
 test('user language maps to controller scripts', () => {
   assert.equal(inferAction('chạy app và cho tôi link'), 'run');
@@ -235,4 +235,11 @@ test('imported zip wrapper folder is flattened', async () => {
 test('summary requests are analysis, not automatic code repair', () => {
   assert.equal(inferAction('tổng hợp các lỗi hiện có trong app'), 'analyze');
   assert.equal(inferAction('summarize all current errors'), 'analyze');
+});
+
+
+test('network failures are classified before app proxy repair', () => {
+  const d = describeFailure({ error: 'getaddrinfo EAI_AGAIN example.com' });
+  assert.equal(d.code, 'network_dns');
+  assert.match(d.fix, /Sandbox Internet|DNS/i);
 });

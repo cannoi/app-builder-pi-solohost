@@ -178,7 +178,7 @@ async function startSandboxDemo() {
   setBusy(true, 'Testing sandbox…');
   try {
     const r = await api('/api/projects/sandbox-demo', { method: 'POST', body: '{}' });
-    add('ai', 'Starting Sandbox Benchmark. If this preview works, Builder/preview is healthy. Then build your own app.');
+    add('ai', 'Starting Sandbox Benchmark: runtime + Internet/DNS + browser checks. This separates Sandbox network problems from app problems.');
     watch(r.jobId);
   } catch (e) { setBusy(false); add('ai', e.message); }
 }

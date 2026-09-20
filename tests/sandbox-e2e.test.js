@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs/promises';
 import { PodmanClient } from '../src/sandbox/podman.js';
 import { runPlaywrightE2E, e2eResult } from '../src/testing/playwright.js';
 
@@ -112,4 +113,14 @@ test('Sandbox E2E Agent returns only the specified JSON contract and tears down'
   assert.equal(result.status, 'passed');
   assert.equal(result.ui_url, 'https://preview.example.com/preview-demo');
   assert.deepEqual(calls, ['create', 'start', 'stop', 'remove']);
+});
+
+
+test('sandbox benchmark includes deterministic Internet and DNS test', async () => {
+  const file = await fs.readFile(new URL('../templates/sandbox-benchmark/server.js', import.meta.url), 'utf8');
+  assert.match(file, /\/api\/internet-test/);
+  assert.match(file, /DNS_UNAVAILABLE/);
+  assert.match(file, /DNS_OK_BUT_HTTPS_BLOCKED/);
+  const ui = await fs.readFile(new URL('../templates/sandbox-benchmark/public/index.html', import.meta.url), 'utf8');
+  assert.match(ui, /Sandbox Internet \+ DNS/);
 });

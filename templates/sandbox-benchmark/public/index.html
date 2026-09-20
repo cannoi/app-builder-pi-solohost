@@ -69,16 +69,19 @@ ul{margin:0;padding-left:18px;color:#c9d4de;font-size:14px;line-height:1.55}
     <div class="layer" id="ly-js"><div class="dot"></div><b>JavaScript</b><small id="ly-js-d">waiting</small></div>
     <div class="layer" id="ly-api"><div class="dot"></div><b>HTTP API</b><small id="ly-api-d">waiting</small></div>
     <div class="layer" id="ly-ctr"><div class="dot"></div><b>Container</b><small id="ly-ctr-d">waiting</small></div>
+    <div class="layer" id="ly-net"><div class="dot"></div><b>Internet</b><small id="ly-net-d">waiting</small></div>
     <div class="layer" id="ly-prv"><div class="dot"></div><b>Preview</b><small id="ly-prv-d">page visible</small></div>
   </section>
 
   <section class="grid">
     <article class="card"><b>Runtime</b><span id="runtime">…</span></article>
+    <article class="card"><b>Engine</b><span id="engine">…</span></article>
     <article class="card"><b>HTTP / Preview</b><span id="http">…</span></article>
     <article class="card"><b>JavaScript</b><span id="js">…</span></article>
     <article class="card"><b>Filesystem</b><span id="fs">…</span></article>
     <article class="card"><b>CPU</b><span id="cpu">…</span></article>
     <article class="card"><b>Parallel requests</b><span id="parallel">…</span></article>
+    <article class="card"><b>Internet / DNS</b><span id="internet">…</span></article>
   </section>
 
   <section class="panel">
@@ -99,6 +102,7 @@ If this line never changes after 3 seconds, Preview rendered HTML but JS did not
       <li><strong>0–3s</strong>: normal. Wait for SANDBOX READY.</li>
       <li><strong>3–10s</strong>: container or preview may still be starting.</li>
       <li><strong>&gt;10s</strong> still Testing…: HTML loaded, JavaScript did not run or fetch is hung.</li>
+      <li><strong>Internet / DNS</strong>: ONLINE means the sandbox itself has outbound HTTPS. OFFLINE means fix the sandbox network before changing app proxy code.</li>
       <li><strong>&gt;30s</strong>: stop waiting. Treat as sandbox/preview failure.</li>
       <li>CSS pulse + this text visible = Preview can serve HTML/CSS.</li>
       <li>Clock ticking = inline JS executed. Frozen clock = JS runtime dead.</li>
@@ -170,7 +174,7 @@ If this line never changes after 3 seconds, Preview rendered HTML but JS did not
     finished = false;
     logLines = [];
     var passed = 0;
-    var total = 6;
+    var total = 8;
     $("overall").className = "badge pulse";
     $("overall").textContent = "Testing…";
     $("runtime").textContent = "…";
@@ -180,6 +184,9 @@ If this line never changes after 3 seconds, Preview rendered HTML but JS did not
     $("parallel").textContent = "…";
     setLayer("ly-api", "", "waiting");
     setLayer("ly-ctr", "", "waiting");
+    setLayer("ly-net", "", "waiting");
+    $("internet").textContent = "…";
+    $("engine").textContent = "…";
 
     var jsOk = jsComputeOk();
     $("js").textContent = jsOk ? "JS OK" : "JS FAIL";
@@ -191,6 +198,7 @@ If this line never changes after 3 seconds, Preview rendered HTML but JS did not
       var d = info.data || {};
       var ok = !!(info.ok && d.ok);
       $("runtime").textContent = ok ? ("Node " + d.node + " / " + d.platform) : ("HTTP " + info.status);
+      $("engine").textContent = d.sandbox_engine || "unknown";
       record(ok, "Runtime", ok ? (d.node + " pid=" + d.pid) : ("status " + info.status));
       if (ok) { passed++; setLayer("ly-ctr", "ok", d.hostname || "container up"); }
       else setLayer("ly-ctr", "bad", "info failed");
@@ -236,6 +244,20 @@ If this line never changes after 3 seconds, Preview rendered HTML but JS did not
     } catch (e) {
       $("cpu").textContent = "FAIL";
       record(false, "CPU/process test", e && e.message ? e.message : String(e));
+    }
+
+    try {
+      var ni = await fetchJson("/api/internet-test", 16000);
+      var nd = ni.data || {};
+      var okn = !!(ni.ok && nd.ok);
+      $("internet").textContent = okn ? (nd.diagnosis || "ONLINE") : (nd.diagnosis || "OFFLINE");
+      record(okn, "Sandbox Internet + DNS", nd.summary || nd.error || ("status " + ni.status));
+      if (okn) passed++;
+      setLayer("ly-net", okn ? "ok" : "bad", nd.diagnosis || "unavailable");
+    } catch (e) {
+      $("internet").textContent = "FAIL";
+      record(false, "Sandbox Internet + DNS", e && e.message ? e.message : String(e));
+      setLayer("ly-net", "bad", "probe failed");
     }
 
     try {

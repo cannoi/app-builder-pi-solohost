@@ -52,8 +52,14 @@ export function classifyLogs(logs = '') {
   }
   if (/eaddrinuse/i.test(t)) return { code: 'port_busy', title: 'Port is already in use.', hint: 'Stop the previous preview and Run again.' };
   if (/syntaxerror|unexpected token/i.test(t)) return { code: 'syntax', title: 'The server file has a syntax error.', hint: 'I will patch the file and Run again.' };
+  if (/ENOTFOUND|EAI_AGAIN|getaddrinfo|dns|name resolution/i.test(t)) {
+    return { code: 'network_dns', title: 'DNS resolution failed.', hint: 'First verify Sandbox Internet/DNS. Do not rewrite the app proxy until the sandbox network test passes.' };
+  }
+  if (/ETIMEDOUT|ECONNRESET|ENETUNREACH|EHOSTUNREACH|network is unreachable|socket hang up/i.test(t)) {
+    return { code: 'network_transport', title: 'Outbound network connection failed.', hint: 'Run Sandbox Benchmark → Internet Test first. If Sandbox Internet fails, fix the environment; if it passes, inspect the app gateway/proxy and target URL.' };
+  }
   if (/fetch failed|econnrefused|couldn't connect|preview port is not open/i.test(t)) {
-    return { code: 'preview_connection', title: 'Preview could not open the test page.', hint: 'Tap Run again. App Builder will serve the app files directly if the generated server is not ready.' };
+    return { code: 'preview_connection', title: 'Preview could not open the test page.', hint: 'Separate app runtime from network failure: verify Sandbox Internet first, then inspect the app gateway/proxy.' };
   }
   return null;
 }

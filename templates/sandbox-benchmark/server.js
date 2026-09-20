@@ -5,6 +5,8 @@ const fs = require("fs");
 const path = require("path");
 const os = require("os");
 const crypto = require("crypto");
+const dns = require("dns").promises;
+const https = require("https");
 
 const PORT = Number(process.env.PORT || 8080);
 const BIND = process.env.BIND || "0.0.0.0";
@@ -59,7 +61,7 @@ function health() {
   return {
     ok: true,
     service: "sandbox-app-benchmark",
-    version: "2.0.0",
+    version: "3.0.0",
     node: process.version,
     platform: process.platform,
     arch: process.arch,
@@ -100,6 +102,65 @@ function runWriteTest() {
     bytes: Buffer.byteLength(readBack),
     dir: dir,
     file: file
+  };
+}
+
+function withTimeout(promise, ms) {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => setTimeout(() => reject(new Error("timeout")), ms))
+  ]);
+}
+
+async function dnsProbe(host) {
+  const started = Date.now();
+  try {
+    const addresses = await withTimeout(dns.lookup(host, { all: true }), 5000);
+    return { ok: addresses.length > 0, host, addresses: addresses.map((a) => a.address), ms: Date.now() - started };
+  } catch (e) {
+    return { ok: false, host, ms: Date.now() - started, error: String(e?.code || e?.message || e) };
+  }
+}
+
+async function httpsProbe(url) {
+  const started = Date.now();
+  return new Promise((resolve) => {
+    const req = https.request(url, { method: "HEAD", timeout: 7000, headers: { "User-Agent": "Pi-App-Factory-Sandbox-Benchmark/3.0" } }, (res) => {
+      res.resume();
+      resolve({ ok: res.statusCode > 0, url, status: res.statusCode, ms: Date.now() - started });
+    });
+    req.on("timeout", () => { req.destroy(new Error("timeout")); });
+    req.on("error", (e) => resolve({ ok: false, url, ms: Date.now() - started, error: String(e?.code || e?.message || e) }));
+    req.end();
+  });
+}
+
+async function runInternetTest() {
+  const targets = ["example.com", "www.google.com", "cloudflare.com"];
+  const dnsResults = [];
+  for (const host of targets) dnsResults.push(await dnsProbe(host));
+  const httpsResults = [];
+  for (const host of targets) httpsResults.push(await httpsProbe(`https://${host}/`));
+  const dnsOk = dnsResults.filter((x) => x.ok).length;
+  const httpsOk = httpsResults.filter((x) => x.ok).length;
+  let diagnosis = "INTERNET_OK";
+  if (!dnsOk) diagnosis = "DNS_UNAVAILABLE";
+  else if (!httpsOk) diagnosis = "DNS_OK_BUT_HTTPS_BLOCKED";
+  else if (httpsOk < targets.length) diagnosis = "PARTIAL_INTERNET";
+  return {
+    ok: httpsOk > 0,
+    diagnosis,
+    tested_at: new Date().toISOString(),
+    dns: dnsResults,
+    https: httpsResults,
+    summary: httpsOk > 0 ? `Outbound HTTPS works for ${httpsOk}/${targets.length} targets.` : (dnsOk > 0 ? "DNS resolves, but outbound HTTPS failed." : "DNS resolution failed for all test hosts."),
+    remediation: diagnosis === "DNS_UNAVAILABLE"
+      ? "Check sandbox DNS/network attachment. Do not change application proxy code yet."
+      : diagnosis === "DNS_OK_BUT_HTTPS_BLOCKED"
+        ? "Sandbox has DNS but outbound HTTPS is blocked. Fix Sandbox/Podman network policy before blaming the app."
+        : diagnosis === "PARTIAL_INTERNET"
+          ? "Internet is partially reachable. Check the target domain, proxy, TLS and DNS behavior used by the app."
+          : "Sandbox outbound Internet is available. If the app still cannot browse, inspect its proxy/gateway code and browser CORS/CSP behavior."
   };
 }
 
@@ -158,6 +219,11 @@ const server = http.createServer(function (req, res) {
     } catch (e) {
       return finishJson({ ok: false, error: String(e && e.message ? e.message : e) }, 500);
     }
+  }
+
+  if (url.pathname === "/api/internet-test") {
+    runInternetTest().then((result) => finishJson(result)).catch((e) => finishJson({ ok: false, diagnosis: "BENCHMARK_ERROR", error: String(e?.message || e) }, 500));
+    return;
   }
 
   if (url.pathname === "/api/cpu-test") {

@@ -2,18 +2,40 @@ export function extractJson(text) {
   if (!text) return null;
   const raw = String(text).trim();
   const fenced = raw.match(/```(?:json)?\s*([\s\S]*?)```/i);
-  const candidate = fenced ? fenced[1] : raw;
-  const start = candidate.indexOf('{');
-  const end = candidate.lastIndexOf('}');
-  if (start >= 0 && end > start) {
-    try { return JSON.parse(candidate.slice(start, end + 1)); } catch { /* continue */ }
+  const candidate = fenced ? fenced[1].trim() : raw;
+  try { return JSON.parse(candidate); } catch { /* continue */ }
+
+  // Model-agnostic balanced-object extraction. This handles prose before/after
+  // JSON and braces embedded in quoted strings without relying on a provider.
+  const object = balancedJsonCandidate(candidate, '{', '}');
+  if (object) { try { return JSON.parse(object); } catch { /* continue */ } }
+  const array = balancedJsonCandidate(candidate, '[', ']');
+  if (array) { try { return JSON.parse(array); } catch { /* continue */ } }
+  return null;
+}
+
+function balancedJsonCandidate(text, open, close) {
+  const start = text.indexOf(open);
+  if (start < 0) return null;
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let i = start; i < text.length; i++) {
+    const ch = text[i];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (ch === '\\') escaped = true;
+      else if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') { inString = true; continue; }
+    if (ch === open) depth++;
+    else if (ch === close) {
+      depth--;
+      if (depth === 0) return text.slice(start, i + 1);
+    }
   }
-  const aStart = candidate.indexOf('[');
-  const aEnd = candidate.lastIndexOf(']');
-  if (aStart >= 0 && aEnd > aStart) {
-    try { return JSON.parse(candidate.slice(aStart, aEnd + 1)); } catch { /* continue */ }
-  }
-  try { return JSON.parse(candidate); } catch { return null; }
+  return null;
 }
 
 export function requireFields(obj, fields) {

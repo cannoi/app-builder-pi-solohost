@@ -7,6 +7,8 @@ import { scanProject } from '../security/scanner.js';
 import { clampText } from '../utils/validate.js';
 import { listFiles } from '../utils/fsx.js';
 import fs from 'node:fs/promises';
+import dns from 'node:dns/promises';
+import https from 'node:https';
 import { saveAttachment, attachmentContext, attachmentList, imageInputsFromAttachments } from '../projects/attachments.js';
 import { writeSoloHostPackage } from '../release/solohost.js';
 import { inferAction, classifyLogs, describeFailure, diagnoseSource, nextStep, guideCard, isHostDockerCommand, isNpmOnEmptyRisk, splitUserSteps } from '../scripts/ops.js';
@@ -635,6 +637,12 @@ export function registerPipeline(app) {
       at: new Date().toISOString(),
       previewPath: runtime.previewPath,
       error: runtime.error || null,
+      internet: runtime.internet || null,
+      interpretation: runtime.internet?.ok === false
+        ? 'Sandbox outbound Internet is unavailable or blocked; diagnose the environment before changing product code.'
+        : runtime.internet?.ok === true
+          ? 'Sandbox outbound Internet is reachable; app-specific browsing issues should be diagnosed in the product gateway/proxy.'
+          : 'Internet result unavailable.'
     });
     return {
       projectId: project.id,
@@ -825,6 +833,18 @@ export function registerPipeline(app) {
 
   async function improveProject(project, feedback, emit) {
     const source = projects.sourceDir(project.slug);
+    const networkRequest = /\b(internet|offline|online|network|dns|proxy|gateway|browse|browsing|fetch|connection|kết nối|mạng|internet|truy cập web)\b/i.test(String(feedback || ''));
+    let networkPreflight = null;
+    if (networkRequest) {
+      emit('network', 'running', 'Checking Builder network before changing app code…');
+      networkPreflight = await checkBuilderInternet();
+      if (!networkPreflight.ok) {
+        const message = `BUILDER_NETWORK_BLOCKED\n${networkPreflight.summary}\n${networkPreflight.remediation}`;
+        emit('network', 'failed', message);
+        throw new Error(message);
+      }
+      emit('network', 'done', `Builder Internet OK (${networkPreflight.httpsOk}/${networkPreflight.targets.length}).`);
+    }
     const relevant = await collectProjectContext(source);
     const security = await scanProject(source);
     const activity = await projects.readMetadata(project, 'activity.json', []);
@@ -833,8 +853,9 @@ export function registerPipeline(app) {
       return { id: row.id, type: row.type, status: row.status, stage: row.stage, error: row.error, events: (full.events || []).slice(-6) };
     });
     const recentContext = `\nRECENT ACTIVITY (use as evidence; do not repeat a failed identical action):\n${JSON.stringify(Array.isArray(activity) ? activity.slice(-12) : [])}\nRECENT JOBS: ${JSON.stringify(recentJobs)}\n`;
+    const networkContext = networkPreflight ? `\nBUILDER NETWORK PREFLIGHT:\n${JSON.stringify(networkPreflight)}\n` : '';
     const securityContext = security.findings?.length ? `\nSECURITY FINDINGS (treat as concrete repair requirements):\n${security.copy_for_ai}\n` : '';
-    const r = await ai.completeJson({ task: 'DEBUGGING', system: SYSTEM, prompt: patchPrompt(project, '', relevant + recentContext + securityContext, feedback), projectId: project.id, images: [] });
+    const r = await ai.completeJson({ task: 'DEBUGGING', system: SYSTEM, prompt: patchPrompt(project, '', relevant + recentContext + networkContext + securityContext, feedback), projectId: project.id, images: [] });
     if (!r.json?.files?.length) throw new Error('AI did not propose a code change.');
     await applySafeAiPatch({ sourceDir: source, files: r.json.files, project, snapshots, reason: 'ai-improve' });
     await stampMadeBy(source, cfg);
@@ -998,6 +1019,43 @@ function normalizeQuestions(questions) {
   }).filter((q) => q.question);
 }
 
+async function checkBuilderInternet() {
+  const targets = ['example.com', 'www.google.com', 'cloudflare.com'];
+  const dnsResults = [];
+  const httpsResults = [];
+  for (const host of targets) {
+    try {
+      const addresses = await Promise.race([
+        dns.lookup(host, { all: true }),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('DNS timeout')), 5000)),
+      ]);
+      dnsResults.push({ host, ok: Array.isArray(addresses) && addresses.length > 0, addresses: (addresses || []).map((x) => x.address) });
+    } catch (err) { dnsResults.push({ host, ok: false, error: String(err?.code || err?.message || err) }); }
+    try {
+      const result = await new Promise((resolve) => {
+        const req = https.request(`https://${host}/`, { method: 'HEAD', timeout: 7000, headers: { 'User-Agent': 'Pi-App-Factory-Network-Preflight/1.0' } }, (res) => { res.resume(); resolve({ ok: res.statusCode > 0, status: res.statusCode }); });
+        req.on('timeout', () => req.destroy(new Error('HTTPS timeout')));
+        req.on('error', (err) => resolve({ ok: false, error: String(err?.code || err?.message || err) }));
+        req.end();
+      });
+      httpsResults.push({ host, ...result });
+    } catch (err) { httpsResults.push({ host, ok: false, error: String(err?.message || err) }); }
+  }
+  const dnsOk = dnsResults.filter((x) => x.ok).length;
+  const httpsOk = httpsResults.filter((x) => x.ok).length;
+  const ok = httpsOk > 0;
+  return {
+    ok,
+    targets,
+    dnsOk,
+    httpsOk,
+    dns: dnsResults,
+    https: httpsResults,
+    summary: ok ? `Builder outbound HTTPS works for ${httpsOk}/${targets.length} test hosts.` : (dnsOk ? 'Builder DNS works, but outbound HTTPS is blocked.' : 'Builder DNS/network access is unavailable.'),
+    remediation: ok ? 'Environment network is available. Continue with app-specific proxy/gateway diagnosis.' : 'Do not rewrite the app proxy yet. Fix Builder/Sandbox DNS or outbound network access first.'
+  };
+}
+
 function improvePrompt(project, feedback, context) {
   return `Improve this existing application from the user's feedback.
 
@@ -1008,6 +1066,13 @@ User feedback: ${feedback}
 Relevant files:
 ${context}
 
+NETWORK DEBUGGING CONTRACT:
+- If feedback mentions Internet, offline, proxy, gateway, DNS, fetch, browsing, or connection: diagnose before editing.
+- If the latest Sandbox Benchmark says DNS_UNAVAILABLE or DNS_OK_BUT_HTTPS_BLOCKED, do not modify product proxy code; report the sandbox/environment blocker.
+- If Sandbox Internet is available, inspect the actual app gateway/proxy, DNS lookup, HTTPS request, redirects, timeouts, response status, CORS/CSP, and browser-facing routing.
+- Do not merely describe a fix: when the root cause is in source code, return the smallest concrete file patch.
+- Re-test the real browsing flow after patching.
+
 Return JSON with full file contents for every changed file:
 {
   "root_cause": "",
@@ -1017,7 +1082,7 @@ Return JSON with full file contents for every changed file:
 }
 
 async function collectProjectContext(source) {
-  const names = ['package.json', 'src/server.js', 'server.js', 'public/index.html', 'public/game.js', 'Dockerfile', 'docker-compose.yml', 'README.md'];
+  const names = ['package.json', 'src/server.js', 'server.js', 'app.js', 'src/app.js', 'src/proxy.js', 'src/gateway.js', 'src/routes.js', 'public/index.html', 'public/game.js', 'public/app.js', 'public/browser.js', 'Dockerfile', 'docker-compose.yml', 'README.md'];
   const existing = new Set(await listFiles(source));
   const chunks = [];
   for (const name of names) {
