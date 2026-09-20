@@ -204,7 +204,7 @@ export function registerPipeline(app) {
     const r = await ai.completeJson({ task: 'DEBUGGING', system: SYSTEM, prompt: improvePrompt(project, feedback, relevant), projectId: project.id });
     if (!r.json?.files?.length) throw new Error('AI did not propose a code change.');
     emit('patch', 'running', 'Applying the improvement…');
-    await applySafeAiPatch({ sourceDir: source, files: r.json.files, project, snapshots, reason: 'ai-improve' });
+    const patchCheckpoint = await applySafeAiPatch({ sourceDir: source, files: r.json.files, project, snapshots, reason: 'ai-improve' });
     const tested = await testAndMaybeFix(projects.get(project.id), emit);
     if (tested.staticResult?.status === 'passed' && tested.nodeResult?.status !== 'failed') {
       emit('run', 'running', 'Refreshing the safe preview…');
@@ -476,8 +476,8 @@ export function registerPipeline(app) {
             payload.runtime = await runWithRepair(project, emit, step.goal);
           } else if (stepAction === 'analyze') {
             emit('analyze', 'running', 'Checking files, crash logs, and security…');
-            payload.tested = await testAndMaybeFix(project, emit);
-            payload.diagnosis = await diagnoseSource(source);
+            payload.tested = await inspectOnly(project, emit);
+            payload.diagnosis = payload.tested.diagnosis || await diagnoseSource(source);
             if (runtimeNow.logs) payload.crash = classifyLogs(runtimeNow.logs || runtimeNow.error || '');
           } else if (stepAction === 'export') {
             const kind = /install|solohost|config|cài đặt|solo\s*host/i.test(step.goal) ? 'solohost' : 'project';
@@ -831,6 +831,17 @@ export function registerPipeline(app) {
     return runtime;
   }
 
+  async function inspectOnly(project, emit) {
+    const source = projects.sourceDir(project.slug);
+    const diagnosis = await diagnoseSource(source);
+    const staticResult = await runStaticTests(source);
+    const nodeResult = await runNodeTests(source, 45000);
+    const scan = await scanProject(source);
+    emit('analyze', staticResult.status === 'passed' && nodeResult.status !== 'failed' && scan.critical === 0 ? 'done' : 'failed',
+      `INSPECT ONLY: source ${staticResult.status}; runtime tests ${nodeResult.status}; security critical ${scan.critical}.`);
+    return { staticResult, nodeResult, scan, diagnosis, inspectOnly: true };
+  }
+
   async function improveProject(project, feedback, emit) {
     const source = projects.sourceDir(project.slug);
     const networkRequest = /\b(internet|offline|online|network|dns|proxy|gateway|browse|browsing|fetch|connection|kết nối|mạng|internet|truy cập web)\b/i.test(String(feedback || ''));
@@ -847,6 +858,10 @@ export function registerPipeline(app) {
     }
     const relevant = await collectProjectContext(source);
     const security = await scanProject(source);
+    const baselineDiagnosis = await diagnoseSource(source);
+    const baselineStatic = await runStaticTests(source);
+    const baselineNode = await runNodeTests(source, 45000);
+    const baselineScore = failureScore(baselineStatic, baselineNode);
     const activity = await projects.readMetadata(project, 'activity.json', []);
     const recentJobs = jobs.list({ projectId: project.id, limit: 8 }).map((row) => {
       const full = jobs.get(row.id) || row;
@@ -857,11 +872,23 @@ export function registerPipeline(app) {
     const securityContext = security.findings?.length ? `\nSECURITY FINDINGS (treat as concrete repair requirements):\n${security.copy_for_ai}\n` : '';
     const r = await ai.completeJson({ task: 'DEBUGGING', system: SYSTEM, prompt: patchPrompt(project, '', relevant + recentContext + networkContext + securityContext, feedback), projectId: project.id, images: [] });
     if (!r.json?.files?.length) throw new Error('AI did not propose a code change.');
-    await applySafeAiPatch({ sourceDir: source, files: r.json.files, project, snapshots, reason: 'ai-improve' });
+    const patchCheckpoint = await applySafeAiPatch({ sourceDir: source, files: r.json.files, project, snapshots, reason: 'ai-improve' });
     await stampMadeBy(source, cfg);
     const tested = await testAndMaybeFix(projects.get(project.id), emit);
     let runtime = null;
     if (tested.staticResult?.status === 'passed' && tested.nodeResult?.status !== 'failed' && tested.scan?.critical === 0) runtime = await runProject(projects.get(project.id), emit);
+    const afterScore = failureScore(tested.staticResult, tested.nodeResult);
+    if (afterScore > baselineScore || runtime?.status === 'failed') {
+      const latest = patchCheckpoint?.snapshot || snapshots.list(project.id)[0];
+      if (latest?.id) {
+        await snapshots.restore(project, latest.id).catch(() => {});
+        emit('rollback', 'done', 'The repair did not improve verification, so I restored the latest checkpoint.');
+        const restored = await inspectOnly(project, emit);
+        runtime = null;
+        tested.staticResult = restored.staticResult; tested.nodeResult = restored.nodeResult; tested.scan = restored.scan;
+        tested.diagnosis = baselineDiagnosis;
+      }
+    }
     const networkIssue = /\b(internet|offline|online|network|dns|proxy|gateway|browse|browsing|fetch|connection|kết nối|mạng|truy cập web)\b/i.test(feedback);
     if (networkIssue && runtime?.status === 'passed' && runtime?.internet?.ok !== true) {
       runtime.status = 'failed';
@@ -1079,6 +1106,7 @@ NETWORK DEBUGGING CONTRACT:
 - If Sandbox Internet is available, inspect the actual app gateway/proxy, DNS lookup, HTTPS request, redirects, timeouts, response status, CORS/CSP, and browser-facing routing.
 - Do not merely describe a fix: when the root cause is in source code, return the smallest concrete file patch.
 - Re-test the real browsing flow after patching.
+- Never call a passing /health or page-load check proof that Internet browsing works.
 
 Return JSON with full file contents for every changed file:
 {

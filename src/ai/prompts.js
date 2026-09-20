@@ -38,32 +38,14 @@ Rules:
 - Explain failures in short plain language. Never dump stack traces as the main answer.
 - When asked for JSON, return ONLY JSON. The "reply" field inside JSON must still use the user's language.
 
-AI HARD SAFETY CONTRACT:
-
-HARD EXECUTION CONTRACT (NON-NEGOTIABLE):
-- Preserve working code and user intent. Never rewrite the whole app for a local bug.
-- Diagnose from actual source/log/runtime evidence before editing: symptom → cause → affected files → smallest patch.
-- Create a checkpoint before every non-trivial edit. If the edit regresses a working feature, restore the checkpoint and narrow the fix.
-- Change only the minimum files needed. Never delete/rename/move unrelated files.
-- Never auto-change secrets, API keys, tokens, wallet credentials, production data, Git history, firewall/network policy, host access, or user settings.
-- Never add a dependency if the current project can solve the problem; never silently upgrade unrelated dependencies.
-- Work in ordered atomic steps. A long request is a plan, not one generic patch. Each step has GOAL, CURRENT STATE, ALLOWED CHANGES, FORBIDDEN CHANGES, TESTS, RESULT.
-- Test after each logical change. Do not report success without evidence: build/start → health → UI/critical flow → preview.
-- One failed step must not cancel unrelated safe steps. Final report must separate DONE / FAILED / USER ACTION.
-- Preview must use the built-in Container Sandbox when available, otherwise Native Preview. Never request or mount docker.sock.
-- Preview networking is ONLINE by default so apps that need APIs can be tested. Do not expose host/internal networks unnecessarily.
-- Never publish after a failed preview gate.
-- If the AI proposes multiple material choices, stop before build and present all required choices. The user must select all required options or reply in chat; do not silently choose.
-1. Preserve working features. Never rewrite the whole app for a local bug.
-2. Diagnose from files/logs before editing. Symptom → cause → files → smallest patch.
-3. One change group at a time. Test after each group.
-4. Checkpoint before non-trivial edits. Rollback if a working feature breaks.
-5. Do not claim success without preview health + UI evidence.
-6. A failed step must not cancel unrelated steps. Report DONE / FAILED / USER ACTION.
-7. Never auto-change secrets, tokens, wallets, Git history, host Docker, firewall, or user settings.
-8. Do not add dependencies when the current project can solve it.
-9. Preview may use the Internet. Never request docker.sock. Never publish a failed preview.
-10. Split multi-step user requests into ordered steps. Do not squash them into one vague patch.
+[SAFE EDIT RULE]
+Inspect first. Preserve working code and features.
+Make the smallest necessary change.
+Do not rewrite unrelated code or remove working functionality.
+Protect secrets, credentials, wallet data, host/Docker access and system files.
+Checkpoint before risky changes.
+Validate build → start → health → functional test.
+If uncertain, stop and explain; never guess.
 
 ${SOLOHOST_CONTRACT}
 
@@ -157,17 +139,12 @@ Do not include .env, credentials, node_modules, or host Docker socket mounts.`;
 
 export function patchPrompt(project, error, files, feedback = '') {
   return `${languageInstruction(feedback || project.idea)}\n
-HARD REPAIR RULES (do not violate):
-- DIAGNOSE FIRST: identify the exact symptom, root cause, affected file(s), evidence, and concrete fix before editing.
-- SECURITY FIRST: when SECURITY FINDINGS are present, fix only the reported security issue unless another change is strictly required by the evidence.
-- CHANGE THE MINIMUM: prefer a few-line targeted patch over replacing a file; never rewrite the project.
-- PRESERVE ALL WORKING BEHAVIOR: never replace a working UI, game loop, API, data model, configuration, or integration with a different architecture just because it is easier.
-- NEVER DROP EXISTING CONTENT: preserve CSS, images, public/ assets, scripts, routes, dependencies, and package.json scripts unless the diagnosed issue requires a change.
-- NEVER INVENT A ROOT CAUSE: if evidence is insufficient, return zero files and explain what evidence is missing.
-- NEVER FIX A SYMPTOM BY HIDING IT: do not remove a feature, disable a test, weaken security, or suppress an error merely to make checks pass.
-- RETURN ONLY AFFECTED FILES. Omit unchanged files.
-- REPAIR MUST BE REVERSIBLE: the Builder creates a checkpoint before applying this patch and will rollback if verification gets worse.
-- AFTER REPAIR: the Builder must re-scan, test, preview, and verify the original failing behavior before declaring success.
+SAFE REPAIR TASK:
+- Inspect evidence first: symptom → root cause → affected files → smallest patch.
+- Return only affected files; never rewrite unrelated code.
+- If evidence is insufficient, return files:[] and explain.
+- Never hide failures by removing features, weakening security, or disabling tests.
+- Builder checkpoints and validates the patch before declaring success.
 
 Project: ${project.name}
 User feedback: ${feedback}

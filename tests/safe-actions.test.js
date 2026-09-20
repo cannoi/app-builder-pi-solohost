@@ -1,0 +1,55 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+
+test('AI gateway appends the short Safe Edit Rule to every request', async () => {
+  const { SAFE_EDIT_RULE } = await import('../src/ai/gateway.js');
+  assert.match(SAFE_EDIT_RULE, /Inspect first/);
+  assert.match(SAFE_EDIT_RULE, /smallest necessary change/);
+  assert.match(SAFE_EDIT_RULE, /Validate build/);
+  assert.ok(SAFE_EDIT_RULE.length < 700);
+});
+
+test('gateway sends the rule to provider requests', async () => {
+  const { AIGateway, SAFE_EDIT_RULE } = await import('../src/ai/gateway.js');
+  const db = { setting(){ return ''; }, setSetting(){}, run(){} };
+  const cfg = { ai:{ provider:'deepseek', mode:'single', deepseekKey:'x', geminiKey:'', deepseekModel:'deepseek-chat', geminiModel:'gemini-2.5-flash' } };
+  const ai = new AIGateway({cfg, db, log:{warn(){}}});
+  let seen = null;
+  ai.deepseek.complete = async (o) => { seen=o; return {provider:'deepseek',model:'deepseek-chat',text:'ok',durationMs:1,tokens:1}; };
+  await ai.complete({task:'USER_CHAT', prompt:'hello', system:'system'});
+  assert.match(seen.prompt, /\[SAFE EDIT RULE\]/);
+  assert.match(seen.system, /\[SAFE EDIT RULE\]/);
+  assert.equal(seen.prompt.includes(SAFE_EDIT_RULE), true);
+});
+
+test('system prompt does not contain the old long hard safety contract heading', async () => {
+  const { SYSTEM } = await import('../src/ai/prompts.js');
+  assert.doesNotMatch(SYSTEM, /AI HARD SAFETY CONTRACT:/);
+  assert.match(SYSTEM, /\[SAFE EDIT RULE\]/);
+});
+
+test('natural edit/change requests route to the existing improve action', async () => {
+  const { inferAction } = await import('../src/scripts/ops.js');
+  assert.equal(inferAction('change the button label'), 'improve');
+  assert.equal(inferAction('edit the login screen'), 'improve');
+});
+
+test('UI reuses compact Safe Actions for upgrade and edit', async () => {
+  const fs = await import('node:fs/promises');
+  const html = await fs.readFile(new URL('../public/index.html', import.meta.url), 'utf8');
+  const js = await fs.readFile(new URL('../public/app.js', import.meta.url), 'utf8');
+  assert.match(html, /data-action="improve"/);
+  assert.match(html, /data-action="edit"/);
+  assert.match(js, /SAFE UPGRADE/);
+  assert.match(js, /SAFE EDIT/);
+  assert.match(js, /SAFE REPAIR/);
+  assert.match(js, /What do you want to change\?/);
+});
+
+test('analyze path is inspect-only', async () => {
+  const src = await import('node:fs/promises');
+  const text = await src.readFile(new URL('../src/jobs/pipeline.js', import.meta.url), 'utf8');
+  assert.match(text, /async function inspectOnly\(project, emit\)/);
+  assert.match(text, /payload\.tested = await inspectOnly\(project, emit\)/);
+  assert.match(text, /patchCheckpoint/);
+});

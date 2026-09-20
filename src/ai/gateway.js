@@ -4,6 +4,8 @@ import { extractJson } from '../utils/validate.js';
 import { uuid } from '../utils/ids.js';
 import { pickRoles, recordTrust, reviewPrompt, scoreOf } from './council.js';
 
+export const SAFE_EDIT_RULE = `[SAFE EDIT RULE]\nInspect first. Preserve working code and features.\nMake the smallest necessary change.\nDo not rewrite unrelated code or remove working functionality.\nProtect secrets, credentials, wallet data, host/Docker access and system files.\nCheckpoint before risky changes.\nValidate build → start → health → functional test.\nIf uncertain, stop and explain; never guess.`;
+
 const TASK_PREFERENCE = {
   IDEA_ANALYSIS: 'fast', PRODUCT_PLANNING: 'fast', ARCHITECTURE: 'fast', CODING: 'fast',
   CODE_REVIEW: 'fast', DEBUGGING: 'fast', SECURITY: 'fast', TEST_GENERATION: 'fast',
@@ -52,13 +54,15 @@ export class AIGateway {
 
   async complete({ task, prompt, system, json = false, projectId = null, images = [] }) {
     const errors = [];
+    const safeSystem = `${system || ''}\n\n${SAFE_EDIT_RULE}`.trim();
+    const safePrompt = `${prompt || ''}\n\n${SAFE_EDIT_RULE}`.trim();
     const order = this.pickOrder(task);
     for (const name of order) {
       const provider = this.providerByName(name);
       if (!provider.configured()) continue;
       const started = Date.now();
       try {
-        const result = await provider.complete({ prompt, system, json, images });
+        const result = await provider.complete({ prompt: safePrompt, system: safeSystem, json, images });
         this.record({ projectId, task, provider: result.provider, model: result.model, success: 1, durationMs: result.durationMs, tokens: result.tokens, error: null });
         if (name !== order[0]) result.fallbackFrom = order[0];
         return result;
@@ -90,9 +94,9 @@ export class AIGateway {
     const fallbackName = first.provider === 'gemini' ? 'deepseek' : 'gemini';
     const fallback = this.providerByName(fallbackName);
     if (fallback?.configured()) {
-      const strictPrompt = `${opts.prompt}\n\nJSON OUTPUT CONTRACT:\n- Return exactly one valid JSON object.\n- No markdown fences.\n- No commentary before or after JSON.\n- Escape all quotes and newlines inside string values.\n- Preserve file content exactly as JSON strings.\n- If you cannot produce a valid JSON object, return {"root_cause":"FORMAT_ERROR","files":[],"explanation":"Unable to produce valid JSON."}.`;
+      const strictPrompt = `${opts.prompt}\n\n${SAFE_EDIT_RULE}\n\nJSON OUTPUT CONTRACT:\n- Return exactly one valid JSON object.\n- No markdown fences.\n- No commentary before or after JSON.\n- Escape all quotes and newlines inside string values.\n- Preserve file content exactly as JSON strings.\n- If you cannot produce a valid JSON object, return {"root_cause":"FORMAT_ERROR","files":[],"explanation":"Unable to produce valid JSON."}.`;
       try {
-        const retry = await fallback.complete({ ...opts, json: true, prompt: strictPrompt });
+        const retry = await fallback.complete({ ...opts, json: true, prompt: strictPrompt, system: `${opts.system || ''}\n\n${SAFE_EDIT_RULE}`.trim() });
         this.record({ projectId: opts.projectId || null, task: opts.task, provider: retry.provider, model: retry.model, success: 1, durationMs: retry.durationMs, tokens: retry.tokens, error: null });
         parsed = extractJson(retry.text);
         if (parsed) return { ...retry, json: parsed, fallbackFrom: first.provider };
@@ -116,7 +120,7 @@ export class AIGateway {
     const started = Date.now();
     let draft;
     try {
-      draft = await builder.complete({ prompt: opts.prompt, system: opts.system, json: true, images: opts.images || [] });
+      draft = await builder.complete({ prompt: `${opts.prompt}\n\n${SAFE_EDIT_RULE}`, system: `${opts.system || ''}\n\n${SAFE_EDIT_RULE}`.trim(), json: true, images: opts.images || [] });
     } catch (err) {
       recordTrust(this.db, roles.builder, { ok: false, ms: Date.now() - started });
       const other = roles.builder === 'deepseek' ? 'gemini' : 'deepseek';
@@ -125,7 +129,7 @@ export class AIGateway {
       this.log.warn('Council builder failed; switching provider', { from: roles.builder, to: other, error: err.message });
       roles.builder = other;
       roles.reviewer = roles.reviewer === other ? (other === 'deepseek' ? 'gemini' : 'deepseek') : roles.reviewer;
-      draft = await fallback.complete({ prompt: opts.prompt, system: opts.system, json: true, images: opts.images || [] });
+      draft = await fallback.complete({ prompt: `${opts.prompt}\n\n${SAFE_EDIT_RULE}`, system: `${opts.system || ''}\n\n${SAFE_EDIT_RULE}`.trim(), json: true, images: opts.images || [] });
     }
     const parsed = extractJson(draft.text);
     if (!parsed) throw Object.assign(new Error('Builder returned invalid JSON'), { code: 'AI_BAD_JSON' });
@@ -147,8 +151,8 @@ export class AIGateway {
     if (review.accept === false && Array.isArray(review.issues) && review.issues.length) {
       try {
         const fixed = await builder.complete({
-          prompt: `${opts.prompt}\n\nReviewer rejected the draft:\n${review.issues.join('\n')}\nReturn a corrected JSON only.`,
-          system: opts.system,
+          prompt: `${opts.prompt}\n\nReviewer rejected the draft:\n${review.issues.join('\n')}\nReturn a corrected JSON only.\n\n${SAFE_EDIT_RULE}`,
+          system: `${opts.system || ''}\n\n${SAFE_EDIT_RULE}`.trim(),
           json: true,
           images: opts.images || [],
         });

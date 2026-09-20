@@ -74,7 +74,7 @@ function maybeJump() {
   $('jumpDown').hidden = chatNearBottom() || el.scrollHeight <= el.clientHeight + 20;
 }
 function project() { return state.projects.find((p) => p.id === state.projectId) || null; }
-function actionText(action) { return ({ build:'Build the app', run:'Run the app', improve:'Improve the app', analyze:'Check the app', publish:'Prepare the release', sandbox:'Test the sandbox' })[action] || action; }
+function actionText(action) { return ({ build:'Build the app', run:'Run the app', improve:'Improve the app', edit:'Edit the app', analyze:'Check the app', publish:'Prepare the release', sandbox:'Test the sandbox' })[action] || action; }
 
 async function loadStatus() {
   try {
@@ -224,12 +224,25 @@ async function quick(action) {
   try {
     let r;
     if (action === 'publish') r = await api(`/api/projects/${state.projectId}/release`, { method: 'POST', body: JSON.stringify({ approved: true, confirm: true, push: true }) });
-    else if (action === 'improve') r = await api(`/api/projects/${state.projectId}/improve`, { method: 'POST', body: JSON.stringify({ feedback: 'Diagnose the latest reported problem from source, logs, runtime, and activity first. Apply the smallest safe root-cause fix, then re-test the affected flow. Preserve all unrelated working behavior.' }) });
+    else if (action === 'improve' || action === 'edit') { const kind = action === 'edit' ? 'SAFE EDIT' : 'SAFE UPGRADE'; const request = await askSafeAction(kind); if (!request) { setBusy(false); return; } r = await api(`/api/projects/${state.projectId}/improve`, { method: 'POST', body: JSON.stringify({ feedback: `${kind}\nUSER REQUEST: ${request}` }) }); }
     else r = await api(`/api/projects/${state.projectId}/${action}`, { method: 'POST', body: '{}' });
     if (r.needsConfirmation) { setBusy(false); add('ai', `I need your approval before ${actionText(action).toLowerCase()}.`); return; }
     watch(r.jobId);
   } catch (e) { setBusy(false); add('ai', e.message); }
 }
+async function askSafeAction(kind, initial = '') {
+  return new Promise((resolve) => {
+    const wrap = document.createElement('div'); wrap.className = 'modal';
+    wrap.innerHTML = `<div class="sheet"><div class="sheetHead"><h2>${kind}</h2><button class="iconBtn" type="button">✕</button></div><p class="info">What do you want to change?</p><textarea rows="4" style="width:100%;box-sizing:border-box" placeholder="What do you want to change?"></textarea><div class="actionCard"><button class="primary wide" type="button">Send</button></div></div>`;
+    document.body.appendChild(wrap); wrap.hidden = false;
+    const input = wrap.querySelector('textarea'); input.value = initial; const close = () => { wrap.remove(); resolve(''); };
+    wrap.querySelector('.iconBtn').onclick = close;
+    wrap.querySelector('.primary').onclick = () => { const v = input.value.trim(); if (!v) { input.focus(); return; } wrap.remove(); resolve(v); };
+    input.addEventListener('keydown', (e) => { if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') wrap.querySelector('.primary').click(); });
+    input.focus();
+  });
+}
+
 async function watch(jobId) {
   state.jobId = jobId; state.seenEvents = 0;
   clearInterval(state.poll);
@@ -300,7 +313,9 @@ function renderRepairAction(errorText) {
     if (state.busy) return;
     setBusy(true, isSecurity ? 'Fixing security…' : 'Diagnosing & fixing…');
     try {
-      const r = await api(`/api/projects/${state.projectId}/improve`, { method: 'POST', body: JSON.stringify({ feedback: `${isSecurity ? 'SECURITY REPAIR REQUEST' : 'BUG REPAIR REQUEST'}\nUse the exact failure report below as evidence. Diagnose first. Apply the smallest safe patch. Do not rewrite unrelated code. Re-run security/tests/preview after the patch.\n\n${errorText}` }) });
+      const request = await askSafeAction('SAFE REPAIR', isSecurity ? 'Fix the reported security issue.' : 'Fix the reported problem.');
+      if (!request) { setBusy(false); return; }
+      const r = await api(`/api/projects/${state.projectId}/improve`, { method: 'POST', body: JSON.stringify({ feedback: `SAFE REPAIR\nUSER REQUEST: ${request}\n\nEVIDENCE REPORT:\n${errorText}` }) });
       watch(r.jobId);
     } catch (e) { setBusy(false); add('ai', e.message); }
   };

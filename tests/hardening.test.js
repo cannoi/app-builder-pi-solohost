@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { flattenImportedTree } from '../src/projects/importer.js';
+const ROOT = path.resolve(new URL('..', import.meta.url).pathname);
 
 test('SoloHost compose has no undeclared interpolation and no forbidden security_opt', () => {
   const y = fs.readFileSync(new URL('../docker-compose.yml', import.meta.url), 'utf8');
@@ -30,9 +31,9 @@ test('preview uses a project-aware back link and proxy target', () => {
   assert.match(src, /x-frame-options/);
 });
 
-test('AI hard contract is present in the system prompt', async () => {
+test('short Safe Edit Rule is embedded in the system prompt', async () => {
   const { SYSTEM } = await import('../src/ai/prompts.js');
-  for (const phrase of ['Preserve working code', 'Diagnose from actual source/log/runtime evidence', 'Create a checkpoint', 'Work in ordered atomic steps', 'Never request or mount docker.sock', 'Preview networking is ONLINE by default']) {
+  for (const phrase of ['[SAFE EDIT RULE]', 'Preserve working code', 'Make the smallest necessary change', 'Protect secrets', 'Checkpoint before risky changes', 'Validate build']) {
     assert.match(SYSTEM, new RegExp(phrase.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
   }
 });
@@ -122,20 +123,20 @@ test('SoloHost config schema keeps fields and fixed_values as arrays', () => {
 
 
 test('queue exposes the current running job for duplicate-action recovery', async () => {
-  const src = readFileSync(path.join(ROOT, 'src/jobs/queue.js'), 'utf8');
+  const src = fs.readFileSync(path.join(ROOT, 'src/jobs/queue.js'), 'utf8');
   assert.match(src, /runningJob\(projectId = null\)/);
   assert.match(src, /status IN \('queued','running'\)/);
 });
 
 test('Builder never equates browser page success with Internet verification', async () => {
-  const src = readFileSync(path.join(ROOT, 'src/jobs/pipeline.js'), 'utf8');
+  const src = fs.readFileSync(path.join(ROOT, 'src/jobs/pipeline.js'), 'utf8');
   assert.match(src, /Internet browsing is not yet verified/);
   assert.match(src, /runtime\.internet\?\.ok === true/);
 });
 
 test('network repair prompt traces the real proxy request path', async () => {
-  const src = readFileSync(path.join(ROOT, 'src/ai/prompts.js'), 'utf8');
-  assert.match(src, /browser URL → app route → target URL parsing/);
+  const src = fs.readFileSync(path.join(ROOT, 'src/jobs/pipeline.js'), 'utf8');
+  assert.match(src, /actual app gateway\/proxy, DNS lookup, HTTPS request, redirects, timeouts/);
   assert.match(src, /Do not merely describe a fix/);
   assert.match(src, /Never call a passing \/health or page-load check proof that Internet browsing works/);
 });
