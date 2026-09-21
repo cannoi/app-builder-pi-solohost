@@ -175,6 +175,25 @@ export class GitHubManager {
     return { ok: missing.length === 0 && mismatched.length === 0, missing, mismatched, verifiedFiles: localEntries.length, commit: head.sha };
   }
 
+  async latestWorkflowRun(repoName, workflowFile = 'docker.yml') {
+    const owner = encodeURIComponent(this.cfg.github.owner);
+    const repo = encodeURIComponent(repoName);
+    try {
+      const result = await this.api('GET', `/repos/${owner}/${repo}/actions/workflows/${encodeURIComponent(workflowFile)}/runs?per_page=5`);
+      const run = Array.isArray(result.workflow_runs) ? result.workflow_runs[0] : null;
+      return run ? {
+        id: run.id,
+        status: run.status || null,
+        conclusion: run.conclusion || null,
+        html_url: run.html_url || null,
+        created_at: run.created_at || null,
+        updated_at: run.updated_at || null,
+      } : null;
+    } catch (err) {
+      return { status: 'unknown', conclusion: null, error: err.message || String(err) };
+    }
+  }
+
   async verifyContainerImage(packageName, tag) {
     const owner = encodeURIComponent(this.cfg.github.owner);
     const pkg = encodeURIComponent(packageName.split('/').pop());
