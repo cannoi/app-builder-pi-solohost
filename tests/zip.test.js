@@ -55,10 +55,10 @@ test('generated GitHub workflow publishes the exact SoloHost version tag', async
 
 test('Windows GitHub fallback is bundled and verifies the GHCR image before SoloHost install', async () => {
   const fs = await import('node:fs/promises');
-  const script = await fs.readFile(new URL('../fallback/GitHub-ZIP-Publisher-v2.6.ps1', import.meta.url), 'utf8');
-  assert.match(script, /Wait-ForContainerImage/);
-  assert.match(script, /GHCR image confirmed/);
-  assert.match(script, /SOLOHOST INSTALL GUIDE/);
+  const script = await fs.readFile(new URL('../fallback/GitHub-ZIP-Image-Publisher-v4.0.ps1', import.meta.url), 'utf8');
+  assert.match(script, /GitHub ZIP -> Docker Image Publisher/);
+  assert.match(script, /ghcr\.io/);
+  assert.match(script, /Build Docker Image/);
 });
 
 test('Builder image declares the GitHub source label used to link GHCR packages', async () => {
@@ -72,4 +72,20 @@ test('dynamic chat language support remains enabled', async () => {
   assert.equal(detectUserLanguage('Hãy giúp tôi sửa lỗi ứng dụng'), 'Vietnamese');
   assert.equal(detectUserLanguage('帮我修复这个应用'), 'Chinese');
   assert.equal(detectUserLanguage('Please build this app'), 'English');
+});
+
+
+test('generated workflow builds, smoke-tests, then pushes the exact version image', async () => {
+  const { writeGithubWorkflow } = await import('../src/projects/generator.js');
+  const fs = await import('node:fs');
+  const os = await import('node:os');
+  const path = await import('node:path');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'paf-wf-smoke-'));
+  await writeGithubWorkflow(dir, { slug: 'demo-app', version: '1.4.22' });
+  const yml = fs.readFileSync(path.join(dir, '.github/workflows/docker.yml'), 'utf8');
+  assert.match(yml, /name: Smoke test image/);
+  assert.match(yml, /load: true/);
+  assert.match(yml, /docker run -d/);
+  assert.match(yml, /ghcr\.io\/\$\{\{ github\.repository \}\}:1\.4\.22/);
+  assert.match(yml, /name: Push image/);
 });
