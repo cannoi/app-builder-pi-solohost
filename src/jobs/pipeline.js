@@ -11,7 +11,7 @@ import dns from 'node:dns/promises';
 import https from 'node:https';
 import { saveAttachment, attachmentContext, attachmentList, imageInputsFromAttachments } from '../projects/attachments.js';
 import { writeSoloHostPackage } from '../release/solohost.js';
-import { inferAction, classifyLogs, describeFailure, diagnoseSource, nextStep, guideCard, isHostDockerCommand, isNpmOnEmptyRisk, splitUserSteps } from '../scripts/ops.js';
+import { inferAction, extractGhcrImage, guessSoloHostPorts, classifyLogs, describeFailure, diagnoseSource, nextStep, guideCard, isHostDockerCommand, isNpmOnEmptyRisk, splitUserSteps } from '../scripts/ops.js';
 import { stampMadeBy } from '../projects/badge.js';
 import { createProjectZip } from '../projects/exporter.js';
 import { gcDocker } from '../docker/cleanup.js';
@@ -294,9 +294,9 @@ export function registerPipeline(app) {
           checklist: ['✓ Build', '✓ Test', '✗ GitHub', '• GHCR', '• SoloHost'],
           downloads: [
             ...(zipFail ? [{ kind: 'project', filename: zipFail.filename, url: `/api/projects/${project.id}/download?kind=project` }] : []),
-            { kind: 'github-fallback', filename: 'GitHub-ZIP-Publisher-v2.6.ps1', url: `/api/projects/${project.id}/github-fallback` },
+            { kind: 'github-fallback', filename: 'GitHub-ZIP-Image-Publisher-v4.0.ps1', url: `/api/projects/${project.id}/github-fallback` },
           ],
-          fallback: { ...(githubPublish.fallback || {}), scriptUrl: `/api/projects/${project.id}/github-fallback`, scriptFilename: 'GitHub-ZIP-Publisher-v2.6.ps1' },
+          fallback: { ...(githubPublish.fallback || {}), scriptUrl: `/api/projects/${project.id}/github-fallback`, scriptFilename: 'GitHub-ZIP-Image-Publisher-v4.0.ps1' },
           brief: [githubPublish.error, githubPublish.fix].filter(Boolean).join('\n'),
           next: 'GitHub source was not verified. Tap Download Project and upload the files on github.com, or fix access and tap Publish once.',
         };
@@ -311,9 +311,15 @@ export function registerPipeline(app) {
     if (githubUrl) {
       emit('docker-publish', 'running', 'Waiting for GitHub Actions to publish GHCR…');
       const verifyDeadline = Date.now() + 120000;
+      let workflowRun = null;
       while (Date.now() < verifyDeadline) {
         imageVerification = await github.verifyContainerImage(`${owner}/${project.slug}`, notes.version).catch((err) => ({ ok: false, error: err.message }));
         if (imageVerification.ok) break;
+        if (typeof github.latestWorkflowRun === 'function') workflowRun = await github.latestWorkflowRun(project.slug).catch(() => null) || workflowRun;
+        if (workflowRun?.status === 'completed' && workflowRun.conclusion && workflowRun.conclusion !== 'success') {
+          imageVerification = { ...imageVerification, workflow: workflowRun, error: `GitHub Actions finished with ${workflowRun.conclusion}.` };
+          break;
+        }
         await new Promise((resolve) => setTimeout(resolve, 3000));
       }
       if (imageVerification.ok) {
@@ -343,11 +349,11 @@ export function registerPipeline(app) {
     else if (githubUrl) emit('release', 'done', ghcrNote);
     return {
       status, release: rec, quality, githubUrl, githubPublish, installReady, checklist,
-      image: registryImage, imageVerification, soloHostPackage: packageInfo, validation, imageOk,
+      image: registryImage, imageVerification, workflowRun: imageVerification?.workflow || null, soloHostPackage: packageInfo, validation, imageOk,
       downloads: [
         zip ? { kind: 'solohost', filename: zip.filename, url: `/api/projects/${project.id}/download?kind=solohost` } : null,
         { kind: 'project', filename: `${project.slug}-source.zip`, url: `/api/projects/${project.id}/download?kind=project` },
-        { kind: 'github-fallback', filename: 'GitHub-ZIP-Publisher-v2.6.ps1', url: `/api/projects/${project.id}/github-fallback` },
+        { kind: 'github-fallback', filename: 'GitHub-ZIP-Image-Publisher-v4.0.ps1', url: `/api/projects/${project.id}/github-fallback` },
       ].filter(Boolean),
       fallback: githubPublish?.fallback || null,
       missing: installReady ? [] : [imageOk ? null : 'GHCR image is not confirmed yet.'].filter(Boolean),
@@ -394,25 +400,32 @@ export function registerPipeline(app) {
     const handoff = await projects.readMetadata(project, 'handoff.json', {});
     const context = await collectProjectContext(source);
     const attachContext = await attachmentContext(projects.projectDir(project));
-    emit('ai', 'running', 'AI is deciding the next best step…');
+    const requestedImage = extractGhcrImage(message);
+    const installFromImage = Boolean(requestedImage && /(solohost|cài đặt|cai dat|install|docker-compose|config_options|file cài|tạo file|tao file|generate)/i.test(message));
+    emit('ai', 'running', installFromImage ? 'Preparing SoloHost install files from the GitHub image…' : 'AI is deciding the next best step…');
     let r = { json: { action: inferAction(message) || 'reply', reply: '', commands: [] } };
     try {
-      r = await ai.completeJson({
-        task: 'USER_CHAT',
-        system: SYSTEM,
-        prompt: builderChatPrompt(project, message, `${languageInstruction(message)}\nHANDOFF:\n${JSON.stringify(handoff)}\nACTIVITY LOG:\n${activityText}\nHISTORY:\n${history}\nDIAGNOSIS:\n${JSON.stringify(diagnosis)}\nRUNTIME:\n${JSON.stringify({ status: runtimeNow.status, error: runtimeNow.error, previewPath: runtimeNow.previewPath })}\n${context}\n${attachContext}`, await attachmentList(projects.projectDir(project))),
-        projectId: project.id,
-        images: [...imageInputs(incomingFiles), ...(await imageInputsFromAttachments(projects.projectDir(project)))],
-      });
+      if (!installFromImage) {
+        r = await ai.completeJson({
+          task: 'USER_CHAT',
+          system: SYSTEM,
+          prompt: builderChatPrompt(project, message, `${languageInstruction(message)}\nHANDOFF:\n${JSON.stringify(handoff)}\nACTIVITY LOG:\n${activityText}\nHISTORY:\n${history}\nDIAGNOSIS:\n${JSON.stringify(diagnosis)}\nRUNTIME:\n${JSON.stringify({ status: runtimeNow.status, error: runtimeNow.error, previewPath: runtimeNow.previewPath })}\n${context}\n${attachContext}`, await attachmentList(projects.projectDir(project))),
+          projectId: project.id,
+          images: [...imageInputs(incomingFiles), ...(await imageInputsFromAttachments(projects.projectDir(project)))],
+        });
+      } else {
+        r = { json: { action: 'export', reply: `Creating SoloHost install files for ${requestedImage}.`, commands: [], steps: [{ action: 'export', goal: message }] } };
+      }
     } catch (err) {
       emit('ai', 'failed', friendlyAiError(err));
     }
     let action = String(r.json?.action || inferAction(message) || 'reply');
+    if (installFromImage) action = 'export';
     if (action === 'reply') {
       const inferred = inferAction(message);
       if (inferred && inferred !== 'reply') action = inferred;
     }
-    const gated = gateAction(action, { files: diagnosis.files, runtime: runtimeNow, githubConfigured: github.configured() });
+    const gated = gateAction(action, { files: diagnosis.files, runtime: runtimeNow, githubConfigured: github.configured(), imageRef: requestedImage });
     if (gated.lock) action = gated.action;
     const reply = [gated.lock, String(r.json?.reply || '')].filter(Boolean).join('\n');
     const skipped = [];
@@ -451,7 +464,7 @@ export function registerPipeline(app) {
           emit(stepAction, 'failed', `Skipped ${stepAction}: the previous required step failed. Fix that issue first.`);
           continue;
         }
-        const gatedStep = gateAction(stepAction, { files: diagnosis.files, runtime: runtimeNow, githubConfigured: github.configured() });
+        const gatedStep = gateAction(stepAction, { files: diagnosis.files, runtime: runtimeNow, githubConfigured: github.configured(), imageRef: requestedImage || extractGhcrImage(step.goal) });
         if (gatedStep.lock) stepAction = gatedStep.action;
         try {
           if (stepAction === 'build') {
@@ -471,9 +484,26 @@ export function registerPipeline(app) {
             payload.diagnosis = payload.tested.diagnosis || await diagnoseSource(source);
             if (runtimeNow.logs) payload.crash = classifyLogs(runtimeNow.logs || runtimeNow.error || '');
           } else if (stepAction === 'export') {
-            const kind = /install|solohost|config|cài đặt|solo\s*host/i.test(step.goal) ? 'solohost' : 'project';
+            const image = extractGhcrImage(step.goal) || extractGhcrImage(message);
+            const kind = image || /install|solohost|config|cài đặt|solo\s*host/i.test(step.goal) ? 'solohost' : 'project';
+            if (image) {
+              const ports = guessSoloHostPorts(step.goal, image);
+              emit('release', 'running', `Writing SoloHost files for ${image}`);
+              await writeSoloHostPackage({
+                project,
+                sourceDir: projects.sourceDir(project.slug),
+                image,
+                hostPort: ports.hostPort,
+                containerPort: ports.containerPort,
+              });
+              payload.image = image;
+              payload.installReady = true;
+            }
             const artifact = await createProjectZip({ sourceDir: projects.sourceDir(project.slug), outputDir: path.join(projects.projectDir(project), 'artifacts'), slug: project.slug, kind });
-            payload.downloads = [{ kind, filename: artifact.filename, url: `/api/projects/${project.id}/download?kind=${kind}` }];
+            payload.downloads = [
+              { kind, filename: artifact.filename, url: `/api/projects/${project.id}/download?kind=${kind}` },
+              { kind: 'github-fallback', filename: 'GitHub-ZIP-Image-Publisher-v4.0.ps1', url: `/api/projects/${project.id}/github-fallback` },
+            ];
           } else if (stepAction === 'publish') {
             emit('release', 'running', 'Publishing the app now…');
             payload.result = await runRelease(project, { approved: true, confirm: true, push: true, existingAction: 'confirm' }, emit);
@@ -1135,9 +1165,12 @@ function friendlyAiError(err) {
   return 'The AI provider was unavailable.';
 }
 
-function gateAction(action, { files = [], runtime = {}, githubConfigured = false } = {}) {
+function gateAction(action, { files = [], runtime = {}, githubConfigured = false, imageRef = '' } = {}) {
   const hasFiles = Array.isArray(files) && files.length > 0;
   const ran = runtime.status === 'passed' && runtime.health === true;
+  if (action === 'export' && imageRef) {
+    return { action: 'export', lock: '' };
+  }
   if ((action === 'run' || action === 'analyze') && !hasFiles) {
     return { action: 'build', lock: 'No app files yet. I will Build first, then you can Run.' };
   }
