@@ -31,10 +31,10 @@ export class BuildRunner {
     if (this.podman && mode !== 'native') {
       return {
         ...podman,
-        mode: 'container',
+        mode: 'auto',
         fallback: 'native-preview',
         dockerSocket: false,
-        message: 'Container Sandbox is enabled. No host Docker socket is used.'
+        message: 'Automatic runtime detection is enabled. Container apps use the protected Sandbox; Node/static apps use native preview.'
       };
     }
     return {
@@ -117,8 +117,10 @@ export class BuildRunner {
         runtime: 'podman-sandbox',
         health: false,
         containerSandboxRequired: true,
+        autoDetected: true,
         detected: runtimeSpec,
-        error: 'This project is a container-only image (no index.html or Node start script). Enable Settings → Container Sandbox (Podman API) to preview it. Ordinary Node/static apps do not need Sandbox.',
+        error: 'Container app detected. App Builder can run it automatically when the SoloHost environment provides its protected Container Sandbox. This environment has no container runner available, so live preview cannot start here; no Docker socket, host access, installation, or manual source conversion will be attempted.',
+        next: 'Use a SoloHost environment with the built-in Container Sandbox available, then Run again. Ordinary Node/static apps do not need Container Sandbox.',
       };
     }
     if (containerOnly && this.podman && mode !== 'native') {
@@ -128,7 +130,7 @@ export class BuildRunner {
   }
 
   async runPodmanApp({ sourcePath, projectSlug, timeout = 180, keepRunning = true } = {}) {
-    if (!this.podman) return { status: 'skipped', runtime: 'podman-sandbox', error: 'Container Sandbox is not configured.' };
+    if (!this.podman) return { status: 'skipped', runtime: 'podman-sandbox', error: 'Protected Container Sandbox is not available in this environment.' };
     const safeSlug = slug(projectSlug);
     const image = imageName(safeSlug);
     const containerName = `${APP_CONTAINER_PREFIX}${safeSlug}`.slice(0, 63);
