@@ -245,20 +245,23 @@ export async function publishWithGit({ token, repoName, sourceDir, version = '0.
     step('publishing', 'Publishing source…');
     const work = await copyWorktree(sourceDir, validation.files);
     try {
-      // Use GitHub's authenticated Git Data API from inside the Builder instead of
-      // spawning the local git executable. This makes Publish independent of git
-      // installation, git credential helpers, LFS availability, and shell behavior.
       let sha = null;
       let lastPublishError = null;
-      for (let attempt = 1; attempt <= 3; attempt += 1) {
-        try {
-          sha = await publishWorktreeWithGitHubApi({ octokit, work, owner: realOwner, repo: name, branch, version });
-          lastPublishError = null;
-          break;
-        } catch (err) {
-          lastPublishError = err;
-          if (err?.code !== 'conflict' || attempt === 3) throw err;
-          step('retrying', `GitHub changed while uploading; retrying (${attempt}/2)…`);
+      try {
+        sha = await gitPushWorktree({ work, token, owner: realOwner, repo: name, branch, version });
+      } catch (gitErr) {
+        lastPublishError = gitErr;
+        step('publishing', 'Git upload failed, retrying with the GitHub API…');
+        for (let attempt = 1; attempt <= 3; attempt += 1) {
+          try {
+            sha = await publishWorktreeWithGitHubApi({ octokit, work, owner: realOwner, repo: name, branch, version });
+            lastPublishError = null;
+            break;
+          } catch (err) {
+            lastPublishError = err;
+            if (err?.code !== 'conflict' || attempt === 3) break;
+            step('retrying', `GitHub changed while uploading; retrying (${attempt}/2)…`);
+          }
         }
       }
       if (!sha) throw lastPublishError || new Error('GitHub upload did not return a commit SHA.');
