@@ -59,7 +59,8 @@ export class AIGateway {
     return result;
   }
 
-  pickOrder() {
+  pickOrder(images = []) {
+    if (images?.length && this.gemini.configured()) return ['gemini', 'deepseek'];
     return this.cfg.ai.provider === 'gemini' ? ['gemini', 'deepseek'] : ['deepseek', 'gemini'];
   }
 
@@ -70,26 +71,35 @@ export class AIGateway {
     const rule = actionRule(task);
     const safeSystem = rule ? `${system || ''}\n\n${rule}`.trim() : (system || '').trim();
     const safePrompt = rule ? `${prompt || ''}\n\n${rule}`.trim() : (prompt || '').trim();
-    const order = this.pickOrder(task);
+    const order = this.pickOrder(images);
     for (const name of order) {
       const provider = this.providerByName(name);
       if (!provider.configured()) continue;
-      const started = Date.now();
-      try {
-        const result = await provider.complete({ prompt: safePrompt, system: safeSystem, json, images });
-        this.record({ projectId, task, provider: result.provider, model: result.model, success: 1, durationMs: result.durationMs, tokens: result.tokens, error: null });
-        if (name !== order[0]) result.fallbackFrom = order[0];
-        return result;
-      } catch (err) {
-        errors.push(`${name}: ${err.message}`);
-        this.record({ projectId, task, provider: name, model: provider.model, success: 0, durationMs: Date.now() - started, tokens: null, error: err.message });
-        this.log.warn('AI provider failed', { provider: name, task, error: err.message });
+      for (let attempt = 1; attempt <= 2; attempt += 1) {
+        const started = Date.now();
+        try {
+          const result = await provider.complete({ prompt: safePrompt, system: safeSystem, json, images });
+          this.record({ projectId, task, provider: result.provider, model: result.model, success: 1, durationMs: result.durationMs, tokens: result.tokens, error: null });
+          if (name !== order[0]) result.fallbackFrom = order[0];
+          return result;
+        } catch (err) {
+          const detail = `${name} attempt ${attempt}: ${String(err.message || err).slice(0, 500)}`;
+          errors.push(detail);
+          this.record({ projectId, task, provider: name, model: provider.model, success: 0, durationMs: Date.now() - started, tokens: null, error: err.message });
+          this.log.warn('AI provider failed', { provider: name, task, attempt, error: err.message });
+          if (attempt < 2 && transientAiError(err)) {
+            await new Promise((resolve) => setTimeout(resolve, 350 * attempt));
+            continue;
+          }
+          break;
+        }
       }
     }
     const billed = errors.some((e) => /402|Insufficient Balance/i.test(e));
     const hint = billed ? ' DeepSeek has no credit. Switch the header to Gemini or add a Gemini key.' : '';
     const err = new Error((errors.length ? errors.join(' | ') : 'No AI provider is configured') + hint);
     err.code = 'AI_UNAVAILABLE';
+    err.providerErrors = errors;
     throw err;
   }
 
@@ -188,4 +198,9 @@ export class AIGateway {
       this.db.run(`INSERT INTO ai_requests(id,project_id,task,provider,model,success,duration_ms,tokens,error,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)`, uuid(), projectId, task, provider, model, success ? 1 : 0, durationMs, tokens, error, new Date().toISOString());
     } catch (e) { this.log.warn('Failed to record AI request', { error: e.message }); }
   }
+}
+
+function transientAiError(err) {
+  const message = String(err?.message || err || '');
+  return /HTTP (408|409|425|429|500|502|503|504)\b|timeout|timed out|fetch failed|ECONNRESET|ECONNREFUSED|ENOTFOUND|UNAVAILABLE|overloaded|temporar/i.test(message);
 }

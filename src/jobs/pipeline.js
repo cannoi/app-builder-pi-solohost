@@ -65,18 +65,46 @@ export function registerPipeline(app) {
     await projects.saveMetadata(project, 'architecture.json', plan);
     await projects.saveMetadata(project, 'user-language.json', { language: userLanguage, source: idea });
     jobs.attachProject(job.id, project.id);
+    const initialPlan = await projects.startWorkPlan(project, {
+      jobId: job.id,
+      message: idea,
+      action: 'create_app',
+      language: userLanguage,
+      steps: [
+        { action: 'analyze', goal: 'Understand the idea, constraints, and required features.' },
+        { action: 'plan', goal: 'Choose the smallest safe architecture and verification plan.' },
+        { action: 'build', goal: 'Generate the first complete application without secrets.' },
+        { action: 'test', goal: 'Run static checks, security scan, preview, and browser verification.' },
+      ],
+    });
+    await projects.updateWorkPlan(project, { stepId: initialPlan.steps[0].id, step: { status: 'done', result: 'Requirements analyzed.' } });
+    await projects.updateWorkPlan(project, { stepId: initialPlan.steps[1].id, step: { status: 'done', result: 'Architecture and product plan saved.' } });
+    emit('plan', 'done', 'Job plan saved. Every build step will report what changed and what remains.');
 
     if (job.payload.autoBuild && analysis.questions.length && !job.payload.demo) {
       projects.setStatus(project, 'WAITING_INPUT');
       await projects.chat(project, 'I need a few quick choices before I build this.', 'assistant', { questions: analysis.questions, fixedTemplate: true });
+      await projects.finishWorkPlan(project, 'waiting_input', 'Waiting for the user choices before build can continue.');
       emit('questions', 'done', 'I need a few quick choices before I build this.');
       return { projectId: project.id, analysis, plan, needsInput: true, questions: analysis.questions };
     }
 
     projects.setStatus(project, 'READY_TO_BUILD');
     if (job.payload.autoBuild) {
+      await projects.updateWorkPlan(project, { stepId: initialPlan.steps[2].id, step: { status: 'running' } });
       emit('generate', 'running', 'Writing the first version…');
-      await generateCode({ project: projects.get(project.id), analysis, plan, emit, allowFallback: Boolean(job.payload.demo) });
+      try {
+        await generateCode({ project: projects.get(project.id), analysis, plan, emit, allowFallback: Boolean(job.payload.demo) });
+        await projects.updateWorkPlan(project, { stepId: initialPlan.steps[2].id, step: { status: 'done', result: 'Application files generated.' } });
+        await projects.updateWorkPlan(project, { stepId: initialPlan.steps[3].id, step: { status: 'done', result: 'Initial checks and preview completed.' } });
+        await projects.finishWorkPlan(project, 'done', 'Initial app build and verification are recorded. Future changes must use a new plan step.');
+      } catch (err) {
+        await projects.updateWorkPlan(project, { stepId: initialPlan.steps[2].id, step: { status: 'failed', error: String(err.message || err).slice(0, 1000) } });
+        await projects.finishWorkPlan(project, 'failed', 'Initial build stopped safely. No unverified build is reported as complete.');
+        throw err;
+      }
+    } else {
+      await projects.finishWorkPlan(project, 'waiting_input', 'Plan is ready. Start Build when you want the app files generated.');
     }
 
     return { projectId: project.id, analysis, plan };
@@ -100,14 +128,50 @@ export function registerPipeline(app) {
     }
     await projects.saveMetadata(project, 'architecture.json', nextPlan);
     projects.setStatus(project, 'READY_TO_BUILD');
-    return generateCode({ project: projects.get(project.id), analysis, plan: nextPlan, emit, allowFallback: false });
+    const workPlan = await projects.startWorkPlan(project, {
+      jobId: job.id,
+      message: `Continue build with choices: ${JSON.stringify(answers)}`,
+      action: 'continue_build',
+      language: detectUserLanguage(project.idea),
+      steps: [{ action: 'build', goal: 'Generate the app using the saved choices.' }, { action: 'test', goal: 'Verify the generated app and preview.' }],
+    });
+    await projects.updateWorkPlan(project, { stepId: workPlan.steps[0].id, step: { status: 'running' } });
+    try {
+      const result = await generateCode({ project: projects.get(project.id), analysis, plan: nextPlan, emit, allowFallback: false });
+      await projects.updateWorkPlan(project, { stepId: workPlan.steps[0].id, step: { status: 'done', result: 'Application files generated.' } });
+      await projects.updateWorkPlan(project, { stepId: workPlan.steps[1].id, step: { status: 'done', result: 'Initial checks and preview completed.' } });
+      const finished = await projects.finishWorkPlan(project, 'done', 'Build resumed from the saved plan and was verified.');
+      return { ...result, workPlan: finished };
+    } catch (err) {
+      await projects.updateWorkPlan(project, { stepId: workPlan.steps[0].id, step: { status: 'failed', error: String(err.message || err).slice(0, 1000) } });
+      await projects.finishWorkPlan(project, 'failed', 'Build stopped safely; no unverified result is reported as complete.');
+      throw err;
+    }
   });
 
   jobs.on('build', async (job, { emit }) => {
     const project = mustProject(job.payload.projectId);
     const analysis = await projects.readMetadata(project, 'requirements.json', {});
     const plan = await projects.readMetadata(project, 'architecture.json', {});
-    return generateCode({ project, analysis, plan, emit, allowFallback: false });
+    const workPlan = await projects.startWorkPlan(project, {
+      jobId: job.id,
+      message: 'Build the saved project plan.',
+      action: 'build',
+      language: detectUserLanguage(project.idea),
+      steps: [{ action: 'build', goal: 'Generate or update the application files from the saved plan.' }, { action: 'test', goal: 'Verify the build, security, preview, and browser flow.' }],
+    });
+    await projects.updateWorkPlan(project, { stepId: workPlan.steps[0].id, step: { status: 'running' } });
+    try {
+      const result = await generateCode({ project, analysis, plan, emit, allowFallback: false });
+      await projects.updateWorkPlan(project, { stepId: workPlan.steps[0].id, step: { status: 'done', result: 'Application files generated.' } });
+      await projects.updateWorkPlan(project, { stepId: workPlan.steps[1].id, step: { status: 'done', result: 'Checks and preview completed.' } });
+      const finished = await projects.finishWorkPlan(project, 'done', 'Build and verification were recorded.');
+      return { ...result, workPlan: finished };
+    } catch (err) {
+      await projects.updateWorkPlan(project, { stepId: workPlan.steps[0].id, step: { status: 'failed', error: String(err.message || err).slice(0, 1000) } });
+      await projects.finishWorkPlan(project, 'failed', 'Build stopped safely; no unverified result is reported as complete.');
+      throw err;
+    }
   });
 
   jobs.on('test', async (job, { emit }) => {
@@ -198,11 +262,44 @@ export function registerPipeline(app) {
     const project = mustProject(job.payload.projectId);
     const feedback = String(job.payload.feedback || '').trim();
     if (!feedback) throw new Error('Tell AI what to improve.');
-    const source = projects.sourceDir(project.slug);
-    const relevant = await collectProjectContext(source);
+    const incomingFiles = Array.isArray(job._files) ? job._files : [];
+    for (const file of incomingFiles.slice(0, 8)) {
+      if (file?.buffer) await saveAttachment(projects.projectDir(project), file);
+    }
+    if (incomingFiles.length) {
+      await projects.chat(project, `📎 Attached ${incomingFiles.length} file(s) for this repair.`, 'system', {
+        attachments: incomingFiles.map((file) => file.originalname).filter(Boolean),
+      });
+    }
+    const language = detectUserLanguage(feedback);
+    const plan = await projects.startWorkPlan(project, {
+      jobId: job.id,
+      message: feedback,
+      action: 'improve',
+      language,
+      steps: [{ action: 'improve', goal: feedback, tests: ['static checks', 'runtime tests', 'security scan', 'preview'] }],
+    });
+    emit('plan', 'done', 'Plan created: inspect → patch only affected files → verify → keep or roll back.');
+    await projects.updateWorkPlan(project, { stepId: plan.steps[0].id, step: { status: 'running' } });
     emit('ai', 'running', 'AI is turning your feedback into a change…');
-    const result = await improveProject(project, feedback, emit);
-    return result;
+    try {
+      const result = await improveProject(project, feedback, emit);
+      await projects.updateWorkPlan(project, {
+        stepId: plan.steps[0].id,
+        step: { status: 'done', files: result.files || [], result: result.explanation || 'Change verified.' },
+        reports: [{ action: 'improve', status: 'done', files: result.files || [], explanation: result.explanation || '' }],
+      });
+      const finished = await projects.finishWorkPlan(project, 'done', 'Change was checked after the patch. The checkpoint remains available for rollback.');
+      return { ...result, workPlan: finished };
+    } catch (err) {
+      await projects.updateWorkPlan(project, {
+        stepId: plan.steps[0].id,
+        step: { status: 'failed', error: String(err.message || err).slice(0, 1000), notes: ['No unverified change is reported as complete.'] },
+        reports: [{ action: 'improve', status: 'failed', error: String(err.message || err).slice(0, 1000) }],
+      });
+      await projects.finishWorkPlan(project, 'failed', 'The step stopped safely. Review the error and the saved checkpoint before continuing.');
+      throw err;
+    }
   });
 
   jobs.on('sandbox', async (job, { emit }) => {
@@ -398,6 +495,7 @@ export function registerPipeline(app) {
     const activity = await projects.readMetadata(project, 'activity.json', []);
     const activityText = (Array.isArray(activity) ? activity.slice(-20) : []).map((a) => `${a.t || ''} ${a.action || ''} ${a.status || ''} ${String(a.detail || '').slice(0, 160)}`).join('\n');
     const handoff = await projects.readMetadata(project, 'handoff.json', {});
+    const previousPlan = await projects.readMetadata(project, 'work-plan.json', {});
     const context = await collectProjectContext(source);
     const attachContext = await attachmentContext(projects.projectDir(project));
     const requestedImage = extractGhcrImage(message);
@@ -409,7 +507,7 @@ export function registerPipeline(app) {
         r = await ai.completeJson({
           task: 'USER_CHAT',
           system: SYSTEM,
-          prompt: builderChatPrompt(project, message, `${languageInstruction(message)}\nHANDOFF:\n${JSON.stringify(handoff)}\nACTIVITY LOG:\n${activityText}\nHISTORY:\n${history}\nDIAGNOSIS:\n${JSON.stringify(diagnosis)}\nRUNTIME:\n${JSON.stringify({ status: runtimeNow.status, error: runtimeNow.error, previewPath: runtimeNow.previewPath })}\n${context}\n${attachContext}`, await attachmentList(projects.projectDir(project))),
+          prompt: builderChatPrompt(project, message, `${languageInstruction(message)}\nHANDOFF:\n${JSON.stringify(handoff)}\nCURRENT WORK PLAN:\n${JSON.stringify(previousPlan)}\nACTIVITY LOG:\n${activityText}\nHISTORY:\n${history}\nDIAGNOSIS:\n${JSON.stringify(diagnosis)}\nRUNTIME:\n${JSON.stringify({ status: runtimeNow.status, error: runtimeNow.error, previewPath: runtimeNow.previewPath })}\n${context}\n${attachContext}`, await attachmentList(projects.projectDir(project))),
           projectId: project.id,
           images: [...imageInputs(incomingFiles), ...(await imageInputsFromAttachments(projects.projectDir(project)))],
         });
@@ -448,6 +546,15 @@ export function registerPipeline(app) {
       if (pieces.length > 1) planned.push(...pieces.map((goal) => ({ action: inferAction(goal) || action, goal })));
       else planned.push({ action, goal: String(r.json?.feedback || message) });
     }
+    const workPlan = await projects.startWorkPlan(project, {
+      jobId: job.id,
+      message,
+      action,
+      language: userLanguage,
+      steps: planned.map((step) => ({ ...step, tests: step.action === 'improve' ? ['static checks', 'runtime tests', 'security scan', 'preview'] : [] })),
+    });
+    payload = { projectId: project.id, action, reply, skipped, reports: [], workPlanId: workPlan.id };
+    emit('plan', 'done', `Plan ready: ${planned.length} step${planned.length === 1 ? '' : 's'}. Each step will be verified and recorded.`);
     // A failed prerequisite must not be followed by a dependent Run/Publish.
     // Independent safe analysis steps may still continue, but never let a later
     // successful preview hide an earlier failed repair.
@@ -457,15 +564,22 @@ export function registerPipeline(app) {
       projects.setStatus(project, 'WAITING_INPUT');
       payload.questions = r.json.questions;
     } else {
-      for (const step of planned) {
+      for (const [stepIndex, step] of planned.entries()) {
+        const planStep = workPlan.steps[stepIndex];
         let stepAction = step.action;
         if (prerequisiteFailed && ['run', 'publish', 'export'].includes(stepAction)) {
           payload.reports.push({ action: stepAction, status: 'blocked', goal: step.goal, error: 'Blocked because the previous repair/build step failed.' });
+          await projects.updateWorkPlan(project, {
+            stepId: planStep.id,
+            step: { status: 'blocked', error: 'Blocked because a previous required step failed.' },
+            reports: payload.reports,
+          });
           emit(stepAction, 'failed', `Skipped ${stepAction}: the previous required step failed. Fix that issue first.`);
           continue;
         }
         const gatedStep = gateAction(stepAction, { files: diagnosis.files, runtime: runtimeNow, githubConfigured: github.configured(), imageRef: requestedImage || extractGhcrImage(step.goal) });
         if (gatedStep.lock) stepAction = gatedStep.action;
+        await projects.updateWorkPlan(project, { stepId: planStep.id, step: { status: 'running', action: stepAction } });
         try {
           if (stepAction === 'build') {
             emit('build', 'running', `Step: write files — ${step.goal.slice(0, 80)}`);
@@ -510,14 +624,36 @@ export function registerPipeline(app) {
             payload.publish_ready = payload.result?.status === 'released' || payload.result?.status === 'packaged';
           }
           payload.reports.push({ action: stepAction, status: 'done', goal: step.goal });
+          await projects.updateWorkPlan(project, {
+            stepId: planStep.id,
+            step: {
+              status: 'done',
+              action: stepAction,
+              files: payload.result?.files || payload.built?.files || [],
+              result: stepAction === 'improve' ? (payload.result?.explanation || 'Patch verified.') : `${stepAction} completed.`,
+            },
+            reports: payload.reports,
+          });
         } catch (err) {
           const error = String(err.message || err).slice(0, 240);
           payload.reports.push({ action: stepAction, status: 'failed', goal: step.goal, error });
           prerequisiteFailed = true;
+          await projects.updateWorkPlan(project, {
+            stepId: planStep.id,
+            step: { status: 'failed', action: stepAction, error, notes: ['Dependent steps were blocked after this failure.'] },
+            reports: payload.reports,
+          });
           emit(stepAction, 'failed', `Step failed: ${error}`);
         }
       }
     }
+    const planStatus = action === 'question' ? 'waiting_input' : (payload.reports.some((item) => item.status === 'failed' || item.status === 'blocked') ? 'failed' : 'done');
+    const finishedPlan = await projects.finishWorkPlan(project, planStatus, planStatus === 'done'
+      ? 'All planned steps completed and were recorded. Continue from this report instead of repeating earlier work.'
+      : planStatus === 'waiting_input'
+        ? 'Waiting for the user choices before build can continue.'
+        : 'One or more steps failed. Completed work was kept only after verification; dependent steps were blocked.');
+    payload.workPlan = finishedPlan;
     const latestRuntime = payload.runtime || payload.result?.runtime || await projects.readMetadata(project, 'runtime.json', {});
     if (action !== 'run') {
       await gcDocker({ keepImage: null, keepContainer: null, log }).catch(() => {});
@@ -557,6 +693,11 @@ export function registerPipeline(app) {
       next: payload.next,
       runtime: { status: latestRuntime.status, previewPath: latestRuntime.previewPath, error: latestRuntime.error },
       files: diagnosis.files.slice(0, 40),
+      workPlan: {
+        id: finishedPlan.id,
+        status: finishedPlan.status,
+        steps: finishedPlan.steps.map((item) => ({ id: item.id, action: item.action, goal: item.goal, status: item.status, files: item.files, error: item.error })),
+      },
     });
     emit('guide', 'done', payload.next);
     return payload;
@@ -941,8 +1082,11 @@ export function registerPipeline(app) {
     const proposed = Array.isArray(files) ? files.filter((f) => f && f.path && typeof f.content === 'string') : [];
     if (!proposed.length) throw new Error('AI returned no usable patch files.');
     if (proposed.length > 8) throw new Error('AI patch is too large for an automatic repair. I will not rewrite the project blindly.');
+    const paths = new Set();
     for (const f of proposed) {
       const rel = String(f.path).replace(/\\/g, '/');
+      if (paths.has(rel)) throw new Error(`AI patch contains the same file more than once: ${rel}`);
+      paths.add(rel);
       if (Buffer.byteLength(f.content, 'utf8') > 1024 * 1024) throw new Error(`AI patch file is too large for a safe automatic change: ${rel}`);
       if (!rel || rel.startsWith('/') || rel.includes('..') || /^(?:data|workspace|projects)\//i.test(rel)) {
         throw new Error(`AI patch contains an unsafe path: ${rel}`);
@@ -1160,9 +1304,14 @@ function friendlyAiError(err) {
   if (/API key is not configured/i.test(m) || /No AI provider/i.test(m)) {
     return 'No AI key is configured. Add a DeepSeek or Gemini key in Settings.';
   }
-  if (/HTTP 401|HTTP 403/.test(m)) return 'The AI key was rejected. Check Settings.';
+  if (/HTTP 401|HTTP 403/.test(m)) return 'The AI key was rejected. Check Settings and confirm the selected provider/model is enabled.';
   if (/HTTP 429/.test(m)) return 'The AI provider asked us to slow down.';
-  return 'The AI provider was unavailable.';
+  if (/timeout|timed out|fetch failed|ECONNRESET|ENOTFOUND|network/i.test(m)) return 'The AI request timed out or the network dropped. No files were changed; retry after checking the connection.';
+  if (/AI_BAD_JSON|invalid JSON|FORMAT_ERROR/i.test(m)) return 'The AI returned an invalid work format. No files were changed; the next attempt will use a stricter JSON contract.';
+  const providers = Array.isArray(err?.providerErrors) ? err.providerErrors.map((x) => String(x).replace(/\s+/g, ' ').slice(0, 180)).join(' | ') : '';
+  return providers
+    ? `AI could not complete this step. No files were changed. Details: ${providers}`
+    : 'The AI provider was unavailable. No files were changed; check the selected provider key/model in Settings.';
 }
 
 function gateAction(action, { files = [], runtime = {}, githubConfigured = false, imageRef = '' } = {}) {

@@ -115,6 +115,7 @@ async function openProject(id, announce = true) {
   if (last?.status === 'failed' && last.error) add('system', `⚠ Last issue: ${String(last.error).split('\n')[0].slice(0, 220)}`);
   if (p.chat?.length) p.chat.forEach((m) => add(m.role === 'user' ? 'user' : m.role === 'assistant' ? 'ai' : 'system', m.message));
   else add('ai', `I’m ready to build ${p.name}. Tell me what you want next.`);
+  if (p.workPlan?.steps?.length) renderWorkPlan(p.workPlan);
   if (announce) add('system', `Project: ${p.name}`);
   setLive(p.runtime?.status === 'passed');
 }
@@ -364,6 +365,7 @@ function summarizeResult(result, status) {
   if (result.next) add('ai', `Next: ${result.next}`);
   if (Array.isArray(result.questions) && result.questions.length) renderQuestions(result.questions);
   if (Array.isArray(result.checklist)) add('system', result.checklist.join('\n'));
+  if (result.workPlan?.steps?.length) renderWorkPlan(result.workPlan);
   if (result.installReady) add('ai', 'Ready to install. The required file is available above.');
   if (result.fallback?.steps && !result.installReady) add('ai', result.fallback.steps.join('\n'));
   if (result.repoChoice && Array.isArray(result.choices)) renderRepoChoices(result.choices);
@@ -371,6 +373,22 @@ function summarizeResult(result, status) {
     add('ai', '🔐 GitHub setup guide:\n' + result.githubPublish.guide.classic.join('\n') + '\n\n⚙ Workflow permission:\n' + (result.githubPublish.guide.workflow || []).join('\n'));
     if (result.githubPublish.guide.tokenUrl) addLink('Open GitHub token page', result.githubPublish.guide.tokenUrl, result.githubPublish.guide.tokenUrl);
   }
+}
+function renderWorkPlan(plan) {
+  const box = document.createElement('div'); box.className = 'msg system';
+  const title = document.createElement('div');
+  title.textContent = `📋 Job plan · ${plan.status || 'running'}`;
+  title.style.fontWeight = '700'; box.appendChild(title);
+  (plan.steps || []).forEach((step) => {
+    const row = document.createElement('div');
+    const marker = step.status === 'done' ? '✓' : step.status === 'failed' ? '⚠' : step.status === 'blocked' ? '⏸' : step.status === 'running' ? '•' : '○';
+    row.textContent = `${marker} ${step.order || ''}. ${step.goal || step.action || 'Step'}${step.error ? ` — ${step.error}` : ''}`;
+    box.appendChild(row);
+  });
+  if (plan.handoff) {
+    const note = document.createElement('div'); note.className = 'small'; note.textContent = plan.handoff; box.appendChild(note);
+  }
+  $('chat').appendChild(box); maybeJump();
 }
 function renderRepoChoices(choices) {
   const box = document.createElement('div'); box.className = 'msg ai';
@@ -585,5 +603,6 @@ bindSupport();
 Promise.all([loadStatus(), loadProjects(), loadSettings()]).then(async () => {
   const id = savedProjectId();
   if (id && state.projects.some((p) => p.id === id)) await openProject(id, false);
+  else if (state.projects[0]?.id) await openProject(state.projects[0].id, false);
   else renderWelcome();
 }).catch(() => renderWelcome());

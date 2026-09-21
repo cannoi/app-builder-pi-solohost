@@ -137,6 +137,9 @@ export function patchPrompt(project, error, files, feedback = '') {
 - Never weaken security, disable tests, hide errors, expose secrets, or change host/Docker/system access.
 - If evidence is insufficient or the fix is risky, return files:[] and explain.
 - The Builder will checkpoint, validate, and roll back if verification becomes worse.
+- This is a surgical patch, not a rewrite. Do not regenerate the app, rename files, replace working features, or return files that are unrelated to the root cause.
+- Return the smallest possible set of changed files. Preserve APIs, routes, data, UI flows, security rules, and the Made with App Builder badge unless the user explicitly asked to change them.
+- A long request is executed as separate plan steps. Solve only this step; do not implement future steps early.
 
 Project: ${project.name}
 User feedback: ${feedback}

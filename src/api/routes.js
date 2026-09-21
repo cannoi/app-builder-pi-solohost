@@ -167,7 +167,9 @@ export function registerRoutes(r, app) {
     const rels = releases.list(p.id);
     const chat = await projects.chatHistory(p);
     const attachments = await attachmentList(projects.projectDir(p));
-    res.json({ ...brief(p), files, analysis, plan, tests, security, runtime, snapshots: snaps, releases: rels, chat, attachments });
+    const workPlan = await projects.readMetadata(p, 'work-plan.json', null);
+    const handoff = await projects.readMetadata(p, 'handoff.json', {});
+    res.json({ ...brief(p), files, analysis, plan, tests, security, runtime, snapshots: snaps, releases: rels, chat, attachments, workPlan, handoff });
   });
 
   r.post('/api/chat', async (req, res) => {

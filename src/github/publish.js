@@ -35,7 +35,10 @@ export async function publishToGitHub({ github, project, sourceDir, version = '0
     return report;
   }
   step('preparing', 'Preparing…');
-  await writeGithubWorkflow(sourceDir, project);
+  // Keep the GHCR tag in the workflow identical to the release being published.
+  // The old code generated the workflow from project.version before release notes,
+  // which could leave GitHub Actions building an older tag than the installer used.
+  await writeGithubWorkflow(sourceDir, { ...project, version });
   step('validating', 'Validating…');
   const validation = await validateReleaseProject(sourceDir);
   if (!validation.ok) {
@@ -51,7 +54,7 @@ export async function publishToGitHub({ github, project, sourceDir, version = '0
     repoName: repoName || project.slug,
     sourceDir,
     version,
-    branch: 'main',
+    branch: null,
     emit,
     existingAction,
   });

@@ -8,6 +8,7 @@ const STATES = [
   'SECURITY_CHECK', 'SANDBOX', 'WAITING_APPROVAL', 'RELEASED', 'DEPLOYED',
   'FAILED', 'ROLLED_BACK',
 ];
+const RETENTION_DAYS = 30;
 
 export class ProjectManager {
   constructor({ cfg, db, log, snapshots }) {
@@ -92,7 +93,7 @@ export class ProjectManager {
   projectDir(project) { return this.projectRoot(project.slug); }
 
   async chat(project, message, role = 'user', meta = {}) {
-    const rows = await readJson(path.join(this.projectRoot(project.slug), 'metadata', 'chat.json'), []);
+    const rows = pruneRows(await readJson(path.join(this.projectRoot(project.slug), 'metadata', 'chat.json'), []));
     rows.push({ id: uuid(), role, message: String(message || ''), meta, createdAt: new Date().toISOString() });
     const trimmed = rows.slice(-300);
     await writeJson(path.join(this.projectRoot(project.slug), 'metadata', 'chat.json'), trimmed);
@@ -100,7 +101,96 @@ export class ProjectManager {
   }
 
   async chatHistory(project) {
-    return readJson(path.join(this.projectRoot(project.slug), 'metadata', 'chat.json'), []);
+    const file = path.join(this.projectRoot(project.slug), 'metadata', 'chat.json');
+    const rows = pruneRows(await readJson(file, []));
+    await writeJson(file, rows.slice(-300));
+    return rows.slice(-300);
+  }
+
+  async startWorkPlan(project, { jobId = null, message = '', action = 'builder_chat', steps = [], language = 'en' } = {}) {
+    const now = new Date().toISOString();
+    const plan = {
+      id: uuid(),
+      jobId,
+      action,
+      status: 'running',
+      createdAt: now,
+      updatedAt: now,
+      language,
+      request: String(message || '').slice(0, 4000),
+      steps: (steps || []).map((step, index) => ({
+        id: `step-${index + 1}`,
+        order: index + 1,
+        action: String(step.action || 'reply'),
+        goal: String(step.goal || '').slice(0, 1200),
+        tests: Array.isArray(step.tests) ? step.tests.slice(0, 6) : [],
+        status: 'pending',
+        startedAt: null,
+        finishedAt: null,
+        files: [],
+        result: null,
+        error: null,
+        notes: [],
+      })),
+      reports: [],
+      handoff: 'Plan created. Execute steps in order; preserve completed work and stop dependent steps after a failure.',
+    };
+    await this.saveMetadata(project, 'work-plan.json', plan);
+    return plan;
+  }
+
+  async updateWorkPlan(project, patch = {}) {
+    const current = await this.readMetadata(project, 'work-plan.json', null);
+    if (!current) return null;
+    const next = { ...current, ...patch, updatedAt: new Date().toISOString() };
+    if (patch.stepId) {
+      next.steps = (current.steps || []).map((step) => step.id === patch.stepId
+        ? {
+            ...step,
+            ...(patch.step || {}),
+            updatedAt: next.updatedAt,
+            ...(patch.step?.status === 'running' && !step.startedAt ? { startedAt: next.updatedAt } : {}),
+            ...(patch.step?.status && ['done', 'failed', 'blocked'].includes(patch.step.status) ? { finishedAt: next.updatedAt } : {}),
+          }
+        : step);
+      delete next.stepId;
+      delete next.step;
+    }
+    await this.saveMetadata(project, 'work-plan.json', next);
+    return next;
+  }
+
+  async finishWorkPlan(project, status = 'done', handoff = '') {
+    return this.updateWorkPlan(project, {
+      status,
+      handoff: String(handoff || '').slice(0, 2400),
+      finishedAt: new Date().toISOString(),
+    });
+  }
+
+  async pruneRetention() {
+    const cutoff = Date.now() - RETENTION_DAYS * 24 * 60 * 60 * 1000;
+    for (const project of this.list()) {
+      const root = this.projectRoot(project.slug);
+      for (const file of ['chat.json', 'activity.json']) {
+        const full = path.join(root, 'metadata', file);
+        const rows = await readJson(full, null);
+        if (Array.isArray(rows)) {
+          const kept = rows.filter((row) => {
+            const stamp = Date.parse(row?.createdAt || row?.t || row?.updatedAt || '');
+            return !Number.isFinite(stamp) || stamp >= cutoff;
+          }).slice(-300);
+          await writeJson(full, kept);
+        }
+      }
+      const snapshotRoot = path.join(root, 'snapshots');
+      const snapshotEntries = await fs.readdir(snapshotRoot, { withFileTypes: true }).catch(() => []);
+      for (const entry of snapshotEntries) {
+        const full = path.join(snapshotRoot, entry.name);
+        const stat = await fs.stat(full).catch(() => null);
+        if (stat && stat.mtimeMs < cutoff) await fs.rm(full, { recursive: true, force: true }).catch(() => {});
+      }
+    }
   }
 
   async sourceFiles(project) {
@@ -133,4 +223,12 @@ function hydrate(row) {
 
 function safeParse(s, fallback) {
   try { return JSON.parse(s); } catch { return fallback; }
+}
+
+function pruneRows(rows) {
+  const cutoff = Date.now() - RETENTION_DAYS * 24 * 60 * 60 * 1000;
+  return (Array.isArray(rows) ? rows : []).filter((row) => {
+    const stamp = Date.parse(row?.createdAt || row?.t || row?.updatedAt || '');
+    return !Number.isFinite(stamp) || stamp >= cutoff;
+  });
 }

@@ -29,7 +29,16 @@ export class GitHubImageUploader {
       'User-Agent': 'pi-app-factory-image-uploader',
     };
     let existingSha = null;
-    const existing = await this.fetch(`${API}/repos/${encodedRepo}/contents/${encodedPath}?ref=main`, { method: 'GET', headers });
+    let branch = 'main';
+    const repository = await this.fetch(`${API}/repos/${encodedRepo}`, { method: 'GET', headers });
+    if (repository.ok) {
+      const repoData = await repository.json();
+      branch = String(repoData.default_branch || 'main');
+    } else if (repository.status !== 404) {
+      throw await apiError(repository, 'GitHub could not check the repository.');
+    }
+    const encodedBranch = encodeURIComponent(branch);
+    const existing = await this.fetch(`${API}/repos/${encodedRepo}/contents/${encodedPath}?ref=${encodedBranch}`, { method: 'GET', headers });
     if (existing.ok) {
       const data = await existing.json();
       existingSha = data.sha || null;
@@ -38,12 +47,12 @@ export class GitHubImageUploader {
     }
     const response = await this.fetch(`${API}/repos/${encodedRepo}/contents/${encodedPath}`, {
       method: 'PUT', headers,
-      body: JSON.stringify({ message, content: bytes.toString('base64'), branch: 'main', ...(existingSha ? { sha: existingSha } : {}) }),
+      body: JSON.stringify({ message, content: bytes.toString('base64'), branch, ...(existingSha ? { sha: existingSha } : {}) }),
     });
     if (!response.ok) throw await apiError(response, 'GitHub image upload failed.');
     const result = await response.json();
     if (!result?.content?.sha) throw new Error('GitHub accepted the request but did not confirm the image content.');
-    return { status: 'success', cdn_url: `https://cdn.jsdelivr.net/gh/${normalizedRepo}@main/${safePath}` };
+    return { status: 'success', branch, cdn_url: `https://cdn.jsdelivr.net/gh/${normalizedRepo}@${branch}/${safePath}` };
   }
 }
 

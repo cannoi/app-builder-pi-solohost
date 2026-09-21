@@ -9,7 +9,9 @@ export function openDb(dataDir) {
   db.exec('PRAGMA journal_mode = WAL;');
   db.exec('PRAGMA foreign_keys = ON;');
   migrate(db);
-  return wrap(db);
+  const wrapped = wrap(db);
+  wrapped.pruneRetention();
+  return wrapped;
 }
 
 function migrate(db) {
@@ -118,6 +120,16 @@ function wrap(db) {
         key,
         JSON.stringify(value),
       );
+    },
+    pruneRetention(days = 30) {
+      const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+      // Keep project/source data intact. Only operational history is ephemeral.
+      run('DELETE FROM job_events WHERE job_id IN (SELECT id FROM jobs WHERE created_at < ?)', cutoff);
+      run('DELETE FROM jobs WHERE created_at < ?', cutoff);
+      run('DELETE FROM ai_requests WHERE created_at < ?', cutoff);
+      run('DELETE FROM releases WHERE created_at < ?', cutoff);
+      run('DELETE FROM snapshots WHERE created_at < ?', cutoff);
+      return cutoff;
     },
     close() {
       db.close();

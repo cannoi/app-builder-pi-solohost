@@ -33,6 +33,7 @@ for (const w of check.warnings) log.warn(w);
 
 const snapshots = new SnapshotStore({ cfg, db, log });
 const projects = new ProjectManager({ cfg, db, log, snapshots });
+projects.pruneRetention().catch((err) => log.warn('history retention cleanup skipped', { error: String(err.message || err) }));
 const jobs = new JobQueue({ db, log });
 const ai = new AIGateway({ cfg, db, log });
 const github = new GitHubManager({ cfg, log });

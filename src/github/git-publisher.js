@@ -149,12 +149,12 @@ export async function ensureRepository({ octokit, owner, repoName, existingActio
   }
 }
 
-export async function publishWithGit({ token, repoName, sourceDir, version = '0.1.0', branch = 'main', emit = () => {}, existingAction = 'confirm' }) {
+export async function publishWithGit({ token, repoName, sourceDir, version = '0.1.0', branch = null, emit = () => {}, existingAction = 'confirm' }) {
   const report = {
     ok: false,
     stage: 'preparing',
     url: null,
-    branch,
+    branch: branch || null,
     sha: null,
     files: 0,
     method: 'git+octokit',
@@ -217,6 +217,11 @@ export async function publishWithGit({ token, repoName, sourceDir, version = '0.
       return report;
     }
     const realOwner = ensured.repo.owner?.login || owner;
+    // Existing repositories are not guaranteed to use `main`. Publishing to a
+    // hard-coded branch can upload successfully to an unused branch and leave
+    // the workflow/image build disconnected from the repository's default branch.
+    branch = branch || ensured.repo.default_branch || 'main';
+    report.branch = branch;
     const url = ensured.repo.html_url || `https://github.com/${realOwner}/${name}`;
     const workflow = await getWorkflowPermissions({ octokit, owner: realOwner, repoName: name });
     // IMPORTANT: GitHub's repository setting is a DEFAULT, not proof that the

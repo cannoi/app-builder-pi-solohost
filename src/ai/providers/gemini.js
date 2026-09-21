@@ -101,22 +101,13 @@ export class GeminiProvider {
       this.model = sticky;
       return sticky;
     }
-    // A configured model is only a preference. Verify it against the key's
-    // actual model list before pinning it, otherwise an obsolete model name can
-    // make every request fail even though a newer valid model is available.
+    // A configured model is a usable preference. Do not make every generation
+    // depend on a separate model-list request: that endpoint can be blocked or
+    // rate-limited even when generateContent itself works. Request-time model
+    // rotation below remains the fallback for stale model names.
     if (this.model && geminiVersion(this.model) >= 2.5) {
-      try {
-        const models = await this.listModels();
-        const usable = new Set(models
-          .filter((m) => Array.isArray(m.supportedGenerationMethods) && m.supportedGenerationMethods.includes('generateContent'))
-          .map((m) => String(m.name || '').replace(/^models\//, '')));
-        if (usable.has(this.model)) {
-          this.setStickyModel(this.model);
-          return this.model;
-        }
-      } catch (err) {
-        this.log?.warn?.('Gemini model verification failed; using discovery fallback', { error: err.message });
-      }
+      this.setStickyModel(this.model);
+      return this.model;
     }
     const found = await this.discover({ force: true });
     return found.model;
@@ -160,6 +151,7 @@ export class GeminiProvider {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-goog-api-key': this.apiKey },
       body: JSON.stringify(body),
+      signal: AbortSignal.timeout(120000),
     });
     const raw = await res.text();
     if (!res.ok) throw new Error(`Gemini HTTP ${res.status}: ${raw.slice(0, 500)}`);

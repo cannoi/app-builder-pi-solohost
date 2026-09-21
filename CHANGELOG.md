@@ -1,3 +1,12 @@
+## Reliability upgrade — 2026-09-21
+
+- GitHub publishing now follows an existing repository's default branch and generates the GHCR workflow with the exact release tag being published.
+- GitHub image uploads now discover and use the repository default branch instead of assuming `main`.
+- Builder requests now persist a 30-day work plan with per-step status, files changed, result/error notes, and a handoff for the next AI/session.
+- Edit/improve operations keep checkpoints, reject duplicate or oversized patch scopes, verify the result, and roll back when verification worsens.
+- AI calls use bounded timeouts, transient retry/fallback, safer model selection, and more actionable provider errors.
+- Project chat/activity history is server-persisted across browsers and pruned after 30 days; a new browser opens the most recently updated project.
+
 # Changelog
 
 ## 1.4.13

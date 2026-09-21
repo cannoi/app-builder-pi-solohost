@@ -4,31 +4,45 @@ export class DeepSeekProvider {
   constructor({ apiKey, model }) {
     this.name = 'deepseek';
     this.apiKey = apiKey;
-    this.model = model || 'deepseek-flash';
+    this.model = model || 'deepseek-chat';
   }
 
   configured() { return Boolean(this.apiKey); }
 
   async complete({ prompt, system, json = false, images = [] }) {
     if (!this.apiKey) throw new Error('DeepSeek API key is not configured');
-    const started = Date.now();
-    const userContent = [{ type: 'text', text: prompt }];
-    for (const image of images || []) {
-      if (!image?.dataUrl) continue;
-      userContent.push({ type: 'image_url', image_url: { url: image.dataUrl } });
+    const models = [this.model, 'deepseek-chat', 'deepseek-reasoner'].filter((value, index, list) => value && list.indexOf(value) === index);
+    let lastError = null;
+    for (const model of models) {
+      try {
+        return await this.request(model, { prompt, system, json, images });
+      } catch (err) {
+        lastError = err;
+        // A stale model setting should not make the whole provider unusable.
+        if (!/HTTP 400|model|not found|invalid/i.test(String(err.message || err))) throw err;
+      }
     }
+    throw lastError || new Error('DeepSeek returned no usable model');
+  }
+
+  async request(model, { prompt, system, json = false, images = [] }) {
+    const started = Date.now();
     const res = await fetch('https://api.deepseek.com/chat/completions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${this.apiKey}` },
       body: JSON.stringify({
-        model: this.model,
+        model,
         temperature: json ? 0.2 : 0.4,
         response_format: json ? { type: 'json_object' } : undefined,
         messages: [
           { role: 'system', content: system || 'You are a careful senior software architect.' },
-          { role: 'user', content: userContent },
+          // DeepSeek's text endpoint is intentionally kept text-only. When
+          // images are attached, the gateway routes to Gemini first if it is
+          // configured instead of sending unsupported image parts here.
+          { role: 'user', content: prompt },
         ],
       }),
+      signal: AbortSignal.timeout(120000),
     });
     const raw = await res.text();
     if (!res.ok) throw new Error(`DeepSeek HTTP ${res.status}: ${raw.slice(0, 500)}`);
@@ -39,7 +53,7 @@ export class DeepSeekProvider {
     return {
       text,
       provider: this.name,
-      model: this.model,
+      model,
       durationMs: Date.now() - started,
       tokens: data.usage?.total_tokens ?? null,
       rawMeta: { key: maskKey(this.apiKey), imageCount: images?.length || 0 },
