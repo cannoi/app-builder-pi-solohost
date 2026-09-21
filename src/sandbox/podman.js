@@ -16,7 +16,7 @@ export class PodmanClient {
   configured() { return Boolean(this.baseUrl); }
 
   async request(pathname, options = {}) {
-    if (!this.baseUrl) throw new Error('Podman API is not configured. Set PODMAN_API_URL to a protected Podman REST endpoint.');
+    if (!this.baseUrl) throw new Error('Protected Container Sandbox is not available in this environment. No installation or manual Docker access is required.');
     const url = `${this.baseUrl}${API_VERSION}${pathname}`;
     const headers = { 'X-App-Builder-Engine': 'podman-api', ...(options.headers || {}) };
     const response = await this.fetch(url, { ...options, headers });
@@ -164,7 +164,7 @@ export function podmanStatus(cfg = {}) {
     configured: Boolean(apiUrl),
     usable: Boolean(apiUrl),
     apiUrl: apiUrl ? redactUrl(apiUrl) : null,
-    message: apiUrl ? 'Podman API sandbox is configured.' : 'Podman API is not configured. Set PODMAN_API_URL to a protected endpoint.',
+    message: apiUrl ? 'Protected Container Sandbox is available and will be selected automatically for container apps.' : 'Protected Container Sandbox is not exposed by this environment; native apps do not need it.',
   };
 }
 
