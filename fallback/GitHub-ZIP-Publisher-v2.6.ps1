@@ -1,46 +1,509 @@
 #requires -Version 5.1
-<#+
-.SYNOPSIS
-  Resilient standalone GitHub ZIP Publisher.
+# =============================================================
+#  GitHub ZIP -> Docker Image Publisher  (v5.0)
+#  - 2 prompts only: ZIP + Repo
+#  - Auth: auto via Git credential, else token
+#  - Upload: Git Data API (1 commit, parallel blobs)
+#            fallback Contents API
+#  - Trigger GitHub Actions, return image URL
+# =============================================================
 
-.DESCRIPTION
-  Uploads a ZIP project to GitHub and verifies the result.
-  The publisher waits for every HTTP operation, retries transient failures,
-  validates repository/ref/tree state, and falls back to the Contents API when
-  the Git Data API cannot be used safely.
-
-  It never reports success merely because a request was sent. Success requires
-  a verified commit (Git Data API) or verified uploaded files (Contents API).
-
-  No GitHub CLI, Git, Node, Python or Docker is required.
-#>
+[CmdletBinding()]
+param(
+    [string]$ZipPath,
+    [string]$RepoUrl,
+    [string]$Token,
+    [switch]$NoWait,
+    [switch]$Serial,           # tat parallel blob upload
+    [int]$BlobParallelism = 6  # so runspace toi da
+)
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+$ProgressPreference    = 'SilentlyContinue'
+try { [Net.ServicePointManager]::SecurityProtocol = `
+      [Net.SecurityProtocolType]::Tls12 -bor `
+      [Net.ServicePointManager]::SecurityProtocol } catch {}
 
-$Script:ApiBase = 'https://api.github.com'
-$Script:ApiVersion = '2022-11-28'
-$Script:TimeoutSec = 45
-$Script:MaxRetries = 5
-$Script:Warnings = New-Object System.Collections.Generic.List[string]
-$Script:Failures = New-Object System.Collections.Generic.List[string]
-$Script:Actions = New-Object System.Collections.Generic.List[string]
-$Script:Uploaded = 0
-$Script:Skipped = 0
-$Script:Started = Get-Date
-$temp = $null
+# ------------------------------------------------------------
+# Globals
+# ------------------------------------------------------------
+$script:ApiBase  = 'https://api.github.com'
+$script:ApiVer   = '2022-11-28'
+$script:Headers  = $null
+$script:Owner    = $null
+$script:Repo     = $null
+$script:Branch   = 'main'
+$script:TempDir  = $null
+$script:Image    = $null
+$script:RunId    = $null
+$script:Started  = Get-Date
+$script:Warns    = New-Object System.Collections.Generic.List[string]
+$script:UploadMethod = $null
 
-function Write-Step([string]$Text) { Write-Host "`n[*] $Text" -ForegroundColor Cyan }
-function Write-Ok([string]$Text) { Write-Host "[OK] $Text" -ForegroundColor Green }
-function Write-Warn([string]$Text) { $Script:Warnings.Add($Text); Write-Host "[WARN] $Text" -ForegroundColor Yellow }
-function Write-Fail([string]$Text) { $Script:Failures.Add($Text); Write-Host "[FAIL] $Text" -ForegroundColor Red }
-function Write-Info([string]$Text) { Write-Host "    $Text" -ForegroundColor Gray }
-function Add-Action([string]$Text) { $Script:Actions.Add($Text); Write-Host "[ACTION] $Text" -ForegroundColor Magenta }
-function NowMs([datetime]$Start) { [int]((Get-Date) - $Start).TotalMilliseconds }
+# ------------------------------------------------------------
+# Output helpers
+# ------------------------------------------------------------
+function Say   { param([string]$t) Write-Host $t }
+function Blank { Write-Host "" }
+function Ok    { param([string]$t) Write-Host ("[OK] " + $t) -ForegroundColor Green }
+function Warn  { param([string]$t) $script:Warns.Add($t) | Out-Null; Write-Host ("[!] " + $t) -ForegroundColor Yellow }
+function Err   { param([string]$t) Write-Host ("[X] " + $t) -ForegroundColor Red }
+function Info  { param([string]$t) Write-Host ("    " + $t) -ForegroundColor DarkGray }
+function Die   { param([string]$t) throw $t }
 
-function Normalize-RepoName([string]$Name) {
-    $n = [IO.Path]::GetFileNameWithoutExtension($Name)
-    # Remove common browser/download duplicate suffixes, but keep user supplied names otherwise.
+function Ask {
+    param([string]$Prompt, [string]$Default = "")
+    if ($Default) {
+        $r = (Read-Host ($Prompt + " [" + $Default + "]")).Trim()
+        if ([string]::IsNullOrWhiteSpace($r)) { return $Default }
+        return $r
+    }
+    return (Read-Host $Prompt).Trim()
+}
+
+function DoStep {
+    param([string]$Label, [scriptblock]$Action)
+    Write-Host ("[*] " + $Label + " ... ") -NoNewline -ForegroundColor Cyan
+    try {
+        $res = & $Action
+        Write-Host "OK" -ForegroundColor Green
+        return $res
+    } catch {
+        Write-Host "FAIL" -ForegroundColor Red
+        throw
+    }
+}
+
+# ------------------------------------------------------------
+# Environment check
+# ------------------------------------------------------------
+function Check-Env {
+    if ($PSVersionTable.PSVersion.Major -lt 5) {
+        Die "PowerShell 5.1 or newer is required."
+    }
+    try {
+        $null = Invoke-WebRequest -Uri 'https://api.github.com' `
+            -Method Head -TimeoutSec 10 -UseBasicParsing -ErrorAction Stop
+    } catch {
+        if (-not $_.Exception.Response) {
+            Die "Cannot reach api.github.com. Check your internet connection."
+        }
+    }
+}
+
+# ------------------------------------------------------------
+# Git credential (no prompt)
+# ------------------------------------------------------------
+function Try-GitCredential {
+    $g = Get-Command git -ErrorAction SilentlyContinue
+    if (-not $g) { return $null }
+    $old = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        $env:GIT_TERMINAL_PROMPT = '0'
+        $inputLines = "protocol=https`nhost=github.com`n`n"
+        $out = $inputLines | & git credential fill 2>$null
+        $rc  = $LASTEXITCODE
+        if ($rc -ne 0 -or -not $out) { return $null }
+        $line = @($out -split "`n" | Where-Object { $_ -match '^password=' })
+        if ($line.Count -eq 0) { return $null }
+        $pw = ($line[0] -replace '^password=','').Trim()
+        if ($pw) { return $pw }
+        return $null
+    } catch {
+        return $null
+    } finally {
+        Remove-Item Env:\GIT_TERMINAL_PROMPT -ErrorAction SilentlyContinue
+        $ErrorActionPreference = $old
+    }
+}
+
+# ------------------------------------------------------------
+# Authentication
+# ------------------------------------------------------------
+function New-Headers {
+    param([string]$T)
+    return @{
+        Authorization          = ("Bearer " + $T)
+        Accept                 = 'application/vnd.github+json'
+        'X-GitHub-Api-Version' = $script:ApiVer
+        'User-Agent'           = 'GitHub-ZIP-Image-Publisher/5.0'
+    }
+}
+
+function Test-Token {
+    try {
+        $r = Invoke-RestMethod -Uri ($script:ApiBase + "/user") `
+             -Headers $script:Headers -TimeoutSec 15 -ErrorAction Stop
+        $script:Owner = $r.login
+        return $true
+    } catch {
+        return $false
+    }
+}
+
+function Resolve-Auth {
+    if ($Token) {
+        $script:Headers = New-Headers $Token
+        if (Test-Token) { return "token (provided)" }
+        Die "The provided token is invalid."
+    }
+
+    $gitTok = Try-GitCredential
+    if ($gitTok) {
+        $script:Headers = New-Headers $gitTok
+        if (Test-Token) { return "Git credential" }
+    }
+
+    Blank
+    Say "GitHub sign-in required."
+    Say "  1. Open: https://github.com/settings/tokens"
+    Say "  2. Create a token with scopes: repo, workflow, write:packages"
+    Blank
+    $sec = Read-Host "Paste GitHub token" -AsSecureString
+    $ptr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($sec)
+    try { $pat = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($ptr) }
+    finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($ptr) }
+
+    if ([string]::IsNullOrWhiteSpace($pat)) { Die "Token is empty." }
+    $script:Headers = New-Headers $pat
+    if (-not (Test-Token)) { Die "Token is invalid." }
+    return "PAT"
+}
+
+# ------------------------------------------------------------
+# REST client (with retry)
+# ------------------------------------------------------------
+function Api {
+    param(
+        [string]$Method,
+        [string]$Uri,
+        [object]$Body,
+        [int]$Retries = 5,
+        [int]$TimeoutSec = 60
+    )
+    $try = 0
+    while ($true) {
+        $try++
+        try {
+            $p = @{
+                Method          = $Method
+                Uri             = $Uri
+                Headers         = $script:Headers
+                TimeoutSec      = $TimeoutSec
+                ErrorAction     = 'Stop'
+                UseBasicParsing = $true
+            }
+            if ($null -ne $Body) {
+                $p.ContentType = 'application/json; charset=utf-8'
+                $p.Body        = ($Body | ConvertTo-Json -Depth 20 -Compress)
+            }
+            $r = Invoke-RestMethod @p
+            return [pscustomobject]@{ Ok=$true; Data=$r; Status=200; Error=$null }
+        } catch {
+            $status     = 0
+            $retryAfter = $null
+            $raw        = $_.ErrorDetails.Message
+            try {
+                if ($_.Exception.Response) {
+                    $status     = [int]$_.Exception.Response.StatusCode
+                    $retryAfter = $_.Exception.Response.Headers['Retry-After']
+                }
+            } catch {}
+            $transient = ($status -eq 408 -or $status -eq 409 -or $status -eq 429 -or $status -ge 500 -or $status -eq 0)
+            if ($try -le $Retries -and $transient) {
+                $d = 0
+                if ($retryAfter -and ($retryAfter -as [int])) { $d = [int]$retryAfter }
+                else { $d = [math]::Min(15, [math]::Pow(2, $try)) }
+                Info "Retry $try/$Retries (HTTP $status) after ${d}s"
+                Start-Sleep -Seconds $d
+                continue
+            }
+            $msg = if ($raw) { $raw } else { $_.Exception.Message }
+            return [pscustomobject]@{ Ok=$false; Data=$null; Status=$status; Error=$msg }
+        }
+    }
+}
+
+function Api-Err {
+    param($R)
+    if ($R.Error) {
+        try {
+            $j = $R.Error | ConvertFrom-Json
+            if ($j.message) { return ("HTTP " + $R.Status + ": " + $j.message) }
+        } catch {}
+        return ("HTTP " + $R.Status + ": " + $R.Error)
+    }
+    return ("HTTP " + $R.Status)
+}
+
+# ------------------------------------------------------------
+# ZIP handling
+# ------------------------------------------------------------
+function Expand-FullPath {
+    param([string]$P)
+    if ($P -like '~*') {
+        return ($P -replace '^~', $env:USERPROFILE)
+    }
+    return $P
+}
+
+function Test-ZipMagic {
+    param([string]$Path)
+    try {
+        $fs = [IO.File]::OpenRead($Path)
+        try {
+            $b = New-Object byte[] 2
+            $n = $fs.Read($b, 0, 2)
+            return ($n -eq 2 -and $b[0] -eq 0x50 -and $b[1] -eq 0x4B)
+        } finally { $fs.Dispose() }
+    } catch { return $false }
+}
+
+function Get-ZipFiles {
+    param([string]$Path)
+    Add-Type -AssemblyName System.IO.Compression.FileSystem -ErrorAction SilentlyContinue
+    $zip = $null
+    try {
+        $zip = [IO.Compression.ZipFile]::OpenRead($Path)
+    } catch {
+        Die ("Cannot open ZIP file: " + $_.Exception.Message)
+    }
+    try {
+        $items = New-Object System.Collections.Generic.List[object]
+        foreach ($e in $zip.Entries) {
+            if ([string]::IsNullOrWhiteSpace($e.FullName)) { continue }
+            if ($e.FullName.EndsWith('/')) { continue }
+            $rel = $e.FullName.Replace('\','/')
+            if ($rel.StartsWith('/') -or $rel -match '(^|/)\.\.?(/|$)' -or [IO.Path]::IsPathRooted($rel)) {
+                Die ("Unsafe path inside ZIP: " + $rel)
+            }
+            $items.Add([pscustomobject]@{ Path=$rel })
+        }
+        if ($items.Count -eq 0) { Die "The ZIP file is empty." }
+        return $items.ToArray()
+    } finally {
+        if ($zip) { $zip.Dispose() }
+    }
+}
+
+function Expand-Zip {
+    param([string]$ZipPath, [string]$Dest)
+    Add-Type -AssemblyName System.IO.Compression.FileSystem -ErrorAction SilentlyContinue
+    if (Test-Path -LiteralPath $Dest) { Remove-Item -LiteralPath $Dest -Recurse -Force }
+    New-Item -ItemType Directory -Path $Dest -Force | Out-Null
+    $zip = [IO.Compression.ZipFile]::OpenRead($ZipPath)
+    $n   = 0
+    try {
+        foreach ($e in $zip.Entries) {
+            if ($e.FullName.EndsWith('/')) { continue }
+            $rel  = $e.FullName.Replace('\','/')
+            $tgt  = [IO.Path]::GetFullPath((Join-Path $Dest ($rel -replace '/', '\')))
+            $root = [IO.Path]::GetFullPath($Dest).TrimEnd('\') + '\'
+            if (-not $tgt.StartsWith($root,[StringComparison]::OrdinalIgnoreCase)) {
+                Die ("Path escapes extraction folder: " + $rel)
+            }
+            $par = Split-Path $tgt -Parent
+            if (-not (Test-Path -LiteralPath $par)) {
+                New-Item -ItemType Directory -Path $par -Force | Out-Null
+            }
+            $in  = $e.Open()
+            $out = [IO.File]::Open($tgt,[IO.FileMode]::Create,[IO.FileAccess]::Write,[IO.FileShare]::None)
+            try { $in.CopyTo($out) } finally { $out.Dispose(); $in.Dispose() }
+            $n++
+        }
+    } finally { $zip.Dispose() }
+    return $n
+}
+
+function Get-Files {
+    param([string]$Root)
+    $rootFull = [IO.Path]::GetFullPath($Root).TrimEnd('\')
+    $all = Get-ChildItem -LiteralPath $rootFull -Recurse -File -Force
+    $out = New-Object System.Collections.Generic.List[object]
+    foreach ($f in $all) {
+        $rel = $f.FullName.Substring($rootFull.Length).TrimStart('\').Replace('\','/')
+        if ($rel -match '(^|/)\.git(/|$)' -or
+            $rel -match '(^|/)node_modules(/|$)' -or
+            $rel -match '(^|/)(\.DS_Store|Thumbs\.db)$') {
+            continue
+        }
+        $out.Add([pscustomobject]@{
+            FullName = $f.FullName
+            Path     = $rel
+            Length   = $f.Length
+        })
+    }
+    return $out.ToArray()
+}
+
+function Find-Root {
+    param([string]$Dir)
+    $items = Get-ChildItem -LiteralPath $Dir -Force
+    $dirs  = @($items | Where-Object { $_.PSIsContainer })
+    $files = @($items | Where-Object { -not $_.PSIsContainer })
+    if ($dirs.Count -eq 1 -and $files.Count -eq 0) { return $dirs[0].FullName }
+    return (Get-Item -LiteralPath $Dir).FullName
+}
+
+# ------------------------------------------------------------
+# Dockerfile / Workflow
+# ------------------------------------------------------------
+function Find-Dockerfile {
+    param([string]$R)
+    $p1 = Join-Path $R 'Dockerfile'
+    if (Test-Path -LiteralPath $p1 -PathType Leaf) { return $p1 }
+    $p2 = Join-Path $R 'dockerfile'
+    if (Test-Path -LiteralPath $p2 -PathType Leaf) { return $p2 }
+    return $null
+}
+
+function New-Dockerfile {
+    param([string]$R)
+    if (Test-Path (Join-Path $R 'package.json')) {
+        return (@(
+            '# Auto-generated Dockerfile (Node.js)',
+            'FROM node:20-alpine',
+            'WORKDIR /app',
+            'COPY package*.json ./',
+            'RUN npm install --omit=dev || npm install',
+            'COPY . .',
+            'ENV NODE_ENV=production',
+            'EXPOSE 3000',
+            'CMD ["npm", "start"]'
+        ) -join "`n")
+    }
+    if ((Test-Path (Join-Path $R 'requirements.txt')) -or
+        (Test-Path (Join-Path $R 'pyproject.toml'))) {
+        return (@(
+            '# Auto-generated Dockerfile (Python)',
+            'FROM python:3.12-slim',
+            'WORKDIR /app',
+            'COPY requirements.txt* ./',
+            'RUN if [ -f requirements.txt ]; then pip install --no-cache-dir -r requirements.txt; fi',
+            'COPY . .',
+            'EXPOSE 8000',
+            'CMD ["python", "app.py"]'
+        ) -join "`n")
+    }
+    if (Test-Path (Join-Path $R 'go.mod')) {
+        return (@(
+            '# Auto-generated Dockerfile (Go)',
+            'FROM golang:1.22-alpine AS build',
+            'WORKDIR /src',
+            'COPY . .',
+            'RUN go build -o /out/app ./...',
+            'FROM alpine:3.20',
+            'COPY --from=build /out/app /app',
+            'EXPOSE 8080',
+            'ENTRYPOINT ["/app"]'
+        ) -join "`n")
+    }
+    if (Test-Path (Join-Path $R 'index.html')) {
+        return (@(
+            '# Auto-generated Dockerfile (Static site via nginx)',
+            'FROM nginx:alpine',
+            'COPY . /usr/share/nginx/html',
+            'EXPOSE 80'
+        ) -join "`n")
+    }
+    return $null
+}
+
+function Ensure-Dockerfile {
+    param([string]$R)
+    $df = Find-Dockerfile $R
+    if ($df) { return $df }
+
+    $c = New-Dockerfile $R
+    if (-not $c) {
+        Warn "No Dockerfile found and app type is unknown."
+        Blank
+        Say "Please provide a Dockerfile path."
+        $manual = Ask "Dockerfile path"
+        if (-not $manual) { Die "No Dockerfile provided." }
+        $manual = Expand-FullPath $manual.Trim('"').Trim()
+        if (-not (Test-Path -LiteralPath $manual -PathType Leaf)) {
+            Die ("File not found: " + $manual)
+        }
+        Copy-Item -LiteralPath $manual -Destination (Join-Path $R 'Dockerfile') -Force
+        return (Join-Path $R 'Dockerfile')
+    }
+    Set-Content -LiteralPath (Join-Path $R 'Dockerfile') -Value $c -Encoding UTF8
+    return (Join-Path $R 'Dockerfile')
+}
+
+function Get-WorkflowYaml {
+    return (@(
+        'name: Build Docker Image',
+        '',
+        'on:',
+        '  push:',
+        '    branches: [ main, master ]',
+        '  workflow_dispatch:',
+        '',
+        'permissions:',
+        '  contents: read',
+        '  packages: write',
+        '',
+        'jobs:',
+        '  build:',
+        '    runs-on: ubuntu-latest',
+        '    steps:',
+        '      - name: Checkout',
+        '        uses: actions/checkout@v4',
+        '',
+        '      - name: Set up Buildx',
+        '        uses: docker/setup-buildx-action@v3',
+        '',
+        '      - name: Login to GHCR',
+        '        uses: docker/login-action@v3',
+        '        with:',
+        '          registry: ghcr.io',
+        '          username: ${{ github.actor }}',
+        '          password: ${{ secrets.GITHUB_TOKEN }}',
+        '',
+        '      - name: Docker metadata',
+        '        id: meta',
+        '        uses: docker/metadata-action@v5',
+        '        with:',
+        '          images: ghcr.io/${{ github.repository }}',
+        '          tags: |',
+        '            type=raw,value=latest,enable={{is_default_branch}}',
+        '            type=ref,event=branch',
+        '            type=sha,prefix=sha-',
+        '',
+        '      - name: Build and push',
+        '        uses: docker/build-push-action@v6',
+        '        with:',
+        '          context: .',
+        '          push: true',
+        '          tags: ${{ steps.meta.outputs.tags }}',
+        '          labels: ${{ steps.meta.outputs.labels }}',
+        '          cache-from: type=gha',
+        '          cache-to: type=gha,mode=max'
+    ) -join "`n")
+}
+
+function Ensure-Workflow {
+    param([string]$R)
+    $dir = Join-Path $R '.github\workflows'
+    if (-not (Test-Path -LiteralPath $dir)) {
+        New-Item -ItemType Directory -Path $dir -Force | Out-Null
+    }
+    $f = Join-Path $dir 'build-image.yml'
+    if (-not (Test-Path -LiteralPath $f)) {
+        Set-Content -LiteralPath $f -Value (Get-WorkflowYaml) -Encoding UTF8
+    }
+}
+
+# ------------------------------------------------------------
+# Repo name
+# ------------------------------------------------------------
+function Clean-RepoName {
+    param([string]$N)
+    $n = [IO.Path]::GetFileNameWithoutExtension($N)
     $n = [regex]::Replace($n, '\s*\(\d+\)$', '')
     $n = $n.Trim()
     $n = [regex]::Replace($n, '[^A-Za-z0-9._-]+', '-')
@@ -51,502 +514,662 @@ function Normalize-RepoName([string]$Name) {
     return $n
 }
 
-function Get-TokenInput {
-    $secure = Read-Host 'GitHub Token (classic or fine-grained)' -AsSecureString
-    $ptr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure)
-    try { return [Runtime.InteropServices.Marshal]::PtrToStringBSTR($ptr) }
-    finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($ptr) }
-}
+# ------------------------------------------------------------
+# Repo operations
+# ------------------------------------------------------------
+function Resolve-Repo {
+    param([string]$Owner, [string]$Name)
 
-function New-Headers([string]$Token) {
-    return @{
-        Authorization = "Bearer $Token"
-        Accept = 'application/vnd.github+json'
-        'X-GitHub-Api-Version' = $Script:ApiVersion
-        'User-Agent' = 'GitHub-ZIP-Publisher/2.2'
+    $r = Api GET ($script:ApiBase + "/repos/" + $Owner + "/" + $Name)
+    if ($r.Ok) {
+        return [pscustomobject]@{
+            Name   = $Name
+            Web    = ("https://github.com/" + $Owner + "/" + $Name)
+            Exists = $true
+        }
+    }
+    if ($r.Status -ne 404) { Die (Api-Err $r) }
+
+    $body = @{
+        name        = $Name
+        private     = $false
+        auto_init   = $true
+        description = 'Published by ZIP Image Publisher'
+    }
+    $c = Api POST ($script:ApiBase + "/user/repos") $body
+    if (-not $c.Ok) { Die ("Could not create repository: " + (Api-Err $c)) }
+    return [pscustomobject]@{
+        Name   = $Name
+        Web    = $c.Data.html_url
+        Exists = $false
     }
 }
 
-function Invoke-GitHub {
-    param(
-        [Parameter(Mandatory)][ValidateSet('GET','POST','PUT','PATCH','DELETE')][string]$Method,
-        [Parameter(Mandatory)][string]$Uri,
-        [Parameter(Mandatory)][hashtable]$Headers,
-        [object]$Body,
-        [int]$TimeoutSec = $Script:TimeoutSec,
-        [int]$Retries = $Script:MaxRetries,
-        [switch]$RawBytes
-    )
+function Get-RepoMeta {
+    param([string]$Owner, [string]$Name)
+    for ($i = 0; $i -lt 30; $i++) {
+        $r = Api GET ($script:ApiBase + "/repos/" + $Owner + "/" + $Name)
+        if ($r.Ok) { return $r.Data }
+        Start-Sleep -Seconds 2
+    }
+    Die "Repository is not ready after 60 seconds."
+}
 
-    $attempt = 0
-    while ($true) {
-        $attempt++
-        $started = Get-Date
-        try {
-            $params = @{
-                Method = $Method
-                Uri = $Uri
-                Headers = $Headers
-                TimeoutSec = $TimeoutSec
-                ErrorAction = 'Stop'
-            }
-            if ($null -ne $Body) {
-                $params.ContentType = 'application/json; charset=utf-8'
-                if ($RawBytes) { $params.Body = $Body }
-                else { $params.Body = ($Body | ConvertTo-Json -Depth 20 -Compress) }
-            }
-            $response = Invoke-RestMethod @params
-            Write-Info "$Method $Uri -> OK ($(NowMs $started) ms)"
-            return [pscustomobject]@{ Ok=$true; Data=$response; Status=200; Error=$null }
-        } catch {
-            $status = 0
-            $retryAfter = $null
-            $raw = $_.ErrorDetails.Message
-            try {
-                if ($_.Exception.Response) {
-                    $status = [int]$_.Exception.Response.StatusCode
-                    $retryAfter = $_.Exception.Response.Headers['Retry-After']
-                }
-            } catch {}
-            $transient = ($status -eq 408 -or $status -eq 409 -or $status -eq 429 -or $status -ge 500 -or $status -eq 0)
-            $message = if ($raw) { $raw } else { $_.Exception.Message }
-            if ($attempt -le $Retries -and $transient) {
-                $delay = if ($retryAfter -and ($retryAfter -as [int])) { [int]$retryAfter } else { [math]::Min(20, [math]::Pow(2, $attempt)) }
-                Write-Warn "$Method attempt $attempt/$($Retries+1) did not complete (HTTP $status). Waiting ${delay}s before retry."
-                Start-Sleep -Seconds $delay
-                continue
-            }
-            Write-Info "$Method $Uri -> HTTP $status ($(NowMs $started) ms)"
-            return [pscustomobject]@{ Ok=$false; Data=$null; Status=$status; Error=$message }
-        }
+function Enable-WorkflowWrite {
+    param([string]$Owner, [string]$Name)
+    $body = @{
+        default_workflow_permissions     = 'write'
+        can_approve_pull_request_reviews = $false
+    }
+    $r = Api PUT ($script:ApiBase + "/repos/" + $Owner + "/" + $Name + "/actions/permissions/workflow") $body
+    if (-not $r.Ok) {
+        Warn "Could not enable workflow write permission automatically. You may need to enable it in Settings > Actions > General."
     }
 }
 
-function Get-ErrorMessage($Result) {
-    if ($Result.Error) {
-        try {
-            $j = $Result.Error | ConvertFrom-Json
-            if ($j.message) { return "HTTP $($Result.Status): $($j.message)" }
-        } catch {}
-        return "HTTP $($Result.Status): $($Result.Error)"
-    }
-    return "HTTP $($Result.Status)"
+# ------------------------------------------------------------
+# Path helpers
+# ------------------------------------------------------------
+function Encode-Path {
+    param([string]$P)
+    $parts = ($P).Replace('\','/').Split('/')
+    return (($parts | ForEach-Object { [uri]::EscapeDataString($_) }) -join '/')
 }
 
-function Get-ZipFiles([string]$ZipPath) {
-    Add-Type -AssemblyName System.IO.Compression.FileSystem
-    $zip = [IO.Compression.ZipFile]::OpenRead($ZipPath)
-    try {
-        $items = New-Object System.Collections.Generic.List[object]
-        foreach ($entry in $zip.Entries) {
-            if ([string]::IsNullOrWhiteSpace($entry.FullName)) { continue }
-            if ($entry.FullName.EndsWith('/')) { continue }
-            $relative = $entry.FullName.Replace('\','/')
-            if ($relative.StartsWith('/') -or $relative -match '(^|/)\.\.?(/|$)' -or [IO.Path]::IsPathRooted($relative)) {
-                throw "Unsafe ZIP path detected: $relative"
-            }
-            $items.Add([pscustomobject]@{ Entry=$entry; Path=$relative })
-        }
-        return $items.ToArray()
-    } finally { $zip.Dispose() }
+function Is-Workflow {
+    param([string]$P)
+    return ($P -replace '\\','/') -match '^(?i)\.github/workflows/'
 }
 
-function Expand-ZipSafe([string]$ZipPath,[string]$Destination) {
-    Add-Type -AssemblyName System.IO.Compression.FileSystem
-    if (Test-Path $Destination) { Remove-Item -LiteralPath $Destination -Recurse -Force }
-    New-Item -ItemType Directory -Path $Destination -Force | Out-Null
-    $zip = [IO.Compression.ZipFile]::OpenRead($ZipPath)
-    $count = 0
-    try {
-        foreach ($entry in $zip.Entries) {
-            if ($entry.FullName.EndsWith('/')) { continue }
-            $relative = $entry.FullName.Replace('\','/')
-            if ($relative.StartsWith('/') -or $relative -match '(^|/)\.\.?(/|$)' -or [IO.Path]::IsPathRooted($relative)) {
-                throw "Unsafe ZIP path detected: $relative"
-            }
-            $target = [IO.Path]::GetFullPath((Join-Path $Destination ($relative -replace '/', '\')))
-            $root = [IO.Path]::GetFullPath($Destination).TrimEnd('\') + '\'
-            if (-not $target.StartsWith($root,[StringComparison]::OrdinalIgnoreCase)) { throw "ZIP path escapes extraction directory: $relative" }
-            $parent = Split-Path $target -Parent
-            New-Item -ItemType Directory -Path $parent -Force | Out-Null
-            $in = $entry.Open(); $out = [IO.File]::Open($target,[IO.FileMode]::Create,[IO.FileAccess]::Write,[IO.FileShare]::None)
-            try { $in.CopyTo($out) } finally { $out.Dispose(); $in.Dispose() }
-            $count++
-        }
-    } finally { $zip.Dispose() }
-    return $count
-}
-
-function Get-ProjectFiles([string]$Root) {
-    $rootFull = [IO.Path]::GetFullPath($Root).TrimEnd('\')
-    $files = Get-ChildItem -LiteralPath $rootFull -Recurse -File -Force
+# ------------------------------------------------------------
+# BLOB UPLOAD (serial)
+# ------------------------------------------------------------
+function Upload-BlobsSerial {
+    param([string]$Owner, [string]$Repo, $Files)
     $out = New-Object System.Collections.Generic.List[object]
-    foreach ($f in $files) {
-        $rel = $f.FullName.Substring($rootFull.Length).TrimStart('\').Replace('\','/')
-        if ($rel -match '(^|/)\.git(/|$)' -or $rel -match '(^|/)node_modules(/|$)' -or $rel -match '(^|/)(\.DS_Store|Thumbs\.db)$') {
-            $Script:Skipped++; continue
+    $total = $Files.Count
+    $n = 0
+    foreach ($f in $Files) {
+        $n++
+        if ($f.Length -gt 100MB) { Die ("File > 100MB not supported: " + $f.Path) }
+        $bytes = [IO.File]::ReadAllBytes($f.FullName)
+        $b64   = [Convert]::ToBase64String($bytes)
+        $b = Api POST ($script:ApiBase + "/repos/" + $Owner + "/" + $Repo + "/git/blobs") @{
+            content  = $b64
+            encoding = 'base64'
         }
-        $out.Add([pscustomobject]@{ FullName=$f.FullName; Path=$rel; Length=$f.Length })
+        if (-not $b.Ok) { Die ("Blob upload failed for " + $f.Path + ": " + (Api-Err $b)) }
+        $out.Add([pscustomobject]@{ path = $f.Path; sha = $b.Data.sha })
+        if (($n % 5) -eq 0 -or $n -eq $total) {
+            Info ("Blob " + $n + "/" + $total)
+        }
     }
     return $out.ToArray()
 }
 
-function Scan-Secrets($Files) {
-    $badNames = @('(^|/)\.env$','(^|/)\.npmrc$','(^|/)id_rsa$','(^|/)id_ed25519$','(^|/)\.pem$','(^|/)\.p12$','(^|/)\.pfx$')
-    $hits = New-Object System.Collections.Generic.List[string]
-    foreach ($f in $Files) {
-        foreach ($pattern in $badNames) { if ($f.Path -match $pattern) { $hits.Add($f.Path); break } }
-        if ($f.Length -le 2MB -and $f.Path -notmatch '\.(png|jpe?g|gif|webp|ico|zip|pdf|woff2?|ttf)$') {
-            try {
-                $text = Get-Content -LiteralPath $f.FullName -Raw -ErrorAction Stop
-                if ($text -match '(?i)(ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|sk-[A-Za-z0-9]{20,}|AIza[0-9A-Za-z_-]{20,}|-----BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY-----)') {
-                    $hits.Add("$($f.Path) (secret-like content)")
+# ------------------------------------------------------------
+# BLOB UPLOAD (parallel via runspace pool)
+# ------------------------------------------------------------
+function Upload-BlobsParallel {
+    param(
+        [string]$Owner,
+        [string]$Repo,
+        $Files,
+        [int]$MaxParallel = 6
+    )
+    $total = $Files.Count
+    $max = [math]::Max(2, [math]::Min($MaxParallel, $total))
+    Info ("Parallel upload with " + $max + " runspaces")
+
+    $pool = [runspacefactory]::CreateRunspacePool(1, $max)
+    $pool.Open()
+
+    $headers = $script:Headers
+    $apiBase = $script:ApiBase
+    $jobs = New-Object System.Collections.Generic.List[object]
+
+    try {
+        foreach ($f in $Files) {
+            if ($f.Length -gt 100MB) { Die ("File > 100MB not supported: " + $f.Path) }
+
+            $ps = [powershell]::Create()
+            $ps.RunspacePool = $pool
+            $null = $ps.AddScript({
+                param($apiBase, $owner, $repo, $relPath, $fullPath, $headers)
+                try {
+                    $bytes = [IO.File]::ReadAllBytes($fullPath)
+                    $b64   = [Convert]::ToBase64String($bytes)
+                    $body  = @{ content = $b64; encoding = 'base64' } | ConvertTo-Json -Depth 5 -Compress
+                    $uri   = "$apiBase/repos/$owner/$repo/git/blobs"
+
+                    $attempt = 0
+                    $maxAttempts = 5
+                    while ($true) {
+                        $attempt++
+                        try {
+                            $r = Invoke-RestMethod -Method POST -Uri $uri -Headers $headers `
+                                 -ContentType 'application/json; charset=utf-8' -Body $body `
+                                 -TimeoutSec 90 -ErrorAction Stop
+                            return [pscustomobject]@{ Path=$relPath; Sha=$r.sha; Ok=$true; Error=$null }
+                        } catch {
+                            $status = 0
+                            try {
+                                if ($_.Exception.Response) {
+                                    $status = [int]$_.Exception.Response.StatusCode
+                                }
+                            } catch {}
+                            $transient = ($status -eq 0 -or $status -ge 500 -or $status -eq 429 -or $status -eq 408)
+                            if ($attempt -lt $maxAttempts -and $transient) {
+                                Start-Sleep -Seconds ([math]::Min(10, [int][math]::Pow(2, $attempt)))
+                                continue
+                            }
+                            return [pscustomobject]@{ Path=$relPath; Sha=$null; Ok=$false; Error=$_.Exception.Message }
+                        }
+                    }
+                } catch {
+                    return [pscustomobject]@{ Path=$relPath; Sha=$null; Ok=$false; Error=$_.Exception.Message }
                 }
-            } catch {}
+            }).AddArgument($apiBase).AddArgument($Owner).AddArgument($Repo).AddArgument($f.Path).AddArgument($f.FullName).AddArgument($headers)
+
+            $jobs.Add([pscustomobject]@{
+                PS     = $ps
+                Handle = $ps.BeginInvoke()
+                Path   = $f.Path
+            })
         }
-    }
-    return @($hits | Select-Object -Unique)
-}
 
-function Resolve-Repo([string]$Owner,[string]$Requested,[hashtable]$Headers) {
-    $name = Normalize-RepoName $Requested
-    $r = Invoke-GitHub GET "$($Script:ApiBase)/repos/$Owner/$name" $Headers
-    if ($r.Ok) { Write-Ok "Repository exists: https://github.com/$Owner/$name"; return [pscustomobject]@{Name=$name; Url="https://github.com/$Owner/$name"; Existing=$true} }
-    if ($r.Status -ne 404) { throw (Get-ErrorMessage $r) }
-
-    Write-Info 'Repository not found. Creating with an initial commit so Git refs are immediately available.'
-    $body = @{ name=$name; private=$script:PrivateRepo; auto_init=$true; description='Published by GitHub ZIP Publisher' }
-    $c = Invoke-GitHub POST "$($Script:ApiBase)/user/repos" $Headers $body
-    if (-not $c.Ok) { throw "Repository creation failed. $(Get-ErrorMessage $c)" }
-    Write-Ok "Repository created: $($c.Data.html_url)"
-    return [pscustomobject]@{Name=$name; Url=$c.Data.html_url; Existing=$false}
-}
-
-function Wait-RepoReady([string]$Owner,[string]$Repo,[hashtable]$Headers) {
-    $deadline = (Get-Date).AddSeconds(60)
-    do {
-        $r = Invoke-GitHub GET "$($Script:ApiBase)/repos/$Owner/$Repo" $Headers -Retries 2
-        if ($r.Ok) { return $r.Data }
-        Start-Sleep -Seconds 2
-    } while ((Get-Date) -lt $deadline)
-    throw "Repository did not become readable within 60 seconds. $(Get-ErrorMessage $r)"
-}
-
-function Upload-GitData([string]$Owner,[string]$Repo,[string]$Branch,$Files,[hashtable]$Headers) {
-    Write-Step 'GIT DATA API - uploading blobs'
-    $blobRows = New-Object System.Collections.Generic.List[object]
-    foreach ($f in $Files) {
-        if ($f.Length -gt 100MB) { throw "GitHub REST Git Data cannot accept $($f.Path): file is over 100 MB." }
-        if ($null -eq $f -or [string]::IsNullOrWhiteSpace([string]$f.FullName)) { throw "Invalid project file record: FullName is empty." }
-        $fullPath = [IO.Path]::GetFullPath([string]$f.FullName)
-        if (-not [IO.File]::Exists($fullPath)) { throw "Project file does not exist: $fullPath" }
-        $bytes = [IO.File]::ReadAllBytes($fullPath)
-        $b64 = [Convert]::ToBase64String($bytes)
-        $b = Invoke-GitHub POST "$($Script:ApiBase)/repos/$Owner/$Repo/git/blobs" $Headers @{ content=$b64; encoding='base64' }
-        if (-not $b.Ok) { throw "Blob upload failed for $($f.Path). $(Get-ErrorMessage $b)" }
-        $blobRows.Add([pscustomobject]@{ path=$f.Path; mode='100644'; type='blob'; sha=$b.Data.sha })
-        $Script:Uploaded++
-        Write-Info "Blob $($Script:Uploaded)/$($Files.Count): $($f.Path)"
-    }
-
-    Write-Step 'GIT DATA API - resolving branch and base tree'
-    $ref = Invoke-GitHub GET "$($Script:ApiBase)/repos/$Owner/$Repo/git/ref/heads/$Branch" $Headers
-    if (-not $ref.Ok) { throw "Branch ref '$Branch' is not available. $(Get-ErrorMessage $ref)" }
-    $baseCommitSha = $ref.Data.object.sha
-    $commit = Invoke-GitHub GET "$($Script:ApiBase)/repos/$Owner/$Repo/git/commits/$baseCommitSha" $Headers
-    if (-not $commit.Ok) { throw "Base commit '$baseCommitSha' cannot be read. $(Get-ErrorMessage $commit)" }
-    $baseTree = $commit.Data.tree.sha
-
-    $treeBody = @{ base_tree=$baseTree; tree=@($blobRows | ForEach-Object { @{path=$_.path;mode=$_.mode;type=$_.type;sha=$_.sha} }) }
-    $tree = Invoke-GitHub POST "$($Script:ApiBase)/repos/$Owner/$Repo/git/trees" $Headers $treeBody
-    if (-not $tree.Ok) { throw "Tree creation failed. $(Get-ErrorMessage $tree)" }
-    Write-Ok "Tree created: $($tree.Data.sha)"
-
-    $message = "Publish project $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
-    $newCommit = Invoke-GitHub POST "$($Script:ApiBase)/repos/$Owner/$Repo/git/commits" $Headers @{message=$message; tree=$tree.Data.sha; parents=@($baseCommitSha)}
-    if (-not $newCommit.Ok) { throw "Commit creation failed. $(Get-ErrorMessage $newCommit)" }
-    $commitSha = $newCommit.Data.sha
-
-    $update = Invoke-GitHub PATCH "$($Script:ApiBase)/repos/$Owner/$Repo/git/refs/heads/$Branch" $Headers @{sha=$commitSha; force=$false}
-    if (-not $update.Ok) { throw "Branch update failed. $(Get-ErrorMessage $update)" }
-    Write-Ok "Commit published: $commitSha"
-    return [pscustomobject]@{Method='GitData';CommitSha=$commitSha;Branch=$Branch}
-}
-
-function Encode-GitHubContentPath([string]$Path) {
-    # GitHub's contents endpoint treats '/' as the path separator. Encode each
-    # segment separately; encoding the whole path turns '/' into %2F and can
-    # produce HTTP 404 for nested files such as .github/workflows/docker.yml.
-    $parts = ([string]$Path).Replace('\','/').Split('/')
-    return (($parts | ForEach-Object { [uri]::EscapeDataString([string]$_) }) -join '/')
-}
-
-function Add-RefQuery([string]$BaseUri,[string]$Branch) {
-    return ($BaseUri + "?ref=" + [uri]::EscapeDataString([string]$Branch))
-}
-
-function Test-IsWorkflowPath([string]$Path) {
-    return ([string]$Path -replace '\\','/') -match '^(?i)\.github/workflows/'
-}
-
-
-function Get-ContainerVersions([string]$Owner,[string]$Repo,[hashtable]$Headers) {
-    $pkg = [uri]::EscapeDataString($Repo.ToLower())
-    $uri = "$($Script:ApiBase)/users/$Owner/packages/container/$pkg/versions?per_page=100"
-    $r = Invoke-GitHub GET $uri $Headers -Retries 2
-    if ($r.Ok) { return @($r.Data) }
-    # Organization-owned packages use the organization endpoint.
-    $uri = "$($Script:ApiBase)/orgs/$Owner/packages/container/$pkg/versions?per_page=100"
-    $r = Invoke-GitHub GET $uri $Headers -Retries 2
-    if ($r.Ok) { return @($r.Data) }
-    return @()
-}
-
-function Wait-ForContainerImage([string]$Owner,[string]$Repo,[string]$Tag,[hashtable]$Headers,[int]$TimeoutSec=90) {
-    Write-Step "VERIFY - checking GHCR image $Owner/$Repo`:$Tag"
-    $deadline = (Get-Date).AddSeconds($TimeoutSec)
-    do {
-        $versions = @(Get-ContainerVersions $Owner $Repo $Headers)
-        foreach ($v in $versions) {
-            $tags = @($v.metadata.container.tags)
-            if ($tags -contains $Tag) {
-                Write-Ok "GHCR image confirmed: ghcr.io/$($Owner.ToLower())/$($Repo.ToLower()):$Tag"
-                return [pscustomobject]@{ Ok=$true; Image="ghcr.io/$($Owner.ToLower())/$($Repo.ToLower()):$Tag"; VersionId=$v.id }
+        $results = New-Object System.Collections.Generic.List[object]
+        $n = 0
+        foreach ($j in $jobs) {
+            $out = $null
+            try {
+                $out = $j.PS.EndInvoke($j.Handle)
+            } catch {
+                $out = @([pscustomobject]@{ Path=$j.Path; Sha=$null; Ok=$false; Error=$_.Exception.Message })
+            }
+            $j.PS.Dispose()
+            $n++
+            foreach ($r in @($out)) {
+                $results.Add($r)
+            }
+            if (($n % 5) -eq 0 -or $n -eq $total) {
+                Info ("Blob " + $n + "/" + $total)
             }
         }
-        if ((Get-Date) -lt $deadline) {
-            Write-Info 'Image not visible yet. GitHub Actions may still be building it. Waiting 5s...'
-            Start-Sleep -Seconds 5
-        }
-    } while ((Get-Date) -lt $deadline)
-    Write-Warn "GHCR image tag '$Tag' was not confirmed after $TimeoutSec seconds. Source upload is still verified, but do not install on SoloHost until this image exists."
-    return [pscustomobject]@{ Ok=$false; Image="ghcr.io/$($Owner.ToLower())/$($Repo.ToLower()):$Tag"; VersionId=$null }
-}
 
-function Show-SoloHostInstall([string]$Owner,[string]$Repo,[string]$Tag) {
-    $image = "ghcr.io/$($Owner.ToLower())/$($Repo.ToLower()):$Tag"
-    Write-Host "`n========================================================="
-    Write-Host 'SOLOHOST INSTALL GUIDE' -ForegroundColor Cyan
-    Write-Host '========================================================='
-    Write-Host "[IMAGE]     $image"
-    Write-Host '[CHECK]     The image must be confirmed before installation.'
-    Write-Host '[INSTALL]   1. Open Pi Desktop -> SoloHost.'
-    Write-Host '[INSTALL]   2. Add the app using docker-compose.yml and config_options.yml from the repository.'
-    Write-Host '[INSTALL]   3. Save the configuration.'
-    Write-Host '[INSTALL]   4. Start the app.'
-    Write-Host '[INSTALL]   5. If SoloHost reports an error, paste the exact message back into App Builder.'
-    Write-Host '[NOTE]      SoloHost pulls the pre-built public image; it does not build the image from the package.'
-}
-
-function Get-WorkflowPermissionHint([hashtable]$Headers) {
-    return @(
-        'GitHub rejected a workflow file. This is normally a token-permission issue, not a ZIP or path issue.',
-        'Classic PAT: use https://github.com/settings/tokens/new and select repo, workflow, and write:packages.',
-        'Do not confuse Tokens (classic) with Fine-grained tokens. The Builder fallback is designed for the classic token flow.',
-        '2FA does not need to be disabled.'
-    ) -join ' '
-}
-
-function Upload-ContentsFallback([string]$Owner,[string]$Repo,[string]$Branch,$Files,[hashtable]$Headers) {
-    Write-Step 'CONTENTS API - uploading and verifying files'
-    $count = 0
-    # Workflow files are deliberately uploaded first. If the token lacks workflow
-    # permission, the publisher stops before creating a partial project.
-    $orderedFiles = @($Files | Sort-Object @{Expression={ if (Test-IsWorkflowPath $_.Path) { 0 } else { 1 } }}, Path)
-    foreach ($f in $orderedFiles) {
-        if ($f.Length -gt 100MB) { throw "Contents API cannot accept $($f.Path): file is over 100 MB." }
-        if ($null -eq $f -or [string]::IsNullOrWhiteSpace([string]$f.FullName)) { throw "Invalid project file record: FullName is empty." }
-        $fullPath = [IO.Path]::GetFullPath([string]$f.FullName)
-        if (-not [IO.File]::Exists($fullPath)) { throw "Project file does not exist: $fullPath" }
-        $bytes = [IO.File]::ReadAllBytes($fullPath)
-        $b64 = [Convert]::ToBase64String($bytes)
-        $uri = "$($Script:ApiBase)/repos/$Owner/$Repo/contents/$(Encode-GitHubContentPath $f.Path)"
-        $existing = Invoke-GitHub GET (Add-RefQuery $uri $Branch) $Headers -Retries 3
-        $body = @{ message="Publish $($f.Path)"; content=$b64; branch=$Branch }
-        if ($existing.Ok -and $existing.Data.sha) { $body.sha = $existing.Data.sha }
-        elseif ($existing.Status -ne 404) { throw "Cannot inspect $($f.Path). $(Get-ErrorMessage $existing)" }
-        $put = Invoke-GitHub PUT $uri $Headers $body
-        if (-not $put.Ok) {
-            # Concurrent update: re-read SHA once and retry safely.
-            if ($put.Status -eq 409) {
-                Start-Sleep -Seconds 2
-                $existing2 = Invoke-GitHub GET (Add-RefQuery $uri $Branch) $Headers
-                if ($existing2.Ok -and $existing2.Data.sha) { $body.sha=$existing2.Data.sha }
-                $put = Invoke-GitHub PUT $uri $Headers $body
+        $failed = @($results | Where-Object { -not $_.Ok })
+        if ($failed.Count -gt 0) {
+            foreach ($ff in $failed) {
+                Warn ("Blob failed: " + $ff.Path + " -> " + $ff.Error)
             }
+            Die ($failed.Count.ToString() + " blob(s) failed.")
+        }
+
+        return @($results | ForEach-Object { [pscustomobject]@{ path=$_.Path; sha=$_.Sha } })
+    } finally {
+        try { $pool.Close() } catch {}
+        try { $pool.Dispose() } catch {}
+        foreach ($j in $jobs) { try { $j.PS.Dispose() } catch {} }
+    }
+}
+
+# ------------------------------------------------------------
+# UPLOAD MODE 1: Git Data API (1 commit, bulk)
+# ------------------------------------------------------------
+function Upload-GitData {
+    param(
+        [string]$Owner,
+        [string]$Repo,
+        [string]$Branch,
+        $Files,
+        [switch]$Parallel,
+        [int]$MaxParallel = 6
+    )
+
+    Write-Host "    [i] Mode: Git Data API (1 commit)" -ForegroundColor DarkGray
+
+    # 1) Resolve base ref
+    $ref = Api GET ($script:ApiBase + "/repos/" + $Owner + "/" + $Repo + "/git/ref/heads/" + $Branch)
+    if (-not $ref.Ok) {
+        # try default branch
+        $meta = Api GET ($script:ApiBase + "/repos/" + $Owner + "/" + $Repo)
+        if (-not $meta.Ok) { Die ("Cannot read repo: " + (Api-Err $meta)) }
+        $Branch = [string]$meta.Data.default_branch
+        if ([string]::IsNullOrWhiteSpace($Branch)) { $Branch = 'main' }
+        $ref = Api GET ($script:ApiBase + "/repos/" + $Owner + "/" + $Repo + "/git/ref/heads/" + $Branch)
+        if (-not $ref.Ok) { Die ("Branch ref '" + $Branch + "' not found: " + (Api-Err $ref)) }
+    }
+    $baseSha = [string]$ref.Data.object.sha
+
+    # 2) Get base tree from commit
+    $commit = Api GET ($script:ApiBase + "/repos/" + $Owner + "/" + $Repo + "/git/commits/" + $baseSha)
+    if (-not $commit.Ok) { Die ("Cannot read base commit: " + (Api-Err $commit)) }
+    $baseTree = [string]$commit.Data.tree.sha
+
+    # 3) Upload blobs (serial or parallel)
+    $blobs = $null
+    if ($Parallel) {
+        $blobs = Upload-BlobsParallel -Owner $Owner -Repo $Repo -Files $Files -MaxParallel $MaxParallel
+    } else {
+        $blobs = Upload-BlobsSerial -Owner $Owner -Repo $Repo -Files $Files
+    }
+    if (-not $blobs -or $blobs.Count -eq 0) { Die "No blobs uploaded." }
+
+    # 4) Create tree in 1 call
+    $tree = New-Object System.Collections.Generic.List[object]
+    foreach ($b in $blobs) {
+        $tree.Add(@{ path=$b.path; mode='100644'; type='blob'; sha=$b.sha })
+    }
+    $treeBody = @{ base_tree = $baseTree; tree = $tree.ToArray() }
+    $treeResp = Api POST ($script:ApiBase + "/repos/" + $Owner + "/" + $Repo + "/git/trees") $treeBody
+    if (-not $treeResp.Ok) { Die ("Tree creation failed: " + (Api-Err $treeResp)) }
+
+    # 5) Create commit
+    $message = "Publish from ZIP " + (Get-Date -Format 'yyyy-MM-dd HH:mm:ss')
+    $newCommit = Api POST ($script:ApiBase + "/repos/" + $Owner + "/" + $Repo + "/git/commits") @{
+        message = $message
+        tree    = $treeResp.Data.sha
+        parents = @($baseSha)
+    }
+    if (-not $newCommit.Ok) { Die ("Commit failed: " + (Api-Err $newCommit)) }
+    $newSha = [string]$newCommit.Data.sha
+
+    # 6) Update ref
+    $update = Api PATCH ($script:ApiBase + "/repos/" + $Owner + "/" + $Repo + "/git/refs/heads/" + $Branch) @{
+        sha   = $newSha
+        force = $false
+    }
+    if (-not $update.Ok) { Die ("Ref update failed: " + (Api-Err $update)) }
+
+    return [pscustomobject]@{
+        Method    = if ($Parallel) { 'GitData-Parallel' } else { 'GitData-Serial' }
+        CommitSha = $newSha
+        Branch    = $Branch
+        Files     = $Files.Count
+    }
+}
+
+# ------------------------------------------------------------
+# UPLOAD MODE 2: Contents API (fallback, N commits)
+# ------------------------------------------------------------
+function Upload-Contents {
+    param([string]$Owner, [string]$Repo, [string]$Branch, $Files)
+
+    Write-Host "    [i] Mode: Contents API (fallback, 1 commit per file)" -ForegroundColor DarkGray
+    $total   = $Files.Count
+    $ordered = @($Files | Sort-Object @{Expression={ if (Is-Workflow $_.Path) { 0 } else { 1 } }}, Path)
+
+    $n = 0
+    foreach ($f in $ordered) {
+        if ($f.Length -gt 100MB) { Die ("File exceeds 100 MB limit: " + $f.Path) }
+        $bytes = [IO.File]::ReadAllBytes($f.FullName)
+        $b64   = [Convert]::ToBase64String($bytes)
+        $uri   = $script:ApiBase + "/repos/" + $Owner + "/" + $Repo + "/contents/" + (Encode-Path $f.Path)
+
+        $ex = Api GET ($uri + "?ref=" + [uri]::EscapeDataString($Branch))
+        $body = @{
+            message = ("Publish " + $f.Path)
+            content = $b64
+            branch  = $Branch
+        }
+        if ($ex.Ok -and $ex.Data.sha) { $body.sha = $ex.Data.sha }
+        elseif ($ex.Status -ne 404) {
+            Die ("Cannot read " + $f.Path + ": " + (Api-Err $ex))
+        }
+
+        $put = Api PUT $uri $body
+        if (-not $put.Ok -and $put.Status -eq 409) {
+            Start-Sleep -Seconds 2
+            $ex2 = Api GET ($uri + "?ref=" + [uri]::EscapeDataString($Branch))
+            if ($ex2.Ok -and $ex2.Data.sha) { $body.sha = $ex2.Data.sha }
+            $put = Api PUT $uri $body
         }
         if (-not $put.Ok) {
-            if ($put.Status -eq 404 -and (Test-IsWorkflowPath $f.Path)) {
-                throw "Workflow file '$($f.Path)' was rejected with HTTP 404. $(Get-WorkflowPermissionHint $Headers)"
+            if ($put.Status -eq 404 -and (Is-Workflow $f.Path)) {
+                Die ("Workflow file rejected. Token needs 'workflow' scope. File: " + $f.Path)
             }
-            throw "Contents upload failed for $($f.Path). $(Get-ErrorMessage $put)"
+            Die ("Upload failed: " + $f.Path + " -> " + (Api-Err $put))
         }
-        $count++
-        $Script:Uploaded = $count
-        Write-Info "File $count/$($Files.Count): $($f.Path)"
+        $n++
+        if (($n % 5) -eq 0 -or $n -eq $total) {
+            Info ("Uploaded " + $n + "/" + $total)
+        }
     }
-    return [pscustomobject]@{Method='Contents';CommitSha=$null;Branch=$Branch;Files=$count}
+    return [pscustomobject]@{
+        Method    = 'Contents'
+        CommitSha = $null
+        Branch    = $Branch
+        Files     = $n
+    }
 }
 
-function Verify-Publish([string]$Owner,[string]$Repo,[string]$Branch,$Files,[hashtable]$Headers,$CommitSha) {
-    Write-Step 'VERIFY - confirming repository state on GitHub'
-    $repoInfo = Wait-RepoReady $Owner $Repo $Headers
-    if ($repoInfo.default_branch -ne $Branch) { Write-Warn "GitHub default branch is '$($repoInfo.default_branch)', published branch is '$Branch'." }
-    $missing = New-Object System.Collections.Generic.List[string]
-    foreach ($f in $Files) {
-        $uri = "$($Script:ApiBase)/repos/$Owner/$Repo/contents/$(Encode-GitHubContentPath $f.Path)"
-        $r = Invoke-GitHub GET (Add-RefQuery $uri $Branch) $Headers -Retries 3
-        if (-not $r.Ok) { $missing.Add($f.Path); continue }
-        if ($r.Data.type -ne 'file') { $missing.Add($f.Path); continue }
+# ------------------------------------------------------------
+# UPLOAD ORCHESTRATOR (try Git Data, fallback Contents)
+# ------------------------------------------------------------
+function Upload-Files {
+    param(
+        [string]$Owner,
+        [string]$Repo,
+        [string]$Branch,
+        $Files,
+        [switch]$Serial,
+        [int]$MaxParallel = 6
+    )
+
+    $useParallel = (-not $Serial) -and ($Files.Count -ge 5)
+
+    try {
+        return Upload-GitData -Owner $Owner -Repo $Repo -Branch $Branch -Files $Files `
+            -Parallel:$useParallel -MaxParallel $MaxParallel
+    } catch {
+        Warn ("Git Data API failed: " + $_.Exception.Message)
+        Warn "Falling back to Contents API (slower but reliable)..."
+        return Upload-Contents -Owner $Owner -Repo $Repo -Branch $Branch -Files $Files
     }
-    if ($missing.Count -gt 0) { throw "Verification failed. Missing/unreadable files: $($missing -join ', ')" }
+}
+
+# ------------------------------------------------------------
+# Wait for build
+# ------------------------------------------------------------
+function Get-Run {
+    param([string]$Owner, [string]$Repo, [string]$Branch, [datetime]$Since)
+    $uri = $script:ApiBase + "/repos/" + $Owner + "/" + $Repo +
+           "/actions/runs?branch=" + [uri]::EscapeDataString($Branch) + "&per_page=20"
+    $r = Api GET $uri
+    if (-not $r.Ok) { return $null }
+    $runs = @($r.Data.workflow_runs)
+    if ($runs.Count -eq 0) { return $null }
+    $f = @($runs | Where-Object {
+        try {
+            ([datetime]$_.created_at -ge $Since) -and
+            ($_.path -match 'build-image\.ya?ml$')
+        } catch { $false }
+    })
+    if ($f.Count -eq 0) { return $null }
+    return ($f | Sort-Object { [datetime]$_.created_at } -Descending)[0]
+}
+
+function Wait-Build {
+    param([string]$Owner, [string]$Repo, [string]$Branch, [datetime]$Since, [int]$MaxMin = 20)
+
+    $deadline = (Get-Date).AddMinutes($MaxMin)
+
+    $run = $null
+    for ($i = 0; $i -lt 40; $i++) {
+        if ((Get-Date) -ge $deadline) { Die "Build did not start within the time limit." }
+        $run = Get-Run $Owner $Repo $Branch $Since
+        if ($run) { break }
+        Start-Sleep -Seconds 5
+    }
+    if (-not $run) { Die "Could not find the workflow run. Open the Actions tab on GitHub." }
+    $script:RunId = $run.id
+
+    $t0     = Get-Date
+    $lastSt = ""
+    while ($run.status -ne 'completed') {
+        if ((Get-Date) -ge $deadline) {
+            Die ("Build did not finish in time. Status: " + $run.status)
+        }
+        Start-Sleep -Seconds 8
+        $r = Api GET ($script:ApiBase + "/repos/" + $Owner + "/" + $Repo +
+                      "/actions/runs/" + $run.id)
+        if ($r.Ok) { $run = $r.Data }
+
+        $el = [int]((Get-Date) - $t0).TotalSeconds
+        if ($run.status -ne $lastSt) {
+            Info ("Build status: " + $run.status + " (" + $el + "s)")
+            $lastSt = $run.status
+        }
+    }
+
+    $el = [int]((Get-Date) - $t0).TotalSeconds
+    Info ("Build finished in " + $el + "s: " + $run.conclusion)
+    return $run
+}
+
+function Show-BuildError {
+    param([string]$Owner, [string]$Repo, [long]$RunId)
+
+    $r = Api GET ($script:ApiBase + "/repos/" + $Owner + "/" + $Repo +
+                  "/actions/runs/" + $RunId + "/jobs")
+    if (-not $r.Ok) { return }
+    foreach ($j in $r.Data.jobs) {
+        if ($j.conclusion -eq 'failure' -or $j.conclusion -eq 'cancelled' -or $j.conclusion -eq 'timed_out') {
+            Err ("Job failed: " + $j.name + " (" + $j.conclusion + ")")
+            Info ("Log: " + $j.html_url)
+            foreach ($s in $j.steps) {
+                if ($s.conclusion -eq 'failure') {
+                    Err ("  Step " + $s.number + ": " + $s.name)
+                }
+            }
+        }
+    }
+}
+
+# ------------------------------------------------------------
+# Verify publish (quick check)
+# ------------------------------------------------------------
+function Verify-Publish {
+    param([string]$Owner, [string]$Repo, [string]$Branch, $Files, [string]$CommitSha)
+
+    Write-Host "    [i] Verifying on GitHub..." -ForegroundColor DarkGray
+
+    # verify commit exists
     if ($CommitSha) {
-        $c = Invoke-GitHub GET "$($Script:ApiBase)/repos/$Owner/$Repo/commits/$CommitSha" $Headers -Retries 3
-        if (-not $c.Ok) { throw "Published commit $CommitSha could not be verified. $(Get-ErrorMessage $c)" }
+        $c = Api GET ($script:ApiBase + "/repos/" + $Owner + "/" + $Repo + "/commits/" + $CommitSha)
+        if (-not $c.Ok) { Die ("Commit verification failed: " + (Api-Err $c)) }
     }
-    Write-Ok "Verified $($Files.Count) project file(s) on GitHub."
-    return $true
+
+    # spot check 3 files (first, middle, last)
+    $samples = New-Object System.Collections.Generic.List[object]
+    if ($Files.Count -ge 1) { $samples.Add($Files[0]) }
+    if ($Files.Count -ge 3) { $samples.Add($Files[[int]($Files.Count / 2)]) }
+    if ($Files.Count -ge 2) { $samples.Add($Files[$Files.Count - 1]) }
+
+    foreach ($f in $samples) {
+        $uri = $script:ApiBase + "/repos/" + $Owner + "/" + $Repo + "/contents/" + (Encode-Path $f.Path)
+        $r = Api GET ($uri + "?ref=" + [uri]::EscapeDataString($Branch))
+        if (-not $r.Ok) { Die ("Verify failed, missing: " + $f.Path + " (" + (Api-Err $r) + ")") }
+    }
+    Info ("Spot-checked " + $samples.Count + " file(s)")
 }
 
-Write-Host @"
-=========================================================
-   GitHub ZIP Publisher  - Resilient Standalone v2.6
-=========================================================
-"@
+# =============================================================
+# Main
+# =============================================================
+function Main {
+    Say "========================================================="
+    Say "   GitHub ZIP -> Docker Image Publisher (v5.0)"
+    Say "========================================================="
+    Blank
 
+    # ---- 1. ZIP ----
+    if (-not $ZipPath) {
+        while ($true) {
+            $ZipPath = Ask "ZIP file path"
+            if ([string]::IsNullOrWhiteSpace($ZipPath)) { Warn "Please enter a path."; continue }
+            $ZipPath = Expand-FullPath ($ZipPath.Trim('"').Trim())
+            if (-not (Test-Path -LiteralPath $ZipPath -PathType Leaf)) { Warn "File not found."; continue }
+            if (-not ([IO.Path]::GetExtension($ZipPath) -ieq '.zip')) { Warn "Not a .zip file."; continue }
+            if (-not (Test-ZipMagic $ZipPath)) { Warn "Not a valid ZIP (bad magic bytes)."; continue }
+            break
+        }
+    } else {
+        $ZipPath = Expand-FullPath ($ZipPath.Trim('"').Trim())
+        if (-not (Test-Path -LiteralPath $ZipPath -PathType Leaf)) {
+            Die ("File not found: " + $ZipPath)
+        }
+        if (-not ([IO.Path]::GetExtension($ZipPath) -ieq '.zip')) {
+            Die "Input is not a .zip file."
+        }
+        if (-not (Test-ZipMagic $ZipPath)) {
+            Die "Not a valid ZIP (bad magic bytes)."
+        }
+    }
+
+    $defaultName = Clean-RepoName ([IO.Path]::GetFileNameWithoutExtension($ZipPath))
+
+    # ---- 2. Repo ----
+    if (-not $RepoUrl) {
+        Blank
+        Say "GitHub repository"
+        Say "  - Paste a full URL:  https://github.com/user/repo"
+        Say "  - Or type a new name to create a repository under your account"
+        Blank
+        $RepoUrl = Ask "Repository" $defaultName
+    }
+
+    # ---- Env ----
+    $null = DoStep "Checking environment" { Check-Env }
+
+    # ---- Auth ----
+    $authKind = DoStep "Signing in to GitHub" { Resolve-Auth }
+    Info ("User: " + $script:Owner + " (" + $authKind + ")")
+
+    # ---- Parse repo ----
+    $rurl = $RepoUrl -replace '[?#].*$',''
+    $rurl = $rurl.TrimEnd('/')
+
+    $targetOwner = $null
+    $targetName  = $null
+
+    if ($rurl -match '^https?://') {
+        if ($rurl -notmatch '^https://github\.com/([^/]+)/([^/]+?)(?:\.git)?$') {
+            Die ("Invalid GitHub URL: " + $RepoUrl)
+        }
+        $targetOwner = $Matches[1]
+        $targetName  = $Matches[2]
+    } else {
+        $targetOwner = $script:Owner
+        $targetName  = Clean-RepoName $rurl
+    }
+
+    # ---- Extract ----
+    $extract = DoStep "Extracting ZIP" {
+        $script:TempDir = Join-Path ([IO.Path]::GetTempPath()) ('ghzip-' + [guid]::NewGuid().ToString('N'))
+        $null = Get-ZipFiles $ZipPath
+        $n = Expand-Zip -ZipPath $ZipPath -Dest $script:TempDir
+        return $n
+    }
+    Info ($extract.ToString() + " files extracted")
+
+    $root = Find-Root $script:TempDir
+    $null = Ensure-Dockerfile $root
+    $null = Ensure-Workflow   $root
+
+    $files = @(Get-Files $root)
+    if ($files.Count -eq 0) { Die "No files to upload after filtering." }
+
+    # ---- Repo + Workflow permission ----
+    $repoInfo = DoStep "Preparing repository" {
+        $ri = Resolve-Repo -Owner $targetOwner -Name $targetName
+        $m  = Get-RepoMeta -Owner $targetOwner -Name $targetName
+        if ($m.default_branch) { $script:Branch = $m.default_branch } else { $script:Branch = 'main' }
+        Enable-WorkflowWrite -Owner $targetOwner -Name $targetName
+        return $ri
+    }
+    $script:Owner = $targetOwner
+    $script:Repo  = $targetName
+    Info ("https://github.com/" + $targetOwner + "/" + $targetName + " (branch: " + $script:Branch + ")")
+
+    # ---- Upload ----
+    $uploadStart = Get-Date
+    $publish = DoStep ("Uploading " + $files.Count + " files") {
+        Upload-Files -Owner $targetOwner -Repo $targetName -Branch $script:Branch `
+            -Files $files -Serial:$Serial -MaxParallel $BlobParallelism
+    }
+    $script:UploadMethod = $publish.Method
+    Info ("Method: " + $publish.Method + " | Commit: " + $(if ($publish.CommitSha) { $publish.CommitSha.Substring(0,7) } else { "N/A" }))
+
+    # ---- Verify ----
+    $null = DoStep "Verifying publish" {
+        Verify-Publish -Owner $targetOwner -Repo $targetName -Branch $script:Branch `
+            -Files $files -CommitSha $publish.CommitSha
+    }
+
+    if ($NoWait) {
+        Blank
+        Ok "Upload complete. Build skipped (-NoWait)."
+        Info ("Actions: https://github.com/" + $targetOwner + "/" + $targetName + "/actions")
+        return
+    }
+
+    # ---- Wait ----
+    Start-Sleep -Seconds 5
+    $run = DoStep "Waiting for build" {
+        Wait-Build -Owner $targetOwner -Repo $targetName -Branch $script:Branch -Since $uploadStart -MaxMin 20
+    }
+
+    if ($run.conclusion -ne 'success') {
+        Blank
+        Err ("Build failed: " + $run.conclusion)
+        Show-BuildError -Owner $targetOwner -Repo $targetName -RunId $run.id
+        Blank
+        Info ("Full log: https://github.com/" + $targetOwner + "/" + $targetName + "/actions/runs/" + $run.id)
+        Die "The workflow did not succeed."
+    }
+
+    $script:Image = "ghcr.io/" + $targetOwner + "/" + $targetName + ":latest"
+}
+
+# =============================================================
+# Entry
+# =============================================================
 try {
-    Write-Step 'LOGIN - GitHub Login'
-    $token = Get-TokenInput
-    if ([string]::IsNullOrWhiteSpace($token)) { throw 'GitHub token is empty.' }
-    $headers = New-Headers $token
+    Main
 
-    $who = Invoke-GitHub GET "$($Script:ApiBase)/user" $headers
-    if (-not $who.Ok) { throw "Token validation failed. $(Get-ErrorMessage $who)" }
-    $tokenOwner = $who.Data.login
-    Write-Ok "Token valid - authenticated as '$tokenOwner'."
+    $elapsed = [int]((Get-Date) - $script:Started).TotalSeconds
+    Blank
+    Say "========================================================="
+    Write-Host "   SUCCESS" -ForegroundColor Green
+    Say "========================================================="
+    Say ("Repository : https://github.com/" + $script:Owner + "/" + $script:Repo)
+    Write-Host ("Image      : " + $script:Image) -ForegroundColor Green
+    Say ("Upload     : " + $script:UploadMethod)
+    Say ("Time       : " + $elapsed + "s")
+    Blank
+    Say "Use it with:"
+    Write-Host ("  docker pull " + $script:Image) -ForegroundColor Cyan
+    Write-Host ("  docker run --rm -p 8080:3000 " + $script:Image) -ForegroundColor Cyan
+    Blank
+    Say "Note: GHCR packages are private by default."
+    Say ("Make it public: https://github.com/users/" + $script:Owner +
+        "/packages/container/" + $script:Repo + "/settings")
+    Say "========================================================="
 
-    $ownerInput = Read-Host "GitHub ID (blank = $tokenOwner)"
-    $owner = if ([string]::IsNullOrWhiteSpace($ownerInput)) { $tokenOwner } else { $ownerInput.Trim() }
-    if ($owner -ne $tokenOwner) {
-        $ownerCheck = Invoke-GitHub GET "$($Script:ApiBase)/users/$owner" $headers
-        if (-not $ownerCheck.Ok) { throw "GitHub owner '$owner' could not be verified. $(Get-ErrorMessage $ownerCheck)" }
-        Write-Warn "Authenticated token belongs to '$tokenOwner', while target owner is '$owner'. Repository creation may be denied unless the token has permission."
-    } else { Write-Ok 'GitHub ID matches token owner.' }
-
-    Write-Step 'ZIP - Select ZIP'
-    do {
-        $zipPath = Read-Host 'Path to ZIP file'
-        if ([string]::IsNullOrWhiteSpace($zipPath)) { Write-Warn 'Path is empty. Please enter a ZIP path.'; continue }
-        $zipPath = $zipPath.Trim().Trim('"')
-        if (-not (Test-Path -LiteralPath $zipPath -PathType Leaf)) { Write-Warn "ZIP not found: $zipPath"; $zipPath=$null; continue }
-        if ([IO.Path]::GetExtension($zipPath) -ne '.zip') { Write-Warn 'Selected file is not a .zip file.'; $zipPath=$null; continue }
-        break
-    } while ($true)
-    Write-Ok "ZIP selected: $zipPath"
-
-    Write-Step 'CHECK - ZIP integrity and safe extraction'
-    # Force collection semantics: 0/1/many ZIP entries must all expose .Count.
-    $zipItems = @(Get-ZipFiles $zipPath)
-    if ($zipItems.Count -eq 0) { throw 'ZIP contains no files.' }
-    $temp = Join-Path ([IO.Path]::GetTempPath()) ('ghzip-' + [guid]::NewGuid().ToString('N'))
-    $count = Expand-ZipSafe $zipPath $temp
-    Write-Ok "Extracted $count file(s) using .NET safe extraction."
-
-    # Force collection semantics for one-file projects as well.
-    $files = @(Get-ProjectFiles $temp)
-    if ($files.Count -eq 0) { throw 'No publishable project files remain after filtering.' }
-    Write-Ok "Project inventory: $($files.Count) file(s), skipped $($Script:Skipped)."
-    # Normalize to a flat array of file records. This protects Windows PowerShell 5.1
-    # from single-item/nested-array unrolling before any upload function receives it.
-    $files = @($files | ForEach-Object { if ($_ -is [System.Array]) { $_ } else { $_ } })
-    foreach ($file in $files) {
-        if ($null -eq $file.FullName) { throw 'Project inventory contains an invalid file record (missing FullName).' }
+    if ($script:Warns.Count) {
+        Blank
+        Say "Warnings:" -ForegroundColor Yellow
+        $script:Warns | Select-Object -Unique | ForEach-Object {
+            Say ("  - " + $_) -ForegroundColor Yellow
+        }
     }
-
-    Write-Step 'CHECK - risky files and secrets'
-    # PowerShell 5.1 collapses a single pipeline result to a scalar string.
-    # Force collection semantics so .Count is always safe under StrictMode.
-    $scanStarted = Get-Date
-    $hits = @(Scan-Secrets $files)
-    Write-Info "Secret scan completed in $(NowMs $scanStarted) ms."
-    if ($hits.Count -gt 0) {
-        Write-Warn 'Potentially sensitive files detected:'
-        foreach ($h in $hits) { Write-Info "- $h" }
-        $answer = Read-Host 'Continue and upload anyway? [y/N]'
-        if ($answer -notmatch '^(?i)y(es)?$') { throw 'Upload cancelled because potentially sensitive files were detected.' }
-    } else { Write-Ok 'No obvious secret files or token-like content detected.' }
-
-    Write-Step 'REPO - Repository'
-    $defaultName = Normalize-RepoName ([IO.Path]::GetFileNameWithoutExtension($zipPath))
-    $repoInput = Read-Host "Repository name [$defaultName]"
-    $repoRequested = if ([string]::IsNullOrWhiteSpace($repoInput)) { $defaultName } else { $repoInput.Trim() }
-    $privateInput = Read-Host 'Make repository PRIVATE? [Y/n]'
-    $script:PrivateRepo = -not ($privateInput -match '^(?i)n(o)?$')
-
-    $repo = Resolve-Repo $owner $repoRequested $headers
-    $repoName = $repo.Name
-    $repoInfo = Wait-RepoReady $owner $repoName $headers
-    $branch = $repoInfo.default_branch
-    if ([string]::IsNullOrWhiteSpace($branch)) { $branch = 'main' }
-    Write-Ok "Repository ready. Default branch: $branch"
-
-    # Reliability-first: use the repository Contents API as the primary publish path.
-    # It avoids Git Data tree/ref edge cases (including HTTP 404 on /git/trees) and
-    # publishes files serially, which is also the documented safe usage pattern.
-    # The Git Data implementation remains in the script for diagnostics/future use.
-    Write-Info 'Reliability mode: using verified Contents API as the primary publish path.'
-    $workflowFiles = @($files | Where-Object { Test-IsWorkflowPath $_.Path })
-    if ($workflowFiles.Count -gt 0) {
-        Write-Info "Detected $($workflowFiles.Count) GitHub Actions workflow file(s). They require workflow write permission."
-        Write-Info 'The publisher will test workflow files first to avoid leaving a partially published project.'
-    }
-    $publish = Upload-ContentsFallback $owner $repoName $branch $files $headers
-
-    Verify-Publish $owner $repoName $branch $files $headers $publish.CommitSha
-
-    $versionInput = Read-Host 'Image version tag to verify [0.1.0]'
-    $imageTag = if ([string]::IsNullOrWhiteSpace($versionInput)) { '0.1.0' } else { $versionInput.Trim() }
-    $imageCheck = Wait-ForContainerImage $owner $repoName $imageTag $headers 90
-    Show-SoloHostInstall $owner $repoName $imageTag
-
-    Write-Step 'FINAL REPORT'
-    $elapsed = [int]((Get-Date)-$Script:Started).TotalSeconds
-    Write-Host "[REPO]      https://github.com/$owner/$repoName"
-    Write-Host "[UPLOADED]  $($files.Count)"
-    Write-Host "[SKIPPED]   $($Script:Skipped)"
-    Write-Host "[COMMIT]    $($publish.CommitSha)"
-    Write-Host "[METHOD]    $($publish.Method)"
-    Write-Host "[IMAGE]     $($imageCheck.Image) | confirmed=$($imageCheck.Ok)"
-    Write-Host "[TIME]      ${elapsed}s"
-    if ($Script:Warnings.Count) {
-        Write-Host "`n[WARN] Warnings ($($Script:Warnings.Count))" -ForegroundColor Yellow
-        $Script:Warnings | Select-Object -Unique | ForEach-Object { Write-Host "   - $_" }
-    }
-    if ($Script:Actions.Count) {
-        Write-Host "`n[ACTION] Recovery performed ($($Script:Actions.Count))" -ForegroundColor Magenta
-        $Script:Actions | Select-Object -Unique | ForEach-Object { Write-Host "   - $_" }
-    }
-    Write-Host "`nStatus: [SUCCESS] Published and verified." -ForegroundColor Green
 }
 catch {
-    $msg = $_.Exception.Message
-    Write-Fail $msg
-    Write-Host "`n========================================================="
-    Write-Host 'FINAL REPORT'
-    Write-Host '========================================================='
-    Write-Host "[UPLOADED]  $Script:Uploaded"
-    Write-Host "[SKIPPED]   $Script:Skipped"
-    if ($Script:Warnings.Count) {
-        Write-Host "`n[WARN] Warnings ($($Script:Warnings.Count))" -ForegroundColor Yellow
-        $Script:Warnings | Select-Object -Unique | ForEach-Object { Write-Host "   - $_" }
+    Blank
+    Say "========================================================="
+    Write-Host "   ERROR" -ForegroundColor Red
+    Say "========================================================="
+    Err $_.Exception.Message
+    if ($script:RunId -and $script:Owner -and $script:Repo) {
+        Blank
+        Info ("Build log: https://github.com/" + $script:Owner + "/" + $script:Repo +
+              "/actions/runs/" + $script:RunId)
     }
-    Write-Host "`n[FAIL] Failures ($($Script:Failures.Count))" -ForegroundColor Red
-    $Script:Failures | Select-Object -Unique | ForEach-Object { Write-Host "   - $_" }
-    Write-Host "`n[ACTION] The publisher stopped only after recovery/retry paths were exhausted. No success was reported without verification." -ForegroundColor Magenta
+    if ($script:Warns.Count) {
+        Blank
+        Say "Warnings:" -ForegroundColor Yellow
+        $script:Warns | Select-Object -Unique | ForEach-Object {
+            Say ("  - " + $_) -ForegroundColor Yellow
+        }
+    }
+    Say "========================================================="
 }
 finally {
-    if ($temp -and (Test-Path -LiteralPath $temp)) {
-        try { Remove-Item -LiteralPath $temp -Recurse -Force -ErrorAction SilentlyContinue } catch {}
+    if ($script:TempDir -and (Test-Path -LiteralPath $script:TempDir)) {
+        try {
+            Remove-Item -LiteralPath $script:TempDir -Recurse -Force -ErrorAction SilentlyContinue
+        } catch {}
     }
 }
 
