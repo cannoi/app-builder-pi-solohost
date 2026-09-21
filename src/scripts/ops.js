@@ -18,8 +18,24 @@ export function splitUserSteps(message) {
   return [text];
 }
 
+export function extractGhcrImage(text = '') {
+  const m = String(text || '').match(/ghcr\.io\/[a-z0-9._-]+\/[a-z0-9._-]+(?::[a-z0-9._-]+)?/i);
+  if (!m) return '';
+  const raw = m[0].toLowerCase();
+  return raw.includes(':') ? raw : `${raw}:latest`;
+}
+
+export function guessSoloHostPorts(text = '', image = '') {
+  const blob = `${text} ${image}`.toLowerCase();
+  const named = blob.match(/\b(\d{2,5})\s*:\s*(\d{2,5})\b/);
+  if (named) return { hostPort: Number(named[1]), containerPort: Number(named[2]) };
+  if (/vnc|novnc|browser-native|6080/.test(blob)) return { hostPort: 16080, containerPort: 6080 };
+  return { hostPort: 18080, containerPort: 8080 };
+}
+
 export function inferAction(message) {
   const m = String(message || '').toLowerCase();
+  if (extractGhcrImage(m) && /(solohost|cài đặt|cai dat|install kit|docker-compose|config_options|file cài|tạo file|tao file|generate)/i.test(m)) return 'export';
   if (/(tổng hợp|liệt kê|summary|summarize|list)[\s\S]*(lỗi|error|issue|problem|failure|warning|security)|(lỗi|error|issue|problem|failure)[\s\S]*(tổng hợp|liệt kê|summary|summarize|list)|(diagnose|diagnosis|kiểm tra toàn bộ|check all)/i.test(m)) return 'analyze';
   if (isQuestion(m)) return 'reply';
   if (/\b(chỉnh sửa|sửa đổi|thay đổi|edit|change|modify|update|customize|customise)\b/.test(m)) return 'improve';
