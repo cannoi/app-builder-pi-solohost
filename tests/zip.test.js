@@ -55,10 +55,11 @@ test('generated GitHub workflow publishes the exact SoloHost version tag', async
 
 test('Windows GitHub fallback is bundled and verifies the GHCR image before SoloHost install', async () => {
   const fs = await import('node:fs/promises');
-  const script = await fs.readFile(new URL('../fallback/GitHub-ZIP-Image-Publisher-v4.0.ps1', import.meta.url), 'utf8');
+  const script = await fs.readFile(new URL('../fallback/GitHub-ZIP-Image-Publisher-v5.0.ps1', import.meta.url), 'utf8');
   assert.match(script, /GitHub ZIP -> Docker Image Publisher/);
+  assert.match(script, /v5\.0/);
   assert.match(script, /ghcr\.io/);
-  assert.match(script, /Build Docker Image/);
+  assert.match(script, /Git Data API/);
 });
 
 test('Builder image declares the GitHub source label used to link GHCR packages', async () => {

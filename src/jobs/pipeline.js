@@ -294,9 +294,9 @@ export function registerPipeline(app) {
           checklist: ['✓ Build', '✓ Test', '✗ GitHub', '• GHCR', '• SoloHost'],
           downloads: [
             ...(zipFail ? [{ kind: 'project', filename: zipFail.filename, url: `/api/projects/${project.id}/download?kind=project` }] : []),
-            { kind: 'github-fallback', filename: 'GitHub-ZIP-Image-Publisher-v4.0.ps1', url: `/api/projects/${project.id}/github-fallback` },
+            { kind: 'github-fallback', filename: 'GitHub-ZIP-Image-Publisher-v5.0.ps1', url: `/api/projects/${project.id}/github-fallback` },
           ],
-          fallback: { ...(githubPublish.fallback || {}), scriptUrl: `/api/projects/${project.id}/github-fallback`, scriptFilename: 'GitHub-ZIP-Image-Publisher-v4.0.ps1' },
+          fallback: { ...(githubPublish.fallback || {}), scriptUrl: `/api/projects/${project.id}/github-fallback`, scriptFilename: 'GitHub-ZIP-Image-Publisher-v5.0.ps1' },
           brief: [githubPublish.error, githubPublish.fix].filter(Boolean).join('\n'),
           next: 'GitHub source was not verified. Tap Download Project and upload the files on github.com, or fix access and tap Publish once.',
         };
@@ -353,7 +353,7 @@ export function registerPipeline(app) {
       downloads: [
         zip ? { kind: 'solohost', filename: zip.filename, url: `/api/projects/${project.id}/download?kind=solohost` } : null,
         { kind: 'project', filename: `${project.slug}-source.zip`, url: `/api/projects/${project.id}/download?kind=project` },
-        { kind: 'github-fallback', filename: 'GitHub-ZIP-Image-Publisher-v4.0.ps1', url: `/api/projects/${project.id}/github-fallback` },
+        { kind: 'github-fallback', filename: 'GitHub-ZIP-Image-Publisher-v5.0.ps1', url: `/api/projects/${project.id}/github-fallback` },
       ].filter(Boolean),
       fallback: githubPublish?.fallback || null,
       missing: installReady ? [] : [imageOk ? null : 'GHCR image is not confirmed yet.'].filter(Boolean),
@@ -502,7 +502,7 @@ export function registerPipeline(app) {
             const artifact = await createProjectZip({ sourceDir: projects.sourceDir(project.slug), outputDir: path.join(projects.projectDir(project), 'artifacts'), slug: project.slug, kind });
             payload.downloads = [
               { kind, filename: artifact.filename, url: `/api/projects/${project.id}/download?kind=${kind}` },
-              { kind: 'github-fallback', filename: 'GitHub-ZIP-Image-Publisher-v4.0.ps1', url: `/api/projects/${project.id}/github-fallback` },
+              { kind: 'github-fallback', filename: 'GitHub-ZIP-Image-Publisher-v5.0.ps1', url: `/api/projects/${project.id}/github-fallback` },
             ];
           } else if (stepAction === 'publish') {
             emit('release', 'running', 'Publishing the app now…');

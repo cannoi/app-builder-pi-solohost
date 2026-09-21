@@ -446,7 +446,7 @@ export function registerRoutes(r, app) {
   r.get('/api/projects/:id/github-fallback', async (req, res) => {
     const p = projects.get(req.params.id);
     if (!p) return res.status(404).json({ error: 'Project not found' });
-    const names = ['GitHub-ZIP-Image-Publisher-v4.0.ps1', 'GitHub-ZIP-Publisher-v2.6.ps1'];
+    const names = ['GitHub-ZIP-Image-Publisher-v5.0.ps1'];
     const roots = [
       path.resolve(process.cwd(), 'fallback'),
       path.resolve(process.cwd(), 'app', 'fallback'),

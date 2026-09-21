@@ -306,7 +306,7 @@ export function manualFallback(repoName) {
     action: 'download',
     label: 'Download Project',
     scriptLabel: 'Windows GitHub Publisher',
-    scriptFilename: 'GitHub-ZIP-Image-Publisher-v4.0.ps1',
+    scriptFilename: 'GitHub-ZIP-Image-Publisher-v5.0.ps1',
     steps: [
       'Download the project ZIP and the Windows GitHub Publisher fallback script.',
       `On github.com create a new empty repository named ${name}, or choose an existing repository only after confirming overwrite.`,

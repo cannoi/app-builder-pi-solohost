@@ -40,9 +40,13 @@
 
 ## 1.4.23
 - Paste a GHCR image to generate SoloHost docker-compose.yml + config_options.yml without Run.
-- Replaced Windows publisher with GitHub-ZIP-Image-Publisher-v4.0.ps1.
+- Replaced Windows publisher with GitHub-ZIP-Image-Publisher-v5.0.ps1.
 
 ## 1.4.24
 - Publish uses git CLI first (1.4.21 path), GitHub API as fallback.
 - Fallback .ps1 is copied into the image and resolved from multiple paths.
 - RUN no longer blocks container-looking apps when Sandbox is absent; native preview is used.
+
+## 1.4.25
+- Windows GitHub publisher v5.0 only (Git Data API + Contents fallback).
+- Removed unused .bak files and the previous v4.0 script.
