@@ -111,18 +111,6 @@ export class BuildRunner {
     const containerOnly = !previewable && ['dockerfile', 'compose', 'compose-image'].includes(runtimeSpec.kind);
     // Ordinary generated apps include Dockerfile + docker-compose.yml for SoloHost
     // publish. Those are NOT container-only apps. Preview them natively.
-    if (containerOnly && !this.podman && mode !== 'native') {
-      return {
-        status: 'blocked',
-        runtime: 'podman-sandbox',
-        health: false,
-        containerSandboxRequired: true,
-        autoDetected: true,
-        detected: runtimeSpec,
-        error: 'Container app detected. App Builder can run it automatically when the SoloHost environment provides its protected Container Sandbox. This environment has no container runner available, so live preview cannot start here; no Docker socket, host access, installation, or manual source conversion will be attempted.',
-        next: 'Use a SoloHost environment with the built-in Container Sandbox available, then Run again. Ordinary Node/static apps do not need Container Sandbox.',
-      };
-    }
     if (containerOnly && this.podman && mode !== 'native') {
       return this.runPodmanApp({ sourcePath, projectSlug, timeout, keepRunning });
     }
@@ -378,6 +366,20 @@ async function hasPreviewableSource(sourcePath) {
         return true;
       }
     } catch {}
+  }
+  const stack = [sourcePath];
+  let depth = 0;
+  while (stack.length && depth < 80) {
+    depth += 1;
+    const dir = stack.pop();
+    let entries = [];
+    try { entries = await fs.readdir(dir, { withFileTypes: true }); } catch { continue; }
+    for (const e of entries) {
+      if (e.name === 'node_modules' || e.name === '.git') continue;
+      const full = path.join(dir, e.name);
+      if (e.isDirectory()) stack.push(full);
+      else if (/^index\.html?$/i.test(e.name)) return true;
+    }
   }
   return false;
 }
