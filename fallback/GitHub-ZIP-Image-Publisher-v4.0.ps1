@@ -1,9 +1,11 @@
 #requires -Version 5.1
 # =============================================================
-#  GitHub ZIP -> Docker Image Publisher  (v4.0)
+#  GitHub ZIP -> Docker Image Publisher  (v5.0)
 #  - 2 prompts only: ZIP + Repo
 #  - Auth: auto via Git credential, else token
-#  - Uploads, triggers GitHub Actions, returns image URL
+#  - Upload: Git Data API (1 commit, parallel blobs)
+#            fallback Contents API
+#  - Trigger GitHub Actions, return image URL
 # =============================================================
 
 [CmdletBinding()]
@@ -11,12 +13,17 @@ param(
     [string]$ZipPath,
     [string]$RepoUrl,
     [string]$Token,
-    [switch]$NoWait
+    [switch]$NoWait,
+    [switch]$Serial,           # tat parallel blob upload
+    [int]$BlobParallelism = 6  # so runspace toi da
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $ProgressPreference    = 'SilentlyContinue'
+try { [Net.ServicePointManager]::SecurityProtocol = `
+      [Net.SecurityProtocolType]::Tls12 -bor `
+      [Net.ServicePointManager]::SecurityProtocol } catch {}
 
 # ------------------------------------------------------------
 # Globals
@@ -32,6 +39,7 @@ $script:Image    = $null
 $script:RunId    = $null
 $script:Started  = Get-Date
 $script:Warns    = New-Object System.Collections.Generic.List[string]
+$script:UploadMethod = $null
 
 # ------------------------------------------------------------
 # Output helpers
@@ -39,7 +47,7 @@ $script:Warns    = New-Object System.Collections.Generic.List[string]
 function Say   { param([string]$t) Write-Host $t }
 function Blank { Write-Host "" }
 function Ok    { param([string]$t) Write-Host ("[OK] " + $t) -ForegroundColor Green }
-function Warn  { param([string]$t) $script:Warns.Add($t); Write-Host ("[!] " + $t) -ForegroundColor Yellow }
+function Warn  { param([string]$t) $script:Warns.Add($t) | Out-Null; Write-Host ("[!] " + $t) -ForegroundColor Yellow }
 function Err   { param([string]$t) Write-Host ("[X] " + $t) -ForegroundColor Red }
 function Info  { param([string]$t) Write-Host ("    " + $t) -ForegroundColor DarkGray }
 function Die   { param([string]$t) throw $t }
@@ -54,7 +62,6 @@ function Ask {
     return (Read-Host $Prompt).Trim()
 }
 
-# Step that prints one line, no partial-line glitches
 function DoStep {
     param([string]$Label, [scriptblock]$Action)
     Write-Host ("[*] " + $Label + " ... ") -NoNewline -ForegroundColor Cyan
@@ -121,7 +128,7 @@ function New-Headers {
         Authorization          = ("Bearer " + $T)
         Accept                 = 'application/vnd.github+json'
         'X-GitHub-Api-Version' = $script:ApiVer
-        'User-Agent'           = 'GitHub-ZIP-Image-Publisher/4.0'
+        'User-Agent'           = 'GitHub-ZIP-Image-Publisher/5.0'
     }
 }
 
@@ -137,21 +144,18 @@ function Test-Token {
 }
 
 function Resolve-Auth {
-    # 1) Token from parameter
     if ($Token) {
         $script:Headers = New-Headers $Token
         if (Test-Token) { return "token (provided)" }
         Die "The provided token is invalid."
     }
 
-    # 2) Try Git credential (silent)
     $gitTok = Try-GitCredential
     if ($gitTok) {
         $script:Headers = New-Headers $gitTok
         if (Test-Token) { return "Git credential" }
     }
 
-    # 3) Ask for PAT
     Blank
     Say "GitHub sign-in required."
     Say "  1. Open: https://github.com/settings/tokens"
@@ -169,14 +173,15 @@ function Resolve-Auth {
 }
 
 # ------------------------------------------------------------
-# REST client
+# REST client (with retry)
 # ------------------------------------------------------------
 function Api {
     param(
         [string]$Method,
         [string]$Uri,
         [object]$Body,
-        [int]$Retries = 5
+        [int]$Retries = 5,
+        [int]$TimeoutSec = 60
     )
     $try = 0
     while ($true) {
@@ -186,7 +191,7 @@ function Api {
                 Method          = $Method
                 Uri             = $Uri
                 Headers         = $script:Headers
-                TimeoutSec      = 45
+                TimeoutSec      = $TimeoutSec
                 ErrorAction     = 'Stop'
                 UseBasicParsing = $true
             }
@@ -211,6 +216,7 @@ function Api {
                 $d = 0
                 if ($retryAfter -and ($retryAfter -as [int])) { $d = [int]$retryAfter }
                 else { $d = [math]::Min(15, [math]::Pow(2, $try)) }
+                Info "Retry $try/$Retries (HTTP $status) after ${d}s"
                 Start-Sleep -Seconds $d
                 continue
             }
@@ -243,9 +249,21 @@ function Expand-FullPath {
     return $P
 }
 
+function Test-ZipMagic {
+    param([string]$Path)
+    try {
+        $fs = [IO.File]::OpenRead($Path)
+        try {
+            $b = New-Object byte[] 2
+            $n = $fs.Read($b, 0, 2)
+            return ($n -eq 2 -and $b[0] -eq 0x50 -and $b[1] -eq 0x4B)
+        } finally { $fs.Dispose() }
+    } catch { return $false }
+}
+
 function Get-ZipFiles {
     param([string]$Path)
-    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    Add-Type -AssemblyName System.IO.Compression.FileSystem -ErrorAction SilentlyContinue
     $zip = $null
     try {
         $zip = [IO.Compression.ZipFile]::OpenRead($Path)
@@ -272,7 +290,7 @@ function Get-ZipFiles {
 
 function Expand-Zip {
     param([string]$ZipPath, [string]$Dest)
-    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    Add-Type -AssemblyName System.IO.Compression.FileSystem -ErrorAction SilentlyContinue
     if (Test-Path -LiteralPath $Dest) { Remove-Item -LiteralPath $Dest -Recurse -Force }
     New-Item -ItemType Directory -Path $Dest -Force | Out-Null
     $zip = [IO.Compression.ZipFile]::OpenRead($ZipPath)
@@ -550,7 +568,7 @@ function Enable-WorkflowWrite {
 }
 
 # ------------------------------------------------------------
-# Upload
+# Path helpers
 # ------------------------------------------------------------
 function Encode-Path {
     param([string]$P)
@@ -563,17 +581,227 @@ function Is-Workflow {
     return ($P -replace '\\','/') -match '^(?i)\.github/workflows/'
 }
 
-function Upload-Files {
+# ------------------------------------------------------------
+# BLOB UPLOAD (serial)
+# ------------------------------------------------------------
+function Upload-BlobsSerial {
+    param([string]$Owner, [string]$Repo, $Files)
+    $out = New-Object System.Collections.Generic.List[object]
+    $total = $Files.Count
+    $n = 0
+    foreach ($f in $Files) {
+        $n++
+        if ($f.Length -gt 100MB) { Die ("File > 100MB not supported: " + $f.Path) }
+        $bytes = [IO.File]::ReadAllBytes($f.FullName)
+        $b64   = [Convert]::ToBase64String($bytes)
+        $b = Api POST ($script:ApiBase + "/repos/" + $Owner + "/" + $Repo + "/git/blobs") @{
+            content  = $b64
+            encoding = 'base64'
+        }
+        if (-not $b.Ok) { Die ("Blob upload failed for " + $f.Path + ": " + (Api-Err $b)) }
+        $out.Add([pscustomobject]@{ path = $f.Path; sha = $b.Data.sha })
+        if (($n % 5) -eq 0 -or $n -eq $total) {
+            Info ("Blob " + $n + "/" + $total)
+        }
+    }
+    return $out.ToArray()
+}
+
+# ------------------------------------------------------------
+# BLOB UPLOAD (parallel via runspace pool)
+# ------------------------------------------------------------
+function Upload-BlobsParallel {
+    param(
+        [string]$Owner,
+        [string]$Repo,
+        $Files,
+        [int]$MaxParallel = 6
+    )
+    $total = $Files.Count
+    $max = [math]::Max(2, [math]::Min($MaxParallel, $total))
+    Info ("Parallel upload with " + $max + " runspaces")
+
+    $pool = [runspacefactory]::CreateRunspacePool(1, $max)
+    $pool.Open()
+
+    $headers = $script:Headers
+    $apiBase = $script:ApiBase
+    $jobs = New-Object System.Collections.Generic.List[object]
+
+    try {
+        foreach ($f in $Files) {
+            if ($f.Length -gt 100MB) { Die ("File > 100MB not supported: " + $f.Path) }
+
+            $ps = [powershell]::Create()
+            $ps.RunspacePool = $pool
+            $null = $ps.AddScript({
+                param($apiBase, $owner, $repo, $relPath, $fullPath, $headers)
+                try {
+                    $bytes = [IO.File]::ReadAllBytes($fullPath)
+                    $b64   = [Convert]::ToBase64String($bytes)
+                    $body  = @{ content = $b64; encoding = 'base64' } | ConvertTo-Json -Depth 5 -Compress
+                    $uri   = "$apiBase/repos/$owner/$repo/git/blobs"
+
+                    $attempt = 0
+                    $maxAttempts = 5
+                    while ($true) {
+                        $attempt++
+                        try {
+                            $r = Invoke-RestMethod -Method POST -Uri $uri -Headers $headers `
+                                 -ContentType 'application/json; charset=utf-8' -Body $body `
+                                 -TimeoutSec 90 -ErrorAction Stop
+                            return [pscustomobject]@{ Path=$relPath; Sha=$r.sha; Ok=$true; Error=$null }
+                        } catch {
+                            $status = 0
+                            try {
+                                if ($_.Exception.Response) {
+                                    $status = [int]$_.Exception.Response.StatusCode
+                                }
+                            } catch {}
+                            $transient = ($status -eq 0 -or $status -ge 500 -or $status -eq 429 -or $status -eq 408)
+                            if ($attempt -lt $maxAttempts -and $transient) {
+                                Start-Sleep -Seconds ([math]::Min(10, [int][math]::Pow(2, $attempt)))
+                                continue
+                            }
+                            return [pscustomobject]@{ Path=$relPath; Sha=$null; Ok=$false; Error=$_.Exception.Message }
+                        }
+                    }
+                } catch {
+                    return [pscustomobject]@{ Path=$relPath; Sha=$null; Ok=$false; Error=$_.Exception.Message }
+                }
+            }).AddArgument($apiBase).AddArgument($Owner).AddArgument($Repo).AddArgument($f.Path).AddArgument($f.FullName).AddArgument($headers)
+
+            $jobs.Add([pscustomobject]@{
+                PS     = $ps
+                Handle = $ps.BeginInvoke()
+                Path   = $f.Path
+            })
+        }
+
+        $results = New-Object System.Collections.Generic.List[object]
+        $n = 0
+        foreach ($j in $jobs) {
+            $out = $null
+            try {
+                $out = $j.PS.EndInvoke($j.Handle)
+            } catch {
+                $out = @([pscustomobject]@{ Path=$j.Path; Sha=$null; Ok=$false; Error=$_.Exception.Message })
+            }
+            $j.PS.Dispose()
+            $n++
+            foreach ($r in @($out)) {
+                $results.Add($r)
+            }
+            if (($n % 5) -eq 0 -or $n -eq $total) {
+                Info ("Blob " + $n + "/" + $total)
+            }
+        }
+
+        $failed = @($results | Where-Object { -not $_.Ok })
+        if ($failed.Count -gt 0) {
+            foreach ($ff in $failed) {
+                Warn ("Blob failed: " + $ff.Path + " -> " + $ff.Error)
+            }
+            Die ($failed.Count.ToString() + " blob(s) failed.")
+        }
+
+        return @($results | ForEach-Object { [pscustomobject]@{ path=$_.Path; sha=$_.Sha } })
+    } finally {
+        try { $pool.Close() } catch {}
+        try { $pool.Dispose() } catch {}
+        foreach ($j in $jobs) { try { $j.PS.Dispose() } catch {} }
+    }
+}
+
+# ------------------------------------------------------------
+# UPLOAD MODE 1: Git Data API (1 commit, bulk)
+# ------------------------------------------------------------
+function Upload-GitData {
+    param(
+        [string]$Owner,
+        [string]$Repo,
+        [string]$Branch,
+        $Files,
+        [switch]$Parallel,
+        [int]$MaxParallel = 6
+    )
+
+    Write-Host "    [i] Mode: Git Data API (1 commit)" -ForegroundColor DarkGray
+
+    # 1) Resolve base ref
+    $ref = Api GET ($script:ApiBase + "/repos/" + $Owner + "/" + $Repo + "/git/ref/heads/" + $Branch)
+    if (-not $ref.Ok) {
+        # try default branch
+        $meta = Api GET ($script:ApiBase + "/repos/" + $Owner + "/" + $Repo)
+        if (-not $meta.Ok) { Die ("Cannot read repo: " + (Api-Err $meta)) }
+        $Branch = [string]$meta.Data.default_branch
+        if ([string]::IsNullOrWhiteSpace($Branch)) { $Branch = 'main' }
+        $ref = Api GET ($script:ApiBase + "/repos/" + $Owner + "/" + $Repo + "/git/ref/heads/" + $Branch)
+        if (-not $ref.Ok) { Die ("Branch ref '" + $Branch + "' not found: " + (Api-Err $ref)) }
+    }
+    $baseSha = [string]$ref.Data.object.sha
+
+    # 2) Get base tree from commit
+    $commit = Api GET ($script:ApiBase + "/repos/" + $Owner + "/" + $Repo + "/git/commits/" + $baseSha)
+    if (-not $commit.Ok) { Die ("Cannot read base commit: " + (Api-Err $commit)) }
+    $baseTree = [string]$commit.Data.tree.sha
+
+    # 3) Upload blobs (serial or parallel)
+    $blobs = $null
+    if ($Parallel) {
+        $blobs = Upload-BlobsParallel -Owner $Owner -Repo $Repo -Files $Files -MaxParallel $MaxParallel
+    } else {
+        $blobs = Upload-BlobsSerial -Owner $Owner -Repo $Repo -Files $Files
+    }
+    if (-not $blobs -or $blobs.Count -eq 0) { Die "No blobs uploaded." }
+
+    # 4) Create tree in 1 call
+    $tree = New-Object System.Collections.Generic.List[object]
+    foreach ($b in $blobs) {
+        $tree.Add(@{ path=$b.path; mode='100644'; type='blob'; sha=$b.sha })
+    }
+    $treeBody = @{ base_tree = $baseTree; tree = $tree.ToArray() }
+    $treeResp = Api POST ($script:ApiBase + "/repos/" + $Owner + "/" + $Repo + "/git/trees") $treeBody
+    if (-not $treeResp.Ok) { Die ("Tree creation failed: " + (Api-Err $treeResp)) }
+
+    # 5) Create commit
+    $message = "Publish from ZIP " + (Get-Date -Format 'yyyy-MM-dd HH:mm:ss')
+    $newCommit = Api POST ($script:ApiBase + "/repos/" + $Owner + "/" + $Repo + "/git/commits") @{
+        message = $message
+        tree    = $treeResp.Data.sha
+        parents = @($baseSha)
+    }
+    if (-not $newCommit.Ok) { Die ("Commit failed: " + (Api-Err $newCommit)) }
+    $newSha = [string]$newCommit.Data.sha
+
+    # 6) Update ref
+    $update = Api PATCH ($script:ApiBase + "/repos/" + $Owner + "/" + $Repo + "/git/refs/heads/" + $Branch) @{
+        sha   = $newSha
+        force = $false
+    }
+    if (-not $update.Ok) { Die ("Ref update failed: " + (Api-Err $update)) }
+
+    return [pscustomobject]@{
+        Method    = if ($Parallel) { 'GitData-Parallel' } else { 'GitData-Serial' }
+        CommitSha = $newSha
+        Branch    = $Branch
+        Files     = $Files.Count
+    }
+}
+
+# ------------------------------------------------------------
+# UPLOAD MODE 2: Contents API (fallback, N commits)
+# ------------------------------------------------------------
+function Upload-Contents {
     param([string]$Owner, [string]$Repo, [string]$Branch, $Files)
 
+    Write-Host "    [i] Mode: Contents API (fallback, 1 commit per file)" -ForegroundColor DarkGray
     $total   = $Files.Count
     $ordered = @($Files | Sort-Object @{Expression={ if (Is-Workflow $_.Path) { 0 } else { 1 } }}, Path)
 
     $n = 0
     foreach ($f in $ordered) {
-        if ($f.Length -gt 100MB) {
-            Die ("File exceeds 100 MB limit: " + $f.Path)
-        }
+        if ($f.Length -gt 100MB) { Die ("File exceeds 100 MB limit: " + $f.Path) }
         $bytes = [IO.File]::ReadAllBytes($f.FullName)
         $b64   = [Convert]::ToBase64String($bytes)
         $uri   = $script:ApiBase + "/repos/" + $Owner + "/" + $Repo + "/contents/" + (Encode-Path $f.Path)
@@ -598,17 +826,46 @@ function Upload-Files {
         }
         if (-not $put.Ok) {
             if ($put.Status -eq 404 -and (Is-Workflow $f.Path)) {
-                Die ("Workflow file rejected. Your token needs the 'workflow' scope. File: " + $f.Path)
+                Die ("Workflow file rejected. Token needs 'workflow' scope. File: " + $f.Path)
             }
             Die ("Upload failed: " + $f.Path + " -> " + (Api-Err $put))
         }
         $n++
-        # Print progress every 5 files or on last
         if (($n % 5) -eq 0 -or $n -eq $total) {
             Info ("Uploaded " + $n + "/" + $total)
         }
     }
-    return $n
+    return [pscustomobject]@{
+        Method    = 'Contents'
+        CommitSha = $null
+        Branch    = $Branch
+        Files     = $n
+    }
+}
+
+# ------------------------------------------------------------
+# UPLOAD ORCHESTRATOR (try Git Data, fallback Contents)
+# ------------------------------------------------------------
+function Upload-Files {
+    param(
+        [string]$Owner,
+        [string]$Repo,
+        [string]$Branch,
+        $Files,
+        [switch]$Serial,
+        [int]$MaxParallel = 6
+    )
+
+    $useParallel = (-not $Serial) -and ($Files.Count -ge 5)
+
+    try {
+        return Upload-GitData -Owner $Owner -Repo $Repo -Branch $Branch -Files $Files `
+            -Parallel:$useParallel -MaxParallel $MaxParallel
+    } catch {
+        Warn ("Git Data API failed: " + $_.Exception.Message)
+        Warn "Falling back to Contents API (slower but reliable)..."
+        return Upload-Contents -Owner $Owner -Repo $Repo -Branch $Branch -Files $Files
+    }
 }
 
 # ------------------------------------------------------------
@@ -622,7 +879,6 @@ function Get-Run {
     if (-not $r.Ok) { return $null }
     $runs = @($r.Data.workflow_runs)
     if ($runs.Count -eq 0) { return $null }
-    # Filter by our workflow file and by time
     $f = @($runs | Where-Object {
         try {
             ([datetime]$_.created_at -ge $Since) -and
@@ -638,7 +894,6 @@ function Wait-Build {
 
     $deadline = (Get-Date).AddMinutes($MaxMin)
 
-    # Find the run
     $run = $null
     for ($i = 0; $i -lt 40; $i++) {
         if ((Get-Date) -ge $deadline) { Die "Build did not start within the time limit." }
@@ -649,7 +904,6 @@ function Wait-Build {
     if (-not $run) { Die "Could not find the workflow run. Open the Actions tab on GitHub." }
     $script:RunId = $run.id
 
-    # Poll
     $t0     = Get-Date
     $lastSt = ""
     while ($run.status -ne 'completed') {
@@ -692,12 +946,40 @@ function Show-BuildError {
     }
 }
 
+# ------------------------------------------------------------
+# Verify publish (quick check)
+# ------------------------------------------------------------
+function Verify-Publish {
+    param([string]$Owner, [string]$Repo, [string]$Branch, $Files, [string]$CommitSha)
+
+    Write-Host "    [i] Verifying on GitHub..." -ForegroundColor DarkGray
+
+    # verify commit exists
+    if ($CommitSha) {
+        $c = Api GET ($script:ApiBase + "/repos/" + $Owner + "/" + $Repo + "/commits/" + $CommitSha)
+        if (-not $c.Ok) { Die ("Commit verification failed: " + (Api-Err $c)) }
+    }
+
+    # spot check 3 files (first, middle, last)
+    $samples = New-Object System.Collections.Generic.List[object]
+    if ($Files.Count -ge 1) { $samples.Add($Files[0]) }
+    if ($Files.Count -ge 3) { $samples.Add($Files[[int]($Files.Count / 2)]) }
+    if ($Files.Count -ge 2) { $samples.Add($Files[$Files.Count - 1]) }
+
+    foreach ($f in $samples) {
+        $uri = $script:ApiBase + "/repos/" + $Owner + "/" + $Repo + "/contents/" + (Encode-Path $f.Path)
+        $r = Api GET ($uri + "?ref=" + [uri]::EscapeDataString($Branch))
+        if (-not $r.Ok) { Die ("Verify failed, missing: " + $f.Path + " (" + (Api-Err $r) + ")") }
+    }
+    Info ("Spot-checked " + $samples.Count + " file(s)")
+}
+
 # =============================================================
 # Main
 # =============================================================
 function Main {
     Say "========================================================="
-    Say "   GitHub ZIP -> Docker Image Publisher"
+    Say "   GitHub ZIP -> Docker Image Publisher (v5.0)"
     Say "========================================================="
     Blank
 
@@ -709,6 +991,7 @@ function Main {
             $ZipPath = Expand-FullPath ($ZipPath.Trim('"').Trim())
             if (-not (Test-Path -LiteralPath $ZipPath -PathType Leaf)) { Warn "File not found."; continue }
             if (-not ([IO.Path]::GetExtension($ZipPath) -ieq '.zip')) { Warn "Not a .zip file."; continue }
+            if (-not (Test-ZipMagic $ZipPath)) { Warn "Not a valid ZIP (bad magic bytes)."; continue }
             break
         }
     } else {
@@ -718,6 +1001,9 @@ function Main {
         }
         if (-not ([IO.Path]::GetExtension($ZipPath) -ieq '.zip')) {
             Die "Input is not a .zip file."
+        }
+        if (-not (Test-ZipMagic $ZipPath)) {
+            Die "Not a valid ZIP (bad magic bytes)."
         }
     }
 
@@ -788,13 +1074,22 @@ function Main {
 
     # ---- Upload ----
     $uploadStart = Get-Date
-    $null = DoStep ("Uploading " + $files.Count + " files") {
-        Upload-Files -Owner $targetOwner -Repo $targetName -Branch $script:Branch -Files $files
+    $publish = DoStep ("Uploading " + $files.Count + " files") {
+        Upload-Files -Owner $targetOwner -Repo $targetName -Branch $script:Branch `
+            -Files $files -Serial:$Serial -MaxParallel $BlobParallelism
+    }
+    $script:UploadMethod = $publish.Method
+    Info ("Method: " + $publish.Method + " | Commit: " + $(if ($publish.CommitSha) { $publish.CommitSha.Substring(0,7) } else { "N/A" }))
+
+    # ---- Verify ----
+    $null = DoStep "Verifying publish" {
+        Verify-Publish -Owner $targetOwner -Repo $targetName -Branch $script:Branch `
+            -Files $files -CommitSha $publish.CommitSha
     }
 
     if ($NoWait) {
         Blank
-        Ok "Upload complete. Build skipped (--NoWait)."
+        Ok "Upload complete. Build skipped (-NoWait)."
         Info ("Actions: https://github.com/" + $targetOwner + "/" + $targetName + "/actions")
         return
     }
@@ -830,6 +1125,7 @@ try {
     Say "========================================================="
     Say ("Repository : https://github.com/" + $script:Owner + "/" + $script:Repo)
     Write-Host ("Image      : " + $script:Image) -ForegroundColor Green
+    Say ("Upload     : " + $script:UploadMethod)
     Say ("Time       : " + $elapsed + "s")
     Blank
     Say "Use it with:"
