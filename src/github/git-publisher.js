@@ -245,7 +245,23 @@ export async function publishWithGit({ token, repoName, sourceDir, version = '0.
     step('publishing', 'Publishing source…');
     const work = await copyWorktree(sourceDir, validation.files);
     try {
-      const sha = await gitPushWorktree({ work, token, owner: realOwner, repo: name, branch, version });
+      // Use GitHub's authenticated Git Data API from inside the Builder instead of
+      // spawning the local git executable. This makes Publish independent of git
+      // installation, git credential helpers, LFS availability, and shell behavior.
+      let sha = null;
+      let lastPublishError = null;
+      for (let attempt = 1; attempt <= 3; attempt += 1) {
+        try {
+          sha = await publishWorktreeWithGitHubApi({ octokit, work, owner: realOwner, repo: name, branch, version });
+          lastPublishError = null;
+          break;
+        } catch (err) {
+          lastPublishError = err;
+          if (err?.code !== 'conflict' || attempt === 3) throw err;
+          step('retrying', `GitHub changed while uploading; retrying (${attempt}/2)…`);
+        }
+      }
+      if (!sha) throw lastPublishError || new Error('GitHub upload did not return a commit SHA.');
       step('verifying', 'Verifying GitHub…');
       const verified = await verifyRemote({ octokit, owner: realOwner, repo: name, sha });
       if (!verified.ok) {
@@ -287,7 +303,7 @@ export function manualFallback(repoName) {
     action: 'download',
     label: 'Download Project',
     scriptLabel: 'Windows GitHub Publisher',
-    scriptFilename: 'GitHub-ZIP-Publisher-v2.6.ps1',
+    scriptFilename: 'GitHub-ZIP-Image-Publisher-v4.0.ps1',
     steps: [
       'Download the project ZIP and the Windows GitHub Publisher fallback script.',
       `On github.com create a new empty repository named ${name}, or choose an existing repository only after confirming overwrite.`,
@@ -313,6 +329,87 @@ async function copyWorktree(sourceDir, files) {
   const ignore = ['.env', '.env.*', 'node_modules/', 'artifacts/', 'data/', '*.db', '.git/'].join('\n') + '\n';
   await fs.writeFile(path.join(work, '.gitignore'), ignore);
   return work;
+}
+
+export async function publishWorktreeWithGitHubApi({ octokit, work, owner, repo, branch = 'main', version = '0.1.0' }) {
+  const files = (await listFiles(work)).filter((rel) => !SKIP.test(rel));
+  if (!files.length) throw Object.assign(new Error('The project has no publishable files.'), { code: 'PROJECT_EMPTY' });
+
+  const repoPath = `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
+  let headSha = null;
+  try {
+    const ref = await octokit.request({ method: 'GET', url: `${repoPath}/git/ref/heads/${encodeURIComponent(branch)}` });
+    headSha = ref.data?.object?.sha || null;
+  } catch (err) {
+    if (Number(err?.status) !== 404 && !/empty|not found/i.test(String(err?.message || ''))) throw err;
+  }
+
+  const entries = [];
+  const concurrency = 6;
+  let cursor = 0;
+  const worker = async () => {
+    while (true) {
+      const i = cursor++;
+      if (i >= files.length) return;
+      const rel = files[i];
+      const content = await fs.readFile(path.join(work, rel));
+      const blob = await octokit.request({
+        method: 'POST',
+        url: `${repoPath}/git/blobs`,
+        data: { content: content.toString('base64'), encoding: 'base64' },
+      });
+      entries[i] = { path: rel, mode: '100644', type: 'blob', sha: blob.data?.sha };
+      if (!entries[i].sha) throw new Error(`GitHub did not return a blob SHA for ${rel}.`);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(concurrency, files.length) }, worker));
+
+  let baseTreeSha = null;
+  if (headSha) {
+    const commit = await octokit.request({ method: 'GET', url: `${repoPath}/git/commits/${headSha}` });
+    baseTreeSha = commit.data?.tree?.sha || null;
+  }
+  const tree = await octokit.request({
+    method: 'POST',
+    url: `${repoPath}/git/trees`,
+    data: { ...(baseTreeSha ? { base_tree: baseTreeSha } : {}), tree: entries },
+  });
+  const commit = await octokit.request({
+    method: 'POST',
+    url: `${repoPath}/git/commits`,
+    data: {
+      message: `chore: release ${version} from App Builder`,
+      tree: tree.data?.sha,
+      ...(headSha ? { parents: [headSha] } : {}),
+    },
+  });
+  const commitSha = commit.data?.sha;
+  if (!commitSha) throw new Error('GitHub did not return the new commit SHA.');
+
+  try {
+    if (headSha) {
+      await octokit.request({
+        method: 'PATCH',
+        url: `${repoPath}/git/refs/heads/${encodeURIComponent(branch)}`,
+        data: { sha: commitSha, force: false },
+      });
+    } else {
+      await octokit.request({
+        method: 'POST',
+        url: `${repoPath}/git/refs`,
+        data: { ref: `refs/heads/${branch}`, sha: commitSha },
+      });
+    }
+  } catch (err) {
+    if (Number(err?.status) === 409 || /fast.?forward|reference/i.test(String(err?.message || ''))) {
+      const conflict = new Error('GitHub repository changed while publishing.');
+      conflict.status = 409;
+      conflict.code = 'conflict';
+      throw conflict;
+    }
+    throw err;
+  }
+  return commitSha;
 }
 
 async function gitPushWorktree({ work, token, owner, repo, branch, version }) {
