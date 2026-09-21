@@ -446,10 +446,35 @@ export function registerRoutes(r, app) {
   r.get('/api/projects/:id/github-fallback', async (req, res) => {
     const p = projects.get(req.params.id);
     if (!p) return res.status(404).json({ error: 'Project not found' });
-    const fallbackPath = path.resolve(process.cwd(), 'fallback', 'GitHub-ZIP-Image-Publisher-v4.0.ps1');
-    try { await fs.access(fallbackPath); } catch { return res.status(404).json({ error: 'GitHub fallback script is not installed.' }); }
+    const names = ['GitHub-ZIP-Image-Publisher-v4.0.ps1', 'GitHub-ZIP-Publisher-v2.6.ps1'];
+    const roots = [
+      path.resolve(process.cwd(), 'fallback'),
+      path.resolve(process.cwd(), 'app', 'fallback'),
+      path.resolve('/app/fallback'),
+      path.resolve(path.dirname(new URL(import.meta.url).pathname), '../../fallback'),
+    ];
+    let fallbackPath = null;
+    let filename = names[0];
+    for (const root of roots) {
+      for (const name of names) {
+        const candidate = path.join(root, name);
+        try {
+          await fs.access(candidate);
+          fallbackPath = candidate;
+          filename = name;
+          break;
+        } catch {}
+      }
+      if (fallbackPath) break;
+      try {
+        const entries = await fs.readdir(root);
+        const hit = entries.find((n) => n.toLowerCase().endsWith('.ps1'));
+        if (hit) { fallbackPath = path.join(root, hit); filename = hit; break; }
+      } catch {}
+    }
+    if (!fallbackPath) return res.status(404).json({ error: 'GitHub fallback script is not installed.' });
     res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-    res.setHeader('Content-Disposition', 'attachment; filename="GitHub-ZIP-Image-Publisher-v4.0.ps1"');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
     createReadStream(fallbackPath).pipe(res);
   });
 
