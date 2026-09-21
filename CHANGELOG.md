@@ -37,3 +37,7 @@
 ## 1.4.22
 - RUN no longer treats every app that has Dockerfile/compose as a container-only app.
 - Native preview is used when index.html or a Node start script exists. Podman Sandbox is required only for image-only projects.
+
+## 1.4.23
+- Paste a GHCR image to generate SoloHost docker-compose.yml + config_options.yml without Run.
+- Replaced Windows publisher with GitHub-ZIP-Image-Publisher-v4.0.ps1.
