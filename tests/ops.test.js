@@ -243,3 +243,42 @@ test('network failures are classified before app proxy repair', () => {
   assert.equal(d.code, 'network_dns');
   assert.match(d.fix, /Sandbox Internet|DNS/i);
 });
+
+
+test('GitHub publisher uses GitHub API upload without requiring local git', async () => {
+  const fs = await import('node:fs/promises');
+  const os = await import('node:os');
+  const path = await import('node:path');
+  const { publishWorktreeWithGitHubApi } = await import('../src/github/git-publisher.js');
+  const work = await fs.mkdtemp(path.join(os.tmpdir(), 'paf-gh-api-'));
+  await fs.mkdir(path.join(work, '.github', 'workflows'), { recursive: true });
+  await fs.writeFile(path.join(work, 'Dockerfile'), 'FROM node:24-alpine\n');
+  await fs.writeFile(path.join(work, '.github', 'workflows', 'docker.yml'), 'permissions:\n  packages: write\n');
+  const calls = [];
+  let n = 0;
+  const octokit = { request: async ({ method, url, data }) => {
+    calls.push({ method, url, data });
+    if (method === 'GET' && /git\/ref\/heads\/main$/.test(url)) {
+      const e = new Error('Not Found'); e.status = 404; throw e;
+    }
+    if (method === 'POST' && /\/git\/blobs$/.test(url)) return { data: { sha: `blob-${++n}` } };
+    if (method === 'POST' && /\/git\/trees$/.test(url)) return { data: { sha: 'tree-1' } };
+    if (method === 'POST' && /\/git\/commits$/.test(url)) return { data: { sha: 'commit-1' } };
+    if (method === 'POST' && /\/git\/refs$/.test(url)) return { data: {} };
+    throw new Error(`Unexpected ${method} ${url}`);
+  }};
+  const sha = await publishWorktreeWithGitHubApi({ octokit, work, owner: 'cannoi', repo: 'demo', branch: 'main', version: '1.4.22' });
+  assert.equal(sha, 'commit-1');
+  assert.ok(calls.some((x) => x.method === 'POST' && /\/git\/blobs$/.test(x.url)));
+  assert.ok(calls.some((x) => x.method === 'POST' && /\/git\/trees$/.test(x.url)));
+  assert.ok(calls.some((x) => x.method === 'POST' && /\/git\/commits$/.test(x.url)));
+});
+
+
+test('GHCR image text becomes a SoloHost export action', async () => {
+  const { extractGhcrImage, inferAction, guessSoloHostPorts } = await import('../src/scripts/ops.js');
+  const msg = 'tạo file install SoloHost ghcr.io/cannoi/solohost-browser-native-v3:latest';
+  assert.equal(extractGhcrImage(msg), 'ghcr.io/cannoi/solohost-browser-native-v3:latest');
+  assert.equal(inferAction(msg), 'export');
+  assert.deepEqual(guessSoloHostPorts(msg, extractGhcrImage(msg)), { hostPort: 16080, containerPort: 6080 });
+});
