@@ -82,3 +82,40 @@ test('native preview still serves UI when package.json start script crashes', as
   assert.match(await page.text(), /Snake/);
   await preview.stop({ projectSlug: 'snake-preview' });
 });
+
+test('native preview gives an accurate, actionable error for a Dockerfile-only app (no package.json, no index.html) instead of a misleading "Tap Build" message', async () => {
+  const { NativePreview } = await import('../src/runtime/native-preview.js');
+  const root = fs.mkdtempSync('/tmp/paf-native-dockeronly-');
+  // Simulates an imported multi-process container image (e.g. a VNC/browser
+  // app): no Node.js entrypoint, no static index.html — only runnable inside
+  // a real container.
+  fs.writeFileSync(`${root}/Dockerfile`, 'FROM alpine:3.19.1\nRUN apk add --no-cache supervisor\nENTRYPOINT ["supervisord"]\n');
+  const preview = new NativePreview({ cfg: {}, log: { warn() {} } });
+  const result = await preview.run({ sourcePath: root, projectSlug: 'novnc-preview', timeout: 5, keepRunning: false });
+  assert.equal(result.status, 'failed');
+  assert.doesNotMatch(result.error, /Tap Build first/);
+  assert.match(result.error, /Container Sandbox/);
+  assert.match(result.error, /real Docker container/);
+});
+
+test('native preview keeps the original "Tap Build" message for a project with neither UI files nor a Dockerfile', async () => {
+  const { NativePreview } = await import('../src/runtime/native-preview.js');
+  const root = fs.mkdtempSync('/tmp/paf-native-empty-');
+  const preview = new NativePreview({ cfg: {}, log: { warn() {} } });
+  const result = await preview.run({ sourcePath: root, projectSlug: 'empty-preview', timeout: 5, keepRunning: false });
+  assert.equal(result.status, 'failed');
+  assert.match(result.error, /Tap Build first/);
+});
+
+test('native preview also finds index.html in broader static-asset directory conventions', async () => {
+  const { NativePreview } = await import('../src/runtime/native-preview.js');
+  const root = fs.mkdtempSync('/tmp/paf-native-static-');
+  fs.mkdirSync(`${root}/static`);
+  fs.writeFileSync(`${root}/static/index.html`, '<html><body>Static App</body></html>');
+  const preview = new NativePreview({ cfg: {}, log: { warn() {} } });
+  const result = await preview.run({ sourcePath: root, projectSlug: 'static-preview', timeout: 10, keepRunning: true });
+  assert.equal(result.status, 'passed');
+  const page = await fetch(`http://127.0.0.1:${result.hostPort}/`);
+  assert.match(await page.text(), /Static App/);
+  await preview.stop({ projectSlug: 'static-preview' });
+});

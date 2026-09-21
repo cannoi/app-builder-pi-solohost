@@ -60,7 +60,19 @@ export class NativePreview {
       }
       child = await spawnApp(sourcePath, port, pkg).catch(() => null);
     } else {
-      return { status: 'failed', runtime: 'native-preview', health: false, error: 'No UI files were found. Tap Build first so the app has an index page.' };
+      // Fix: this native fallback can only run a Node process (package.json with
+      // a start script) or serve static files (an index.html). A project that
+      // has neither but DOES have a Dockerfile — installs system packages, runs
+      // a non-Node service (Python, Go, supervisord-managed multi-process
+      // images, VNC/browser containers, etc.) — can never work here no matter
+      // how many times Build is re-run; the old generic "No UI files were
+      // found. Tap Build first" message was actively misleading for exactly
+      // that case. Give the real, actionable reason instead.
+      const hasDockerfile = await fs.access(path.join(sourcePath, 'Dockerfile')).then(() => true).catch(() => false);
+      const error = hasDockerfile
+        ? 'This app has no package.json or index.html — it can only run as a real Docker container (it likely installs system packages or runs a non-Node service). Enable Container Sandbox (Podman) in Settings; the built-in safe preview only supports Node.js or static-file apps.'
+        : 'No UI files were found. Tap Build first so the app has an index page.';
+      return { status: 'failed', runtime: 'native-preview', health: false, error };
     }
 
     const state = { server, child, port, publicDir, startedAt: Date.now(), stdout: '', stderr: '' };
@@ -176,6 +188,18 @@ async function resolvePublicDir(sourcePath) {
     path.join(sourcePath, 'public'),
     path.join(sourcePath, 'dist'),
     path.join(sourcePath, 'www'),
+    path.join(sourcePath, 'static'),
+    path.join(sourcePath, 'htdocs'),
+    path.join(sourcePath, 'app', 'public'),
+    path.join(sourcePath, 'assets'),
+    path.join(sourcePath, 'build'),
+    path.join(sourcePath, 'out'),
+    path.join(sourcePath, 'site'),
+    path.join(sourcePath, 'web'),
+    path.join(sourcePath, 'frontend'),
+    path.join(sourcePath, 'client'),
+    path.join(sourcePath, 'ui'),
+    path.join(sourcePath, 'docs'),
     sourcePath,
   ];
   for (const dir of candidates) {

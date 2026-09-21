@@ -33,3 +33,7 @@
 - Preview/sandbox DNS + PREVIEW_ONLINE so product apps can use the Internet.
 - Failures include WHY, FIX, and COPY_FOR_AI.
 - Repair prompt forbids full rewrites. Activity log is stored and sent to AI.
+
+## 1.4.22
+- RUN no longer treats every app that has Dockerfile/compose as a container-only app.
+- Native preview is used when index.html or a Node start script exists. Podman Sandbox is required only for image-only projects.

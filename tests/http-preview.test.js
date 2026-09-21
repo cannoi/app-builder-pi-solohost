@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import { createApp, listen } from '../src/http.js';
-import { createPreviewHandler, previewPath, resolvePreviewUpstream, injectPreviewBridge } from '../src/preview.js';
+import { createPreviewHandler, previewPath, resolvePreviewUpstream, injectPreviewBridge, decodePreviewExternalUrl } from '../src/preview.js';
 
 test('preview HTML fetch("/api") is rewritten to the preview prefix', () => {
   const html = injectPreviewBridge('<head></head><body></body>', 'snake-classic');
@@ -15,6 +15,13 @@ test('preview HTML rewrites root CSS and image URLs onto the app prefix', () => 
   assert.match(html, /\/preview\/demo-app\/__app__\/style\.css/);
   assert.match(html, /\/preview\/demo-app\/__app__\/logo\.png/);
   assert.match(html, /<base href="\/preview\/demo-app\/__app__\/">/);
+});
+
+test('preview safely recognizes browser-style relative external URLs without proxying them', () => {
+  assert.equal(decodePreviewExternalUrl('/https://example.com/path?q=1'), 'https://example.com/path?q=1');
+  assert.equal(decodePreviewExternalUrl('/http://github.com/'), 'http://github.com/');
+  assert.equal(decodePreviewExternalUrl('/javascript:alert(1)'), null);
+  assert.equal(decodePreviewExternalUrl('/file:///etc/passwd'), null);
 });
 
 test('preview proxy must use the app port, never Builder :8080 on localhost', () => {
@@ -81,6 +88,23 @@ test('a normal API route error is still handled as JSON (unrelated behavior is u
   } finally {
     server.close();
   }
+});
+
+test('preview handles /https://... as an external page gateway, not a Builder 404', async () => {
+  const project = { id: 'proj-ext', slug: 'browser-app' };
+  const projects = {
+    get: () => project,
+    list: () => [project],
+    readMetadata: async () => ({ status: 'passed', hostPort: 9, containerIp: null }),
+    saveMetadata: async () => {},
+    sourceDir: () => '/tmp/does-not-exist',
+  };
+  const preview = createPreviewHandler({ projects });
+  await withServer(preview, async (port) => {
+    const res = await get(port, '/preview/browser-app/__app__/https://example.com/path?q=1');
+    assert.notEqual(res.status, 404);
+    assert.ok([200, 301, 302, 307, 308, 502].includes(res.status));
+  });
 });
 
 test('a working preview returns a Builder chrome page with back link and iframe', async () => {

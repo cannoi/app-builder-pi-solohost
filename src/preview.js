@@ -1,6 +1,8 @@
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
+import dns from 'node:dns/promises';
+import net from 'node:net';
 import { PREVIEW_MIME as MIME } from './preview-mime.js';
 
 export function createPreviewHandler({ projects }) {
@@ -26,6 +28,36 @@ export function createPreviewHandler({ projects }) {
     const target = resolvePreviewUpstream(runtime);
     const rel = '/' + restParts.filter((p) => p !== '__app__').join('/');
     const targetPath = (rel === '/' ? '/' : rel) + url.search;
+
+    // Some browser-style apps turn an entered absolute URL into a relative
+    // preview path such as /https://example.com. Do not proxy that URL through
+    // the Builder (which would be an SSRF risk). Instead, safely hand the
+    // browser back the external http(s) URL so the WebView navigates directly.
+    // Read directly from the original pathname because splitting on '/' would
+    // destroy the 'https://' delimiter.
+    const appMarker = `/preview/${encodeURIComponent(project.slug)}/__app__/`;
+    const rawAppPath = url.pathname.startsWith(appMarker) ? url.pathname.slice(appMarker.length) : '';
+    const external = decodePreviewExternalUrl(rawAppPath ? `/${rawAppPath}` : targetPath);
+    if (external) {
+      const proxiedExternal = await proxyExternal(req, res, external, project);
+      if (proxiedExternal) return true;
+      // If the safe preview gateway cannot reach the public URL, keep the
+      // failure inside Preview instead of silently turning it into a Builder 404.
+      safeHtml(res, 502, page('External page unavailable', `The preview Internet gateway could not load <code>${escapeHtml(external)}</code>. The Sandbox itself may still have Internet; this is an external-page/proxy failure.`, project));
+      return true;
+    }
+    if (url.pathname.startsWith(`/preview/${encodeURIComponent(project.slug)}/__web__`)) {
+      const requested = String(url.searchParams.get('url') || '');
+      const safeExternal = validateExternalUrl(requested);
+      if (!safeExternal) {
+        res.statusCode = 400; res.setHeader('Content-Type', 'application/json; charset=utf-8'); res.end(JSON.stringify({ error: 'Only public http/https URLs are allowed.' }));
+        return true;
+      }
+      const proxiedExternal = await proxyExternal(req, res, safeExternal, project);
+      if (proxiedExternal) return true;
+      res.statusCode = 502; res.setHeader('Content-Type', 'application/json; charset=utf-8'); res.end(JSON.stringify({ error: 'External page could not be loaded by the safe preview gateway.' }));
+      return true;
+    }
 
     const apiPort = Number(runtime.apiPort);
     const isApi = /^\/(api|health|ready|live)(\/|$)/.test(rel === '/' ? '/' : rel);
@@ -75,6 +107,107 @@ iframe{position:fixed;top:38px;left:0;right:0;bottom:0;width:100%;height:calc(10
 })();
 </script>
 </body></html>`;
+}
+
+
+const EXTERNAL_MAX_BYTES = 8 * 1024 * 1024;
+const EXTERNAL_TIMEOUT_MS = 10000;
+const EXTERNAL_MAX_REDIRECTS = 5;
+
+function escapeHtml(value) {
+  return String(value || '').replace(/[&<>"']/g, (c) => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c]));
+}
+
+function validateExternalUrl(value) {
+  try {
+    const u = new URL(String(value || ''));
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') return null;
+    if (!u.hostname || u.username || u.password) return null;
+    return u.href;
+  } catch { return null; }
+}
+
+async function assertPublicHost(hostname) {
+  const host = String(hostname || '').toLowerCase();
+  if (host === 'localhost' || host.endsWith('.localhost') || net.isIP(host) && isPrivateIp(host)) throw new Error('Private network address blocked');
+  const records = await dns.lookup(host, { all: true, verbatim: true });
+  if (!records.length || records.some((r) => isPrivateIp(r.address))) throw new Error('Private network address blocked');
+}
+
+function isPrivateIp(ip) {
+  if (net.isIPv4(ip)) {
+    const [a,b,c] = ip.split('.').map(Number);
+    return a === 10 || a === 127 || (a === 169 && b === 254) || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || a === 0 || a >= 224;
+  }
+  if (net.isIPv6(ip)) {
+    const x = ip.toLowerCase();
+    return x === '::1' || x === '::' || x.startsWith('fc') || x.startsWith('fd') || x.startsWith('fe80:') || x.startsWith('ff');
+  }
+  return true;
+}
+
+function externalAssetUrl(value, baseUrl, slug) {
+  try {
+    const raw = String(value || '').trim();
+    if (!raw || raw.startsWith('#') || /^(?:data:|blob:|javascript:|mailto:|tel:)/i.test(raw)) return raw;
+    const u = new URL(raw, baseUrl);
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') return raw;
+    return `/preview/${encodeURIComponent(slug)}/__web__?url=${encodeURIComponent(u.href)}`;
+  } catch { return value; }
+}
+
+function rewriteExternalHtml(html, baseUrl, slug) {
+  let out = String(html || '');
+  out = out.replace(/\b(href|src|poster|action)=(['"])(.*?)\2/gi, (m, attr, q, value) => `${attr}=${q}${externalAssetUrl(value, baseUrl, slug)}${q}`);
+  out = out.replace(/url\(\s*(['"]?)(.*?)\1\s*\)/gi, (m, q, value) => `url(${q}${externalAssetUrl(value, baseUrl, slug)}${q})`);
+  out = out.replace(/<base\b[^>]*>/gi, '');
+  return out;
+}
+
+async function proxyExternal(req, res, externalUrl, project, redirects = 0) {
+  const safe = validateExternalUrl(externalUrl);
+  if (!safe || redirects > EXTERNAL_MAX_REDIRECTS) return false;
+  const u = new URL(safe);
+  try { await assertPublicHost(u.hostname); } catch { return false; }
+  const transport = u.protocol === 'https:' ? await import('node:https') : await import('node:http');
+  return await new Promise((resolve) => {
+    const client = transport.default || transport;
+    const request = client.get(u, { headers: { 'user-agent': 'Pi-App-Factory-Sandbox/1.4', accept: req.headers.accept || '*/*' }, timeout: EXTERNAL_TIMEOUT_MS }, (up) => {
+      const status = up.statusCode || 502;
+      const location = up.headers.location;
+      if (status >= 300 && status < 400 && location) {
+        up.resume();
+        proxyExternal(req, res, new URL(location, u).href, project, redirects + 1).then(resolve);
+        return;
+      }
+      let bytes = 0; const chunks = [];
+      up.on('data', (c) => { bytes += c.length; if (bytes <= EXTERNAL_MAX_BYTES) chunks.push(c); else request.destroy(); });
+      up.on('end', () => {
+        if (bytes > EXTERNAL_MAX_BYTES || status >= 400) { resolve(false); return; }
+        const headers = { ...up.headers };
+        for (const k of ['content-length','content-encoding','x-frame-options','content-security-policy','set-cookie']) delete headers[k];
+        const type = String(headers['content-type'] || '');
+        let body = Buffer.concat(chunks);
+        if (type.includes('text/html')) body = Buffer.from(rewriteExternalHtml(body.toString('utf8'), u.href, project.slug), 'utf8');
+        res.writeHead(status, { ...headers, 'cache-control': 'no-store' }); res.end(body); resolve(true);
+      });
+    });
+    request.on('timeout', () => request.destroy());
+    request.on('error', () => resolve(false));
+  });
+}
+
+export function decodePreviewExternalUrl(targetPath) {
+  const raw = String(targetPath || '');
+  const match = raw.match(/^\/(https?:\/\/[^\s]+)$/i);
+  if (!match) return null;
+  try {
+    const u = new URL(match[1]);
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') return null;
+    return u.href;
+  } catch {
+    return null;
+  }
 }
 
 export function previewAssetPrefix(slug) {

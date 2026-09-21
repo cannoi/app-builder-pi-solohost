@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="vi">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -47,6 +47,7 @@ ul{margin:0;padding-left:18px;color:#c9d4de;font-size:14px;line-height:1.55}
   header{flex-direction:column}
   h1{font-size:21px}
 }
+.webbar{display:flex;gap:8px}.webbar input{flex:1;min-width:0;background:#0f171e;color:var(--text);border:1px solid var(--line);border-radius:10px;padding:9px 10px;font:inherit}.webmeta{color:var(--muted);font-size:12px;margin:8px 0}.deepdiag{margin:8px 0 10px;padding:10px;border-radius:10px;background:#0d141b;border:1px solid var(--line);color:#cbd7e2;min-height:130px}.webtest iframe{width:100%;height:360px;border:1px solid var(--line);border-radius:10px;background:#fff}@media(max-width:720px){.webtest iframe{height:300px}}
 </style>
 </head>
 <body>
@@ -54,7 +55,7 @@ ul{margin:0;padding-left:18px;color:#c9d4de;font-size:14px;line-height:1.55}
   <header>
     <div>
       <h1>Sandbox App Benchmark</h1>
-      <p class="sub">One-container baseline for Podman / Docker preview. Tests finish in 1–3 seconds.</p>
+      <p class="sub">One-container baseline for Podman / Docker preview. Fast baseline + deep network diagnostics. Deep tests may take up to 30 seconds.</p>
       <p class="meta">
         <span><span class="css-alive"></span>HTML+CSS loaded</span>
         <span>Clock <b id="clock">--:--:--</b></span>
@@ -82,6 +83,15 @@ ul{margin:0;padding-left:18px;color:#c9d4de;font-size:14px;line-height:1.55}
     <article class="card"><b>CPU</b><span id="cpu">…</span></article>
     <article class="card"><b>Parallel requests</b><span id="parallel">…</span></article>
     <article class="card"><b>Internet / DNS</b><span id="internet">…</span></article>
+    <article class="card"><b>Deep Network</b><span id="deep">…</span></article>
+  </section>
+
+  <section class="panel webtest">
+    <h2>🌐 Web Test</h2>
+    <div class="webbar"><input id="weburl" value="https://example.com/" aria-label="Web test URL"><button type="button" id="btn-web">Open</button></div>
+    <div class="webmeta" id="webstatus">Safe preview gateway • public HTTP/HTTPS only</div>
+    <pre id="deepdiag" class="deepdiag">Deep result details appear here after the network test.</pre>
+    <iframe id="webframe" title="Web test"></iframe>
   </section>
 
   <section class="panel">
@@ -94,6 +104,7 @@ If this line never changes after 3 seconds, Preview rendered HTML but JS did not
   <div class="actions">
     <button type="button" id="btn-rerun">Run again</button>
     <button type="button" id="btn-self">Open /api/self-test</button>
+    <button type="button" id="btn-deep">Deep Internet test</button>
   </div>
 
   <section class="panel">
@@ -122,6 +133,7 @@ If this line never changes after 3 seconds, Preview rendered HTML but JS did not
   var TEST_T0 = PAGE_T0;
   var logLines = [];
   var finished = false;
+  var deepFinished = false;
   var $ = function (id) { return document.getElementById(id); };
 
   function setLayer(id, state, detail) {
@@ -141,7 +153,7 @@ If this line never changes after 3 seconds, Preview rendered HTML but JS did not
     var now = new Date();
     function pad(n) { return String(n).padStart(2, "0"); }
     $("clock").textContent = pad(now.getHours()) + ":" + pad(now.getMinutes()) + ":" + pad(now.getSeconds());
-    $("elapsed").textContent = ((Date.now() - PAGE_T0) / 1000).toFixed(1) + "s";
+    $("elapsed").textContent = ((Date.now() - TEST_T0) / 1000).toFixed(1) + "s";
   }
   tick();
   setInterval(tick, 200);
@@ -171,13 +183,41 @@ If this line never changes after 3 seconds, Preview rendered HTML but JS did not
     return x === 7142142;
   }
 
+  function formatDeep(d) {
+    var c=d.counts||{}, p=d.proxy_env||{}, i=d.interpretation||{};
+    return [
+      "DIAGNOSIS: "+(d.diagnosis||"unknown"),
+      "DNS: "+(c.dns||0)+"/4 — "+(i.dns||""),
+      "TCP 443: "+(c.tcp443||0)+"/4 — "+(i.tcp_443||""),
+      "TLS: "+(c.tls||0)+"/4 — "+(i.tls||""),
+      "HTTPS GET: "+(c.https||0)+"/4 — "+(i.https||""),
+      "Redirect/follow: "+(c.follow||0)+"/2 — "+(i.redirects_fetch||""),
+      "HTTP: "+(c.http||0)+"/2",
+      "Proxy env: HTTP="+(p.HTTP_PROXY||"unset")+" HTTPS="+(p.HTTPS_PROXY||"unset")+" ALL="+(p.ALL_PROXY||"unset")+" NO_PROXY="+(p.NO_PROXY||"unset"),
+      "NEXT: "+(d.remediation||d.error||"No remediation needed.")
+    ].join("\n");
+  }
+
+  function openWebTest() {
+    var raw = $("weburl").value.trim();
+    if (!/^https?:\/\//i.test(raw)) raw = "https://" + raw;
+    try { new URL(raw); } catch (_) { $("webstatus").textContent = "Invalid URL"; return; }
+    $("webstatus").textContent = "Loading through Sandbox safe gateway…";
+    $("webframe").src = "/api/web-view?url=" + encodeURIComponent(raw);
+  }
+  $("btn-web").onclick = openWebTest;
+  $("weburl").addEventListener("keydown", function(e){ if(e.key === "Enter") openWebTest(); });
+  $("webframe").addEventListener("load", function(){ $("webstatus").textContent = "Gateway response loaded • inspect the page above"; });
+  $("webframe").addEventListener("error", function(){ $("webstatus").textContent = "Gateway error • see Deep Internet diagnostics"; });
+  $("btn-deep").onclick = async function(){ $("btn-deep").disabled=true; try { var r=await fetchJson("/api/internet-deep",35000); var d=r.data||{}; $("webstatus").textContent=(d.diagnosis||"Deep test")+" · "+JSON.stringify(d.counts||{}); $("deepdiag").textContent=formatDeep(d); } catch(e){ $("webstatus").textContent="Deep test failed: "+(e.message||e); } finally { $("btn-deep").disabled=false; } };
+
   async function run() {
     finished = false;
     logLines = [];
     TEST_T0 = Date.now();
     var passed = 0;
     // Seven deterministic API/runtime checks; HTML/browser execution are presentation gates.
-    var total = 7;
+    var total = 8;
     $("overall").className = "badge pulse";
     $("overall").textContent = "Testing…";
     $("runtime").textContent = "…";
@@ -264,6 +304,24 @@ If this line never changes after 3 seconds, Preview rendered HTML but JS did not
     }
 
     try {
+      var di = await fetchJson("/api/internet-deep", 35000);
+      var dd = di.data || {};
+      var dc = dd.counts || {};
+      var dok = !!(di.ok && dd.ok);
+      if (!dd.diagnosis && !dd.counts) {
+        dd = { diagnosis: "DEEP_ENDPOINT_ERROR", remediation: "Inspect /api/internet-deep response and Sandbox API routing.", error: dd && dd.raw ? String(dd.raw).slice(0, 300) : "Deep endpoint returned no diagnostic JSON." };
+      }
+      $("deep").textContent = dok ? (dd.diagnosis || "HEALTHY") : (dd.diagnosis || "FAIL");
+      record(dok, "Deep Internet diagnostics", dok ? ("DNS " + (dc.dns||0) + "/4 · TCP " + (dc.tcp443||0) + "/4 · TLS " + (dc.tls||0) + "/4 · HTTPS " + (dc.https||0) + "/4") : (dd.remediation || dd.error || "deep test failed"));
+      $("deepdiag").textContent = formatDeep(dd);
+      deepFinished = true;
+      if (dok) passed++;
+    } catch (e) {
+      $("deep").textContent = "TIMEOUT/FAIL";
+      record(false, "Deep Internet diagnostics", e && e.message ? e.message : String(e));
+    }
+
+    try {
       var rs = await Promise.all([
         fetchJson("/api/parallel-test", 4000),
         fetchJson("/api/parallel-test", 4000),
@@ -295,22 +353,13 @@ If this line never changes after 3 seconds, Preview rendered HTML but JS did not
 
   setTimeout(function () {
     if (!finished) {
-      $("overall").className = "badge warn";
-      $("overall").textContent = "STUCK >3s";
-      logLines.push("WATCHDOG: tests not finished after 10s. Preview/API may be hanging.");
-      $("log").textContent = logLines.join("\n");
-    }
-  }, 10000);
-
-  setTimeout(function () {
-    if (!finished) {
       $("overall").className = "badge bad";
-      $("overall").textContent = "STUCK >10s";
+      $("overall").textContent = "TIMEOUT >30s";
       setLayer("ly-api", "warn", "possible hang");
-      logLines.push("WATCHDOG: still running after 10s. Treat as sandbox/preview issue.");
+      logLines.push("WATCHDOG: tests still running after 30s. Treat as sandbox/preview failure.");
       $("log").textContent = logLines.join("\n");
     }
-  }, 10000);
+  }, 30000);
 
   $("btn-rerun").onclick = function () { location.reload(); };
   $("btn-self").onclick = function () { location.href = "/api/self-test"; };

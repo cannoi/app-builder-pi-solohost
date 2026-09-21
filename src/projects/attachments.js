@@ -4,6 +4,7 @@ import { ensureDir, listFiles } from '../utils/fsx.js';
 import { safeSlug } from '../utils/ids.js';
 import { importZipBuffer } from './importer.js';
 import { execFile } from 'node:child_process';
+import { writeJson } from '../utils/fsx.js';
 import { promisify } from 'node:util';
 const exec = promisify(execFile);
 
@@ -20,6 +21,13 @@ export async function saveAttachment(projectRoot, file) {
   const full = path.join(root, safeName);
   await fs.writeFile(full, file.buffer);
   const meta = { name: original, stored: safeName, type: file.mimetype || 'application/octet-stream', bytes: file.buffer.length, kind: IMAGE_EXT.has(ext) ? 'image' : ext === '.zip' ? 'zip' : TEXT_EXT.has(ext) ? 'text' : 'binary' };
+  if (meta.kind === 'zip') {
+    const unpackRoot = path.join(root, 'unpacked', safeName.replace(/\.zip$/i, ''));
+    await fs.rm(unpackRoot, { recursive: true, force: true }).catch(() => {});
+    await ensureDir(unpackRoot);
+    try { await exec('unzip', ['-o', '-qq', full, '-d', unpackRoot], { timeout: 60000 }); } catch {}
+    await writeJson(path.join(root, 'manifest.json'), { lastUpload: { name: original, stored: safeName, unpacked: path.relative(root, unpackRoot).replace(/\\/g, '/'), at: new Date().toISOString() } }).catch(() => {});
+  }
   return { ...meta, path: full, dataUrl: IMAGE_EXT.has(ext) ? `data:${meta.type};base64,${file.buffer.toString('base64')}` : null };
 }
 

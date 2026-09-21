@@ -28,12 +28,12 @@ export class PodmanClient {
 
   async ping() { return this.request('/_ping'); }
 
-  async buildImage({ sourcePath, image, timeoutMs = 900000 }) {
+  async buildImage({ sourcePath, image, dockerfile = 'Dockerfile', timeoutMs = 900000 }) {
     const archive = path.join(await fs.mkdtemp('/tmp/paf-podman-build-'), 'context.tar');
     try {
       await exec('tar', ['-cf', archive, '--exclude=./node_modules', '--exclude=./data', '--exclude=./workspace', '--exclude=./projects', '.'], { cwd: sourcePath, timeout: 60000, maxBuffer: 2 * 1024 * 1024 });
       const body = await fs.readFile(archive);
-      const url = `${this.baseUrl}${API_VERSION}/build?dockerfile=Dockerfile&t=${encodeURIComponent(image)}&pull=true&rm=true`;
+      const url = `${this.baseUrl}${API_VERSION}/build?dockerfile=${encodeURIComponent(dockerfile)}&t=${encodeURIComponent(image)}&pull=true&rm=true`;
       const response = await this.fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-tar', 'X-App-Builder-Engine': 'podman-api' },
@@ -48,30 +48,56 @@ export class PodmanClient {
     }
   }
 
+  async pullImage(image, { timeoutMs = 900000 } = {}) {
+    const ref = String(image || '').trim();
+    if (!ref) throw new Error('Container image is missing.');
+    const url = `${this.baseUrl}${API_VERSION}/images/create?fromImage=${encodeURIComponent(ref)}`;
+    const response = await this.fetch(url, { method: 'POST', headers: { 'X-App-Builder-Engine': 'podman-api' }, signal: AbortSignal.timeout(timeoutMs) });
+    const text = await response.text();
+    if (!response.ok) throw new Error(`Podman image pull HTTP ${response.status}: ${text.slice(0, 3000)}`);
+    return { status: 'passed', image: ref, output: text.slice(-10000) };
+  }
+
   async imageInfo(image) { return this.request(`/images/${encodeURIComponent(image)}/json`); }
 
   async imageExists(image) {
     try { return Boolean(await this.imageInfo(image)); } catch { return false; }
   }
 
-  async createPreviewContainer({ image, name, port = 8080 }) {
+  async createPreviewContainer({ image, name, port = 8080, runtime = null, compatibility = true }) {
+    const env = Array.isArray(runtime?.env) ? runtime.env.slice(0, 60) : [];
+    const envKeys = new Set(env.map((x) => String(x).split('=')[0]));
+    // Do not overwrite an image's own PORT/BIND settings. Only add preview hints
+    // when the image/Compose file did not already define them.
+    if (!envKeys.has('PREVIEW_ONLINE')) env.push('PREVIEW_ONLINE=true');
+    if (!envKeys.has('BENCHMARK_ENGINE')) env.push('BENCHMARK_ENGINE=podman-sandbox');
+    if (!envKeys.has('PORT') && Number(port) > 0 && Number(port) < 65536) env.push(`PORT=${Number(port)}`);
+    if (!envKeys.has('BIND')) env.push('BIND=0.0.0.0');
+    const hostConfig = {
+      AutoRemove: true,
+      Memory: 768 * 1024 * 1024,
+      NanoCpus: 1500000000,
+      PidsLimit: 512,
+      ...(runtime?.shmSize ? { ShmSize: Math.min(Number(runtime.shmSize), 512 * 1024 * 1024) } : {}),
+      NetworkMode: 'bridge',
+      // Let the Sandbox/runtime supply DNS. Hard-coding public DNS breaks
+      // otherwise healthy environments that use an internal resolver.
+    };
+    if (Number(port) > 0 && Number(port) < 65536) hostConfig.PortBindings = { [`${Number(port)}/tcp`]: [{ HostIp: '127.0.0.1', HostPort: '' }] };
+    // Compatibility-first container profile: never request privileged mode,
+    // never mount the host Docker socket, and avoid dropping ALL capabilities
+    // because common browser/VNC/system-package images legitimately need a
+    // small set of runtime capabilities. The Sandbox still constrains memory,
+    // CPU, PID count and published host binding.
+    if (!compatibility) hostConfig.CapDrop = ['NET_RAW'];
     const body = {
       Image: image,
       name,
-      Env: ['PORT=8080', 'BIND=0.0.0.0', 'PREVIEW_ONLINE=true', 'BENCHMARK_ENGINE=podman-sandbox'],
+      Env: env,
       Labels: { 'com.pi.app-factory.project': name.replace(/^paf-app-/, ''), 'com.pi.app-factory.sandbox': 'preview' },
-      HostConfig: {
-        AutoRemove: true,
-        Memory: 536870912,
-        NanoCpus: 1000000000,
-        PidsLimit: 128,
-        SecurityOpt: ['no-new-privileges:true'],
-        CapDrop: ['ALL'],
-        NetworkMode: 'bridge',
-        Dns: ['1.1.1.1', '8.8.8.8'],
-        PortBindings: { [`${port}/tcp`]: [{ HostIp: '127.0.0.1', HostPort: '' }] },
-      },
-      ExposedPorts: { [`${port}/tcp`]: {} },
+      ...(Array.isArray(runtime?.command) ? { Cmd: runtime.command } : {}),
+      HostConfig: hostConfig,
+      ...(Number(port) > 0 && Number(port) < 65536 ? { ExposedPorts: { [`${Number(port)}/tcp`]: {} } } : {}),
     };
     return this.request('/containers/create', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
   }
@@ -132,7 +158,7 @@ export class PodmanClient {
 }
 
 export function podmanStatus(cfg = {}) {
-  const apiUrl = cfg.podman?.apiUrl || process.env.PODMAN_API_URL || '';
+  const apiUrl = cfg.podman?.apiUrl || process.env.PODMAN_API_URL || process.env.SANDBOX_PODMAN_API_URL || process.env.CONTAINER_SANDBOX_PODMAN_API_URL || '';
   return {
     engine: 'podman-api',
     configured: Boolean(apiUrl),

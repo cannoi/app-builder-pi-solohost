@@ -835,6 +835,7 @@ export function registerPipeline(app) {
 
   async function improveProject(project, feedback, emit) {
     const source = projects.sourceDir(project.slug);
+
     const networkRequest = /\b(internet|offline|online|network|dns|proxy|gateway|browse|browsing|fetch|connection|kết nối|mạng|internet|truy cập web)\b/i.test(String(feedback || ''));
     let networkPreflight = null;
     if (networkRequest) {
@@ -848,6 +849,8 @@ export function registerPipeline(app) {
       emit('network', 'done', `Builder Internet OK (${networkPreflight.httpsOk}/${networkPreflight.targets.length}).`);
     }
     const relevant = await collectProjectContext(source);
+    const attachContext = await attachmentContext(projects.projectDir(project));
+    const attachList = await attachmentList(projects.projectDir(project));
     const security = await scanProject(source);
     const baselineDiagnosis = await diagnoseSource(source);
     const baselineStatic = await runStaticTests(source);
@@ -861,7 +864,7 @@ export function registerPipeline(app) {
     const recentContext = `\nRECENT ACTIVITY (use as evidence; do not repeat a failed identical action):\n${JSON.stringify(Array.isArray(activity) ? activity.slice(-12) : [])}\nRECENT JOBS: ${JSON.stringify(recentJobs)}\n`;
     const networkContext = networkPreflight ? `\nBUILDER NETWORK PREFLIGHT:\n${JSON.stringify(networkPreflight)}\n` : '';
     const securityContext = security.findings?.length ? `\nSECURITY FINDINGS (treat as concrete repair requirements):\n${security.copy_for_ai}\n` : '';
-    const r = await ai.completeJson({ task: 'DEBUGGING', system: SYSTEM, prompt: patchPrompt(project, '', relevant + recentContext + networkContext + securityContext, feedback), projectId: project.id, images: [] });
+    const r = await ai.completeJson({ task: 'DEBUGGING', system: SYSTEM, prompt: patchPrompt(project, '', relevant + recentContext + networkContext + securityContext + `\nATTACHMENTS (canonical project storage):\n${attachContext}\nATTACHMENT INDEX:\n${JSON.stringify(attachList)}`, feedback), projectId: project.id, images: await imageInputsFromAttachments(projects.projectDir(project)) });
     if (!r.json?.files?.length) throw new Error('AI did not propose a code change.');
     const declaredRisk = String(r.json.risk || 'medium').toLowerCase();
     if (declaredRisk !== 'low') throw new Error('NEEDS_USER_ACTION: AI marked this change as medium/high risk. No files were changed; review and confirm the requested change before applying it.');

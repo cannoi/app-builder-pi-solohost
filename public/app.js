@@ -224,7 +224,18 @@ async function quick(action) {
   try {
     let r;
     if (action === 'publish') r = await api(`/api/projects/${state.projectId}/release`, { method: 'POST', body: JSON.stringify({ approved: true, confirm: true, push: true }) });
-    else if (action === 'improve' || action === 'edit') { const kind = action === 'edit' ? 'SAFE EDIT' : 'SAFE UPGRADE'; const request = await askSafeAction(kind); if (!request) { setBusy(false); return; } r = await api(`/api/projects/${state.projectId}/improve`, { method: 'POST', body: JSON.stringify({ feedback: `${kind}\nUSER REQUEST: ${request}` }) }); }
+    else if (action === 'improve' || action === 'edit') {
+      const kind = action === 'edit' ? 'SAFE EDIT' : 'SAFE UPGRADE';
+      const request = await askSafeAction(kind);
+      if (!request) { setBusy(false); return; }
+      const form = new FormData();
+      form.append('feedback', `${kind}\nUSER REQUEST: ${request.text}`);
+      for (const f of request.files || []) form.append('files', f);
+      const response = await fetch(`/api/projects/${state.projectId}/improve`, { method: 'POST', body: form });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.error || 'AI improvement could not start.');
+      r = data;
+    }
     else r = await api(`/api/projects/${state.projectId}/${action}`, { method: 'POST', body: '{}' });
     if (r.needsConfirmation) { setBusy(false); add('ai', `I need your approval before ${actionText(action).toLowerCase()}.`); return; }
     watch(r.jobId);
@@ -233,11 +244,15 @@ async function quick(action) {
 async function askSafeAction(kind, initial = '') {
   return new Promise((resolve) => {
     const wrap = document.createElement('div'); wrap.className = 'modal';
-    wrap.innerHTML = `<div class="sheet"><div class="sheetHead"><h2>${kind}</h2><button class="iconBtn" type="button">✕</button></div><p class="info">What do you want to change?</p><textarea rows="4" style="width:100%;box-sizing:border-box" placeholder="What do you want to change?"></textarea><div class="actionCard"><button class="primary wide" type="button">Send</button></div></div>`;
+    wrap.innerHTML = `<div class="sheet"><div class="sheetHead"><h2>${kind}</h2><button class="iconBtn" type="button">✕</button></div><p class="info">What do you want to change?</p><textarea rows="4" style="width:100%;box-sizing:border-box" placeholder="What do you want to change?"></textarea><div class="inputRow" style="margin-top:10px"><button type="button" class="attach modalAttach" title="Attach files">📎</button><input class="modalFiles" type="file" multiple hidden accept=".zip,.pdf,.txt,.md,.json,.yaml,.yml,.js,.ts,.jsx,.tsx,.html,.css,.py,.go,.rs,.java,.php,.sql,.csv,.png,.jpg,.jpeg,.gif,.webp"><span class="modalFileNames muted">No files</span></div><div class="actionCard"><button class="primary wide" type="button">Send</button></div></div>`;
     document.body.appendChild(wrap); wrap.hidden = false;
-    const input = wrap.querySelector('textarea'); input.value = initial; const close = () => { wrap.remove(); resolve(''); };
+    const input = wrap.querySelector('textarea'); const fileInput = wrap.querySelector('.modalFiles'); const names = wrap.querySelector('.modalFileNames');
+    input.value = initial;
+    const close = () => { wrap.remove(); resolve(null); };
     wrap.querySelector('.iconBtn').onclick = close;
-    wrap.querySelector('.primary').onclick = () => { const v = input.value.trim(); if (!v) { input.focus(); return; } wrap.remove(); resolve(v); };
+    wrap.querySelector('.modalAttach').onclick = () => fileInput.click();
+    fileInput.onchange = () => { const files = Array.from(fileInput.files || []); names.textContent = files.length ? files.map(f => `📎 ${f.name}`).join(' · ') : 'No files'; };
+    wrap.querySelector('.primary').onclick = () => { const textValue = input.value.trim(); const files = Array.from(fileInput.files || []); if (!textValue && !files.length) { input.focus(); return; } wrap.remove(); resolve({ text: textValue || 'Inspect the attached files and apply the requested safe change.', files }); };
     input.addEventListener('keydown', (e) => { if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') wrap.querySelector('.primary').click(); });
     input.focus();
   });
@@ -315,7 +330,12 @@ function renderRepairAction(errorText) {
     try {
       const request = await askSafeAction('SAFE REPAIR', isSecurity ? 'Fix the reported security issue.' : 'Fix the reported problem.');
       if (!request) { setBusy(false); return; }
-      const r = await api(`/api/projects/${state.projectId}/improve`, { method: 'POST', body: JSON.stringify({ feedback: `SAFE REPAIR\nUSER REQUEST: ${request}\n\nEVIDENCE REPORT:\n${errorText}` }) });
+      const form = new FormData();
+      form.append('feedback', `SAFE REPAIR\nUSER REQUEST: ${request.text}\n\nEVIDENCE REPORT:\n${errorText}`);
+      for (const f of request.files || []) form.append('files', f);
+      const response = await fetch(`/api/projects/${state.projectId}/improve`, { method: 'POST', body: form });
+      const r = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(r.error || 'Repair could not start.');
       watch(r.jobId);
     } catch (e) { setBusy(false); add('ai', e.message); }
   };
@@ -488,9 +508,9 @@ async function loadSettings() {
 async function saveSettings() {
   try {
     const raw = $('setProvider').value;
-    const body = { AI_PROVIDER: raw === 'council' ? 'deepseek' : raw, AI_MODE: raw === 'council' ? 'council' : 'single', DEEPSEEK_API_KEY: $('setDeepseek').value, GEMINI_API_KEY: $('setGemini').value, GITHUB_TOKEN: $('setGhToken').value, GITHUB_OWNER: $('setGhOwner').value, setupComplete: true };
+    const body = { AI_PROVIDER: raw === 'council' ? 'deepseek' : raw, AI_MODE: raw === 'council' ? 'council' : 'single', PODMAN_API_URL: $('setPodman').value, DEEPSEEK_API_KEY: $('setDeepseek').value, GEMINI_API_KEY: $('setGemini').value, GITHUB_TOKEN: $('setGhToken').value, GITHUB_OWNER: $('setGhOwner').value, setupComplete: true };
     const r = await api('/api/settings', { method: 'POST', body: JSON.stringify(body) });
-    $('setDeepseek').value = ''; $('setGemini').value = ''; $('setGhToken').value = ''; $('settingsState').textContent = 'Saved.'; $('settings').hidden = true; await loadStatus();
+    $('setDeepseek').value = ''; $('setGemini').value = ''; $('setGhToken').value = ''; $('setPodman').value = ''; $('settingsState').textContent = 'Saved.'; $('settings').hidden = true; await loadStatus();
     add('system', r.discovery?.model ? `Gemini model selected: ${r.discovery.model}` : 'Settings saved.');
   } catch (e) { $('settingsState').textContent = e.message; }
 }

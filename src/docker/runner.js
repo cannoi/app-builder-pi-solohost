@@ -13,14 +13,21 @@ export class BuildRunner {
     this.log = log;
     this.browserFactory = browserFactory;
     this.native = new NativePreview({ cfg, log, browserFactory });
-    const apiUrl = cfg?.runtime?.podman?.apiUrl || process.env.PODMAN_API_URL || '';
+    const apiUrl = cfg?.runtime?.podman?.apiUrl || process.env.PODMAN_API_URL || process.env.SANDBOX_PODMAN_API_URL || process.env.CONTAINER_SANDBOX_PODMAN_API_URL || '';
     this.podman = apiUrl ? new PodmanClient({ baseUrl: apiUrl, log }) : null;
     this.podmanContainers = new Map();
+  }
+
+  configurePodman(apiUrl = '') {
+    const value = String(apiUrl || '').trim();
+    this.podman = value ? new PodmanClient({ baseUrl: value, log: this.log }) : null;
+    return Boolean(this.podman);
   }
 
   status() {
     const mode = String(this.cfg?.runtime?.mode || process.env.PREVIEW_MODE || 'auto').toLowerCase();
     const podman = podmanStatus(this.cfg);
+    if (!this.podman && podman.configured) this.configurePodman(this.cfg?.runtime?.podman?.apiUrl || process.env.PODMAN_API_URL || '');
     if (this.podman && mode !== 'native') {
       return {
         ...podman,
@@ -52,39 +59,70 @@ export class BuildRunner {
     });
   }
 
-  async buildImage({ sourcePath, projectSlug, timeout } = {}) {
+  async buildImage({ sourcePath, projectSlug, timeout, runtimeSpec = null } = {}) {
     if (!this.podman) {
       return { status: 'skipped', engine: 'native-preview', reason: 'Local image builds are disabled without the optional Container Sandbox endpoint. GitHub Actions builds the final SoloHost image.' };
     }
     const image = imageName(projectSlug);
-    const prep = await this.ensureBuildFiles(sourcePath);
+    const detected = runtimeSpec || await detectContainerRuntime(sourcePath);
+    if (detected.kind === 'compose-image' && detected.image) {
+      try {
+        const images = [...new Set((detected.images || [detected.image]).filter(Boolean))];
+        for (const ref of images) await this.podman.pullImage(ref, { timeoutMs: (timeout || this.cfg.limits.buildTimeoutSec) * 1000 });
+        return { status: 'passed', image: detected.image, sourceImage: detected.image, images, engine: 'podman-api', buildMode: 'pull-compose-image', warning: detected.multiService ? 'Compose contains multiple services. Preview runs the detected web-facing service in the single-container Sandbox profile.' : null };
+      } catch (err) {
+        return { status: 'failed', image: detected.image, engine: 'podman-api', error: clip(String(err?.message || err)) };
+      }
+    }
+    const prep = await this.ensureBuildFiles(sourcePath, detected);
     if (!prep.ok) return { status: 'failed', image, error: prep.error };
     try {
-      return await this.podman.buildImage({ sourcePath, image, timeoutMs: (timeout || this.cfg.limits.buildTimeoutSec) * 1000 });
+      return await this.podman.buildImage({
+        sourcePath: prep.contextPath || sourcePath,
+        dockerfile: prep.dockerfile || 'Dockerfile',
+        image,
+        timeoutMs: (timeout || this.cfg.limits.buildTimeoutSec) * 1000,
+      });
     } catch (err) {
       return { status: 'failed', image, engine: 'podman-api', error: clip(String(err?.message || err)) };
     }
   }
 
-  async ensureBuildFiles(sourcePath) {
-    const dockerfile = path.join(sourcePath, 'Dockerfile');
+  async ensureBuildFiles(sourcePath, runtimeSpec = null) {
+    const detectedFile = runtimeSpec?.kind === 'dockerfile' && runtimeSpec.file
+      ? path.join(sourcePath, runtimeSpec.file)
+      : path.join(sourcePath, 'Dockerfile');
     try {
-      await fs.access(dockerfile);
-      return { ok: true, created: false, path: dockerfile };
+      await fs.access(detectedFile);
+      return { ok: true, created: false, path: detectedFile, contextPath: path.dirname(detectedFile), dockerfile: path.basename(detectedFile) };
     } catch {}
     let packageJson = null;
     try { packageJson = JSON.parse(await fs.readFile(path.join(sourcePath, 'package.json'), 'utf8')); } catch {}
     if (!packageJson) return { ok: false, created: false, error: 'Dockerfile is missing and no valid package.json is available to create one.' };
+    const dockerfile = path.join(sourcePath, 'Dockerfile');
     await fs.writeFile(dockerfile, dockerfileForProject({ packageJson }), 'utf8');
-    return { ok: true, created: true, path: dockerfile };
+    return { ok: true, created: true, path: dockerfile, contextPath: sourcePath, dockerfile: 'Dockerfile' };
   }
 
   async runApp({ sourcePath, projectSlug, timeout = 180, keepRunning = true } = {}) {
     const mode = String(this.cfg?.runtime?.mode || process.env.PREVIEW_MODE || 'auto').toLowerCase();
-    if (this.podman && mode !== 'native') {
-      const result = await this.runPodmanApp({ sourcePath, projectSlug, timeout, keepRunning });
-      if (result.status === 'passed' || mode === 'container') return result;
-      this.log?.warn?.('container preview failed; falling back to native preview', { error: result.error });
+    const runtimeSpec = await detectContainerRuntime(sourcePath);
+    const previewable = await hasPreviewableSource(sourcePath);
+    const containerOnly = !previewable && ['dockerfile', 'compose', 'compose-image'].includes(runtimeSpec.kind);
+    // Ordinary generated apps include Dockerfile + docker-compose.yml for SoloHost
+    // publish. Those are NOT container-only apps. Preview them natively.
+    if (containerOnly && !this.podman && mode !== 'native') {
+      return {
+        status: 'blocked',
+        runtime: 'podman-sandbox',
+        health: false,
+        containerSandboxRequired: true,
+        detected: runtimeSpec,
+        error: 'This project is a container-only image (no index.html or Node start script). Enable Settings → Container Sandbox (Podman API) to preview it. Ordinary Node/static apps do not need Sandbox.',
+      };
+    }
+    if (containerOnly && this.podman && mode !== 'native') {
+      return this.runPodmanApp({ sourcePath, projectSlug, timeout, keepRunning });
     }
     return this.native.run({ sourcePath, projectSlug, timeout, keepRunning });
   }
@@ -96,15 +134,20 @@ export class BuildRunner {
     const containerName = `${APP_CONTAINER_PREFIX}${safeSlug}`.slice(0, 63);
     const started = Date.now();
     await this.stopApp({ projectSlug: safeSlug, removeImage: false }).catch(() => {});
-    const built = await this.buildImage({ sourcePath, projectSlug: safeSlug, timeout });
+    const runtimeSpec = await detectContainerRuntime(sourcePath);
+    const built = await this.buildImage({ sourcePath, projectSlug: safeSlug, timeout, runtimeSpec });
     if (built.status !== 'passed') return { ...built, runtime: 'podman-sandbox' };
 
     let containerId = null;
     try {
-      const created = await this.podman.createPreviewContainer({ image, name: containerName });
+      const runtimeImage = built.image || image;
+      let imageInfo = await this.podman.imageInfo(runtimeImage).catch(() => null);
+      const imagePorts = imageInfo?.Config?.ExposedPorts ? Object.keys(imageInfo.Config.ExposedPorts).map((v) => Number(String(v).split('/')[0])).filter(Boolean) : [];
+      const containerPort = Number(runtimeSpec?.webPort || 0) || chooseWebPort(imagePorts) || 0;
+      const created = await this.podman.createPreviewContainer({ image: runtimeImage, name: containerName, port: containerPort, runtime: runtimeSpec.compose || null });
       containerId = created.Id || created.id;
       if (!containerId) throw new Error('Container Sandbox did not return a preview container ID.');
-      this.podmanContainers.set(safeSlug, { id: containerId, image, name: containerName, proxyHost: null, proxyPort: null });
+      this.podmanContainers.set(safeSlug, { id: containerId, image: runtimeImage, name: containerName, proxyHost: null, proxyPort: null });
       await this.podman.startContainer(containerId);
 
       const deadline = Date.now() + Math.min(Number(timeout || 180), 600) * 1000;
@@ -131,7 +174,12 @@ export class BuildRunner {
       }
       if (!proxyTarget) {
         const logs = await this.podman.containerLogs(containerId).catch(() => '');
-        const result = { status: 'failed', runtime: 'podman-sandbox', image, container: containerName, containerId, hostPort: port, health: false, logs: clip(logs), error: `${lastError} ${clip(logs, 1800)}`.trim() };
+        const info = await this.podman.inspectContainer(containerId).catch(() => null);
+        if (info?.State?.Running && !runtimeSpec?.hasWebPort && !port) {
+          if (!keepRunning) await this.stopApp({ projectSlug: safeSlug, removeImage: false }).catch(() => {});
+          return { status: 'passed', runtime: 'podman-sandbox', engine: 'podman-api', image: runtimeImage, container: containerName, containerId, hostPort: null, previewable: false, health: true, logs: clip(logs), warning: 'Container is running but does not expose a detectable web port; browser preview was skipped.', keptRunning: Boolean(keepRunning), sandbox: { memoryMb: 768, cpus: 1.5, hostBind: '127.0.0.1' } };
+        }
+        const result = { status: 'failed', runtime: 'podman-sandbox', image: runtimeImage, container: containerName, containerId, hostPort: port, health: false, logs: clip(logs), error: `${lastError} ${clip(logs, 1800)}`.trim() };
         await this.stopApp({ projectSlug: safeSlug, removeImage: false }).catch(() => {});
         return result;
       }
@@ -143,29 +191,30 @@ export class BuildRunner {
       await fs.mkdir(artifactDir, { recursive: true });
       const e2e = await runSandboxE2E({
         podman: this.podman,
-        image,
+        image: runtimeImage,
         appId: safeSlug,
         previewBaseUrl: '',
         screenshotPath: path.join(artifactDir, `${safeSlug}-preview.png`),
         timeoutSec: Math.min(Number(timeout || 180), 600),
         browserFactory: this.browserFactory,
-        existingContainer: { id: containerId, port },
+        existingContainer: { id: containerId, port, host: proxyTarget.host, proxyHost: proxyTarget.host, proxyPort: proxyTarget.port },
         keepRunning: Boolean(keepRunning),
       });
 
       // The E2E helper only tears down when keepRunning is false.
-      if (e2e.status !== 'passed') {
+      const browserRequired = this.cfg?.preview?.requireBrowserTest === true;
+      if (e2e.status !== 'passed' && browserRequired) {
         const logs = await this.podman.containerLogs(containerId).catch(() => '');
         await this.stopApp({ projectSlug: safeSlug, removeImage: false }).catch(() => {});
-        return { status: 'failed', runtime: 'podman-sandbox', image, container: containerName, containerId, hostPort: port, url: localUrl, previewPath: `/preview/${safeSlug}/`, duration: Math.round((Date.now() - started) / 1000), health: true, logs: clip(logs), e2e, error: e2e.error || 'Preview browser test failed.' };
+        return { status: 'failed', runtime: 'podman-sandbox', image: runtimeImage, container: containerName, containerId, hostPort: port, url: localUrl, previewPath: `/preview/${safeSlug}/`, duration: Math.round((Date.now() - started) / 1000), health: true, logs: clip(logs), e2e, error: e2e.error || 'Preview browser test failed.' };
       }
 
       const logs = await this.podman.containerLogs(containerId).catch(() => '');
       if (!keepRunning) this.podmanContainers.delete(safeSlug);
       return {
-        status: 'passed', runtime: 'podman-sandbox', engine: 'podman-api', image, container: containerName, containerId,
+        status: 'passed', runtime: 'podman-sandbox', engine: 'podman-api', image: runtimeImage, container: containerName, containerId,
         containerIp: proxyTarget.host, hostPort: port, proxyHost: proxyTarget.host, proxyPort: proxyTarget.port, url: localUrl, previewPath: `/preview/${safeSlug}/`, duration: Math.round((Date.now() - started) / 1000), health: true,
-        logs: clip(logs), e2e, internet: e2e.internet || null, keptRunning: Boolean(keepRunning), sandbox: { memoryMb: 512, cpus: 1, hostBind: '127.0.0.1' },
+        logs: clip(logs), e2e, internet: e2e.internet || null, keptRunning: Boolean(keepRunning), warning: e2e.status !== 'passed' ? (e2e.error || 'Browser E2E was not required and was recorded as a diagnostic warning.') : null, sandbox: { memoryMb: 768, cpus: 1.5, hostBind: '127.0.0.1' },
       };
     } catch (err) {
       await this.stopApp({ projectSlug: safeSlug, removeImage: false }).catch(() => {});
@@ -277,7 +326,7 @@ function previewTargets(info, port, apiBase) {
     seen.add(key); out.push({ host, port: Number(p) });
   };
   const ips = info?.NetworkSettings?.Networks ? Object.values(info.NetworkSettings.Networks).map((n) => n?.IPAddress).filter(Boolean) : [];
-  for (const ip of ips) add(ip, 8080);
+  for (const ip of ips) add(ip, port || 8080);
   if (port) add('host.containers.internal', port);
   if (port) add('host.docker.internal', port);
   if (port) add('127.0.0.1', port);
@@ -286,8 +335,229 @@ function previewTargets(info, port, apiBase) {
 }
 
 function hostPort(info) {
-  const values = info?.NetworkSettings?.Ports?.['8080/tcp'] || info?.HostConfig?.PortBindings?.['8080/tcp'] || [];
-  return Number(values[0]?.HostPort || 0) || null;
+  const ports = info?.NetworkSettings?.Ports || info?.HostConfig?.PortBindings || {};
+  const preferred = ['6080/tcp','8080/tcp','8000/tcp','7788/tcp','3000/tcp','5000/tcp','5173/tcp','4173/tcp'];
+  for (const key of preferred) {
+    const values = ports[key] || [];
+    const host = Number(values[0]?.HostPort || 0);
+    if (host) return host;
+  }
+  for (const values of Object.values(ports)) {
+    const host = Number(values?.[0]?.HostPort || 0);
+    if (host) return host;
+  }
+  return null;
+}
+
+async function hasPreviewableSource(sourcePath) {
+  const names = [
+    'index.html',
+    'public/index.html',
+    'dist/index.html',
+    'www/index.html',
+    'static/index.html',
+    'package.json',
+    'server.js',
+    'src/server.js',
+    'app.js',
+    'src/app.js',
+  ];
+  for (const name of names) {
+    try {
+      await fs.access(path.join(sourcePath, name));
+      if (name === 'package.json') {
+        try {
+          const pkg = JSON.parse(await fs.readFile(path.join(sourcePath, name), 'utf8'));
+          if (pkg?.scripts?.start || pkg?.main) return true;
+        } catch {
+          continue;
+        }
+      } else {
+        return true;
+      }
+    } catch {}
+  }
+  return false;
+}
+
+async function detectContainerRuntime(sourcePath) {
+  const composeNames = ['docker-compose.yml', 'docker-compose.yaml', 'compose.yml', 'compose.yaml'];
+  const candidates = await findRuntimeFiles(sourcePath, composeNames, 5);
+  for (const file of candidates) {
+    try {
+      const text = await fs.readFile(file, 'utf8');
+      const services = parseComposeServices(text);
+      const selected = chooseComposeService(services);
+      const image = selected?.image || firstMatch(text, /^\s*image:\s*([^\s#]+)\s*$/m);
+      const ports = selected?.ports?.length ? selected.ports : parsePublishedPorts(text);
+      const webPort = ports.length ? chooseWebPort(ports) : 0;
+      const images = services.map((x) => x.image).filter(Boolean);
+      return {
+        kind: image ? 'compose-image' : 'compose',
+        image,
+        images: [...new Set(images)],
+        webPort,
+        file: path.relative(sourcePath, file),
+        service: selected?.name || null,
+        services: services.map((x) => ({ name: x.name, image: x.image, ports: x.ports })),
+        multiService: services.length > 1,
+        hasWebPort: ports.length > 0,
+        compose: selected ? { ...parseComposeRuntime(selected.text), service: selected.name, serviceCount: services.length } : null,
+      };
+    } catch {}
+  }
+  const dockerfiles = await findRuntimeFiles(sourcePath, ['Dockerfile'], 5);
+  for (const file of dockerfiles) {
+    try {
+      const text = await fs.readFile(file, 'utf8');
+      const ports = [...text.matchAll(/^\s*EXPOSE\s+(.+)$/gmi)]
+        .flatMap((m) => m[1].split(/\s+/).map((v) => Number(String(v).split('/')[0])).filter(Boolean));
+      return { kind: 'dockerfile', webPort: ports.length ? chooseWebPort(ports) : 0, file: path.relative(sourcePath, file), images: [], multiService: false, hasWebPort: ports.length > 0 };
+    } catch {}
+  }
+  return { kind: 'unknown', webPort: 0, images: [], multiService: false, hasWebPort: false };
+}
+
+function parseComposeServices(text) {
+  const src = String(text || '').replace(/\t/g, '  ');
+  const lines = src.split(/\r?\n/);
+  const services = [];
+  let inServices = false;
+  let current = null;
+  let block = [];
+  const flush = () => {
+    if (!current) return;
+    const blockText = block.join('\n');
+    const image = firstMatch(blockText, /^\s*image:\s*([^\s#]+)\s*$/m);
+    const ports = parsePublishedPorts(blockText);
+    services.push({ name: current, image, ports, text: blockText });
+    current = null; block = [];
+  };
+  for (const line of lines) {
+    if (/^\s*services:\s*$/.test(line)) { flush(); inServices = true; continue; }
+    if (!inServices) continue;
+    if (/^\S/.test(line) && line.trim() && !line.startsWith('#')) { flush(); inServices = false; continue; }
+    const m = line.match(/^\s{2}([A-Za-z0-9_.-]+):\s*$/);
+    if (m) { flush(); current = m[1]; block = [line]; continue; }
+    if (current) block.push(line);
+  }
+  flush();
+  return services;
+}
+
+function chooseComposeService(services = []) {
+  if (!services.length) return null;
+  return [...services].sort((a, b) => {
+    const score = (x) => (x.ports.length ? 100 : 0) + (/web|app|browser|frontend|ui|proxy/i.test(x.name || '') ? 20 : 0) + (x.image ? 5 : 0);
+    return score(b) - score(a);
+  })[0];
+}
+
+async function findRuntimeFiles(root, names, maxDepth = 4, depth = 0, out = []) {
+  if (depth > maxDepth || out.length >= 20) return out;
+  const wanted = new Set(names.map((n) => n.toLowerCase()));
+  const entries = await fs.readdir(root, { withFileTypes: true }).catch(() => []);
+  for (const entry of entries) {
+    const lower = entry.name.toLowerCase();
+    if (['node_modules', '.git', '__macosx'].includes(lower)) continue;
+    const full = path.join(root, entry.name);
+    if (entry.isFile() && wanted.has(lower)) out.push(full);
+    else if (entry.isDirectory()) await findRuntimeFiles(full, names, maxDepth, depth + 1, out);
+  }
+  return out;
+}
+
+function parsePublishedPorts(text) {
+  const ports = [];
+  const lines = String(text || '').split(/\r?\n/);
+  const addScalar = (raw) => {
+    let value = String(raw || '').trim().replace(/^['"]|['"]$/g, '').split('/')[0];
+    if (!value) return;
+    const parts = value.split(':');
+    const candidate = parts.length >= 2 ? String(parts.at(-1)).split('-')[0] : String(parts[0]).split('-')[0];
+    if (/^\d+$/.test(candidate)) ports.push(Number(candidate));
+  };
+  const parseSection = (key) => {
+    const headerRe = new RegExp('^(\\s*)' + key + ':\\s*(.*)$', 'i');
+    for (let i = 0; i < lines.length; i++) {
+      const m = lines[i].match(headerRe);
+      if (!m) continue;
+      const base = m[1].length;
+      if (m[2].trim().startsWith('[')) {
+        for (const item of m[2].trim().replace(/^\[|\]$/g, '').split(',')) addScalar(item);
+        continue;
+      }
+      for (let j = i + 1; j < lines.length; j++) {
+        const line = lines[j];
+        if (!line.trim()) continue;
+        const indent = (line.match(/^\s*/) || [''])[0].length;
+        if (indent <= base) break;
+        const item = line.trim().match(/^[-]\s*(.+)$/);
+        if (item) { addScalar(item[1]); continue; }
+        const target = line.trim().match(/^target:\s*['"]?(\d+)/i);
+        if (target) ports.push(Number(target[1]));
+      }
+    }
+  };
+  parseSection('ports');
+  parseSection('expose');
+  for (const m of lines.join('\n').matchAll(/\bEXPOSE\s+([^\n]+)/gi)) {
+    for (const token of m[1].split(/\s+/)) addScalar(token);
+  }
+  return [...new Set(ports.filter((n) => n > 0 && n < 65536))];
+}
+
+function chooseWebPort(ports = []) {
+  const preferred = [6080, 8080, 8000, 7788, 3000, 5000, 5173, 4173];
+  return preferred.find((p) => ports.includes(p)) || ports[0] || 8080;
+}
+
+function parseComposeRuntime(text) {
+  const src = String(text || '');
+  const env = [];
+  const envBlock = src.match(/(?:^|\n)\s*environment:\s*\n([\s\S]*?)(?=\n\s{2,}\S[^\n]*:\s*$|\n\s{0,2}\S[^\n]*:\s*$|$)/m)?.[1] || '';
+  for (const line of envBlock.split(/\r?\n/)) {
+    const m = line.match(/^\s*-\s*([^#\n]+?)\s*$/);
+    if (m) env.push(m[1].trim());
+    else {
+      const kv = line.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*:\s*(.*?)\s*$/);
+      if (kv) env.push(`${kv[1]}=${stripYamlScalar(kv[2])}`);
+    }
+  }
+  const commandMatch = src.match(/(?:^|\n)\s*command:\s*(.+)$/m);
+  const command = commandMatch ? parseYamlCommand(commandMatch[1].trim()) : null;
+  const shmMatch = src.match(/(?:^|\n)\s*shm_size:\s*['"]?([0-9]+)([kKmMgG])?[bB]?['"]?\s*$/m);
+  const shmSize = shmMatch ? toBytes(Number(shmMatch[1]), shmMatch[2]) : null;
+  return { env, command, shmSize };
+}
+
+function parseYamlCommand(value) {
+  const v = stripYamlScalar(value);
+  if (!v) return null;
+  if (v.startsWith('[') && v.endsWith(']')) {
+    try { return JSON.parse(v.replace(/'/g, '"')); } catch {}
+  }
+  return ['sh', '-lc', v];
+}
+
+function stripYamlScalar(value) {
+  const v = String(value || '').trim();
+  if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) return v.slice(1, -1);
+  return v;
+}
+
+function toBytes(value, unit = '') {
+  const n = Number(value || 0);
+  const u = String(unit || '').toLowerCase();
+  if (u === 'g') return n * 1024 * 1024 * 1024;
+  if (u === 'm') return n * 1024 * 1024;
+  if (u === 'k') return n * 1024;
+  return n;
+}
+
+function firstMatch(text, re) {
+  const m = String(text || '').match(re);
+  return m?.[1]?.trim() || null;
 }
 
 function imageName(projectSlug) {

@@ -82,7 +82,8 @@
       <label>DeepSeek API key<input id="setDeepseek" type="password" autocomplete="off" placeholder="Paste key"></label>
       <label>Gemini API key<input id="setGemini" type="password" autocomplete="off" placeholder="Needed for Council"></label>
       <label>GitHub token <span class="muted">optional</span><input id="setGhToken" type="password" autocomplete="off" placeholder="Personal access token (classic)"><span class="small">Use classic token: <b>repo</b> + <b>workflow</b> + <b>write:packages</b>. Create: github.com/settings/tokens/new</span></label>
-      <label>GitHub owner <span class="muted">optional</span><input id="setGhOwner" type="text" placeholder="username or org"></label><div class="info">If GitHub Actions says permission is read-only: Repository → Settings → Actions → General → Workflow permissions → <b>Read and write permissions</b> → Save.</div>
+      <label>GitHub owner <span class="muted">optional</span><input id="setGhOwner" type="text" placeholder="username or org"></label>
+      <label>Container Sandbox <span class="muted">optional</span><input id="setPodman" type="password" autocomplete="off" placeholder="Protected Podman API endpoint"><span class="small">Required only for Docker/Compose/browser containers. Use a protected Sandbox endpoint. Never use docker.sock.</span></label><div class="info">If GitHub Actions says permission is read-only: Repository → Settings → Actions → General → Workflow permissions → <b>Read and write permissions</b> → Save.</div>
       <div class="info">Council: one model writes, the other reviews. Trust scores prefer the model that finishes with fewer errors. No host Docker access is required.</div>
       <button id="saveSettings" class="primary wide">Save</button>
       <p id="settingsState" class="muted"></p>

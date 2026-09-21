@@ -14,7 +14,6 @@ services:
       GITHUB_TOKEN: "${GITHUB_TOKEN}"
       PREVIEW_MODE: "auto"
       PREVIEW_ONLINE: "true"
-      PODMAN_API_URL: ""
     dns:
       - "8.8.8.8"
       - "1.1.1.1"

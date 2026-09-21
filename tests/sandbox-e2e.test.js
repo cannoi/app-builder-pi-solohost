@@ -51,8 +51,9 @@ test('Podman preview provisioning returns an isolated published port contract', 
   assert.match(requests[0][0], /\/v1\.40\/containers\/create$/);
   assert.equal(requests[0][1].method, 'POST');
   assert.match(requests[0][1].body, /paf-app-demo/);
-  assert.match(requests[0][1].body, /no-new-privileges:true/);
-  assert.match(requests[0][1].body, /CapDrop/);
+  assert.doesNotMatch(requests[0][1].body, /no-new-privileges:true/);
+  assert.doesNotMatch(requests[0][1].body, /Privileged\":true/i);
+  assert.doesNotMatch(requests[0][1].body, /docker\.sock/i);
 });
 
 test('Playwright E2E returns the required raw JSON shape', async () => {
@@ -119,12 +120,22 @@ test('Sandbox E2E Agent returns only the specified JSON contract and tears down'
 test('sandbox benchmark includes deterministic Internet and DNS test', async () => {
   const file = await fs.readFile(new URL('../templates/sandbox-benchmark/server.js', import.meta.url), 'utf8');
   assert.match(file, /\/api\/internet-test/);
+  assert.match(file, /\/api\/internet-deep/);
+  assert.match(file, /tcpProbe/);
+  assert.match(file, /tlsProbe/);
+  assert.match(file, /proxyWebView/);
   assert.match(file, /DNS_UNAVAILABLE/);
   assert.match(file, /DNS_OK_BUT_HTTPS_BLOCKED/);
   assert.match(file, /BENCHMARK_ENGINE/);
+  assert.match(file, /function detectSandboxEngine/);
   assert.match(file, /Promise\.all\(targets\.map/);
+  assert.match(file, /function isPrivateIp/);
   const ui = await fs.readFile(new URL('../templates/sandbox-benchmark/public/index.html', import.meta.url), 'utf8');
   assert.match(ui, /Sandbox Internet \+ DNS/);
-  assert.match(ui, /var total = 7/);
+  assert.match(ui, /var total = 8/);
+  assert.match(ui, /TIMEOUT >30s/);
+  assert.match(ui, /var PAGE_T0/);
+  assert.match(ui, /Web Test/);
+  assert.match(ui, /btn-deep/);
   assert.match(ui, /TEST_T0/);
 });

@@ -63,6 +63,7 @@ export function registerRoutes(r, app) {
       setupComplete: Boolean(db.setting('setupComplete', false)),
       powerWarning: powerWarning(),
       masked: {
+        podman: cfg.runtime?.podman?.apiUrl ? '[configured]' : '',
         gemini: maskKey(cfg.ai.geminiKey),
         deepseek: maskKey(cfg.ai.deepseekKey),
         github: maskKey(cfg.github.token),
@@ -72,7 +73,7 @@ export function registerRoutes(r, app) {
 
   r.post('/api/settings', async (req, res) => {
     const body = req.body || {};
-    const allowed = ['AI_PROVIDER', 'AI_MODE', 'GEMINI_API_KEY', 'GEMINI_MODEL', 'DEEPSEEK_API_KEY', 'DEEPSEEK_MODEL', 'GITHUB_TOKEN', 'GITHUB_OWNER', 'APP_LOCALE'];
+    const allowed = ['AI_PROVIDER', 'AI_MODE', 'GEMINI_API_KEY', 'GEMINI_MODEL', 'DEEPSEEK_API_KEY', 'DEEPSEEK_MODEL', 'GITHUB_TOKEN', 'GITHUB_OWNER', 'APP_LOCALE', 'PODMAN_API_URL', 'SANDBOX_PODMAN_API_URL', 'CONTAINER_SANDBOX_PODMAN_API_URL'];
     const applied = [];
     const stored = db.setting('runtimeSecrets', {}) || {};
     const oldGeminiKey = stored.GEMINI_API_KEY || cfg.ai.geminiKey || '';
@@ -95,6 +96,8 @@ export function registerRoutes(r, app) {
     cfg.ai.deepseekModel = process.env.DEEPSEEK_MODEL || cfg.ai.deepseekModel;
     cfg.github.token = process.env.GITHUB_TOKEN || cfg.github.token;
     cfg.github.owner = process.env.GITHUB_OWNER || cfg.github.owner;
+    cfg.runtime.podman.apiUrl = process.env.PODMAN_API_URL || process.env.SANDBOX_PODMAN_API_URL || process.env.CONTAINER_SANDBOX_PODMAN_API_URL || cfg.runtime.podman.apiUrl || '';
+    runner.configurePodman?.(cfg.runtime.podman.apiUrl);
     ai.refresh();
 
     let discovery = null;
@@ -364,11 +367,13 @@ export function registerRoutes(r, app) {
   r.post('/api/projects/:id/improve', (req, res) => {
     const p = projects.get(req.params.id);
     if (!p) return res.status(404).json({ error: 'Project not found' });
+    if (!ensureFree(p.id, res)) return;
     const feedback = String(req.body?.feedback || '').trim();
     if (!feedback) return res.status(400).json({ error: 'Tell AI what to improve.' });
     const job = jobs.enqueue({ type: 'improve', projectId: p.id, payload: { projectId: p.id, feedback } });
+    job._files = Array.isArray(req.body?.files) ? req.body.files : [];
     setImmediate(() => jobs.kick(job));
-    res.status(202).json({ jobId: job.id, message: 'AI improvement started.' });
+    res.status(202).json({ jobId: job.id, message: 'AI improvement started.', attachments: job._files.length });
   });
 
   r.post('/api/projects/:id/ask', (req, res) => {

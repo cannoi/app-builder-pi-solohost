@@ -64,3 +64,14 @@ test('analyze path is inspect-only', async () => {
   assert.match(text, /payload\.tested = await inspectOnly\(project, emit\)/);
   assert.match(text, /patchCheckpoint/);
 });
+
+
+test('canonical attachment storage keeps uploads in one project attachments directory', async () => {
+  const { saveAttachment } = await import('../src/projects/attachments.js');
+  const os = await import('node:os'); const fs = await import('node:fs/promises'); const path = await import('node:path');
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'paf-attachments-'));
+  const result = await saveAttachment(root, { originalname: 'notes.txt', mimetype: 'text/plain', buffer: Buffer.from('hello') });
+  assert.equal(path.dirname(result.path), path.join(root, 'attachments'));
+  assert.equal((await fs.readFile(result.path, 'utf8')), 'hello');
+  await fs.rm(root, { recursive: true, force: true });
+});

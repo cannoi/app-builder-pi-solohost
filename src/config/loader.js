@@ -8,10 +8,10 @@ export function loadConfig() {
     templatesDir: process.env.TEMPLATES_DIR || './templates',
     logLevel: process.env.LOG_LEVEL || 'info',
     locale: process.env.APP_LOCALE || 'en',
-    version: '1.4.20',
+    version: '1.4.22',
     runtime: {
       mode: process.env.PREVIEW_MODE || 'auto',
-      podman: { apiUrl: process.env.PODMAN_API_URL || '' },
+      podman: { apiUrl: process.env.PODMAN_API_URL || process.env.SANDBOX_PODMAN_API_URL || process.env.CONTAINER_SANDBOX_PODMAN_API_URL || '' },
     },
     preview: {
       requireInternet: String(process.env.PREVIEW_REQUIRE_INTERNET || 'true').toLowerCase() === 'true',
