@@ -15,6 +15,7 @@ COPY src ./src
 COPY public ./public
 COPY templates ./templates
 COPY docs ./docs
+COPY fallback ./fallback
 COPY README.md INSTALL.md CHANGELOG.md ./
 
 LABEL org.opencontainers.image.source="https://github.com/cannoi/app-builder-pi-solohost"
