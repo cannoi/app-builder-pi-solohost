@@ -101,7 +101,39 @@ jobs:
             type=ref,event=tag
             type=sha,prefix=
 
-      - name: Build and push image
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          tags: \${{ steps.meta.outputs.tags }}
+          labels: \${{ steps.meta.outputs.labels }}
+
+      - name: Smoke test image
+        shell: bash
+        run: |
+          set -euo pipefail
+          IMAGE="ghcr.io/\${{ github.repository }}:${version}"
+          # The generated SoloHost apps use 8080; imported container apps may
+          # declare another port. Detect the first EXPOSE port when available.
+          PORT="$(awk '/^EXPOSE[[:space:]]/{print $2; exit}' Dockerfile | cut -d/ -f1)"
+          PORT="\${PORT:-8080}"
+          docker run -d --rm --name paf-smoke -p "127.0.0.1:18080:\${PORT}" "\${IMAGE}" >/dev/null
+          trap 'docker logs paf-smoke 2>/dev/null || true; docker stop paf-smoke >/dev/null 2>&1 || true' EXIT
+          for i in {1..30}; do
+            if curl -fsS --max-time 3 "http://127.0.0.1:18080/health" >/dev/null 2>&1 || curl -fsS --max-time 3 "http://127.0.0.1:18080/" >/dev/null 2>&1; then
+              exit 0
+            fi
+            if ! docker inspect -f '{{.State.Running}}' paf-smoke 2>/dev/null | grep -q true; then
+              echo 'Container exited before smoke test passed.'
+              exit 1
+            fi
+            sleep 2
+          done
+          echo 'Container did not become reachable within 60 seconds.'
+          exit 1
+
+      - name: Push image
         uses: docker/build-push-action@v6
         with:
           context: .
