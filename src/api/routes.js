@@ -446,10 +446,10 @@ export function registerRoutes(r, app) {
   r.get('/api/projects/:id/github-fallback', async (req, res) => {
     const p = projects.get(req.params.id);
     if (!p) return res.status(404).json({ error: 'Project not found' });
-    const fallbackPath = path.resolve(process.cwd(), 'fallback', 'GitHub-ZIP-Publisher-v2.6.ps1');
+    const fallbackPath = path.resolve(process.cwd(), 'fallback', 'GitHub-ZIP-Image-Publisher-v4.0.ps1');
     try { await fs.access(fallbackPath); } catch { return res.status(404).json({ error: 'GitHub fallback script is not installed.' }); }
     res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-    res.setHeader('Content-Disposition', 'attachment; filename="GitHub-ZIP-Publisher-v2.6.ps1"');
+    res.setHeader('Content-Disposition', 'attachment; filename="GitHub-ZIP-Image-Publisher-v4.0.ps1"');
     createReadStream(fallbackPath).pipe(res);
   });
 
