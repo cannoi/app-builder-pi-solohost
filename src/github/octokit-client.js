@@ -42,7 +42,7 @@ function createFetchOctokit(token, userAgent) {
         update: ({ owner, repo, ...body }) => request('PATCH', `/repos/${owner}/${repo}`, body),
       },
     },
-    request: ({ method = 'GET', url }) => request(method, url.replace(/^https:\/\/api\.github.com/, '')),
+    request: ({ method = 'GET', url, data }) => request(method, url.replace(/^https:\/\/api\.github\.com/, ''), data),
   };
 }
 
