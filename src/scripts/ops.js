@@ -77,6 +77,10 @@ export function formatLayerDiagnosis({ layer, message = '', crash = null, next =
 export function inferAction(message) {
   const m = String(message || '').toLowerCase();
   if (extractGhcrImage(m) && /(solohost|cài đặt|cai dat|install kit|docker-compose|config_options|file cài|tạo file|tao file|generate)/i.test(m)) return 'export';
+  // Explicit targeted change / create must not be trapped in diagnosis.
+  if (/\b(implement this|add this feature|modify this behavior|change the code|update the application|thêm tính năng|sửa hàm|đổi hành vi)\b/.test(m)
+      && !/\b(github actions|ghcr|solohost|preview|sandbox)\b/.test(m)) return 'improve';
+  if (/\b(tạo app mới|build a new app|create a new app)\b/.test(m)) return 'build';
   const layer = classifyFailureLayer(m);
   if (['SOLOHOST', 'GITHUB', 'PREVIEW', 'DOCKER', 'NETWORK'].includes(layer.layer)) return 'analyze';
   if (layer.layer === 'GENERATED_APP') return 'improve';

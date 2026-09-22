@@ -9,8 +9,8 @@ test('settings modal can be hidden and all setup buttons exist', () => {
   assert.match(css, /\.modal\[hidden\]\{display:none!important\}/);
   assert.match(html, /id="settings"[^>]*hidden/);
   assert.match(html, /id="saveSettings"/);
-  assert.match(html, /app\.js\?v=1\.4\.28/);
-  assert.match(html, /styles\.css\?v=1\.4\.28/);
+  assert.match(html, /app\.js\?v=1\.4\.29/);
+  assert.match(html, /styles\.css\?v=1\.4\.29/);
   assert.match(html, /Sandbox:\s*<b>Auto<\/b>/);
   assert.match(html, /GitHub token/);
   assert.match(html, /App Builder/);
@@ -97,7 +97,13 @@ test('support button and Pi QR asset exist', () => {
   assert.match(html, /support-pi-qr\.jpg/);
   assert.match(html, /img\.vietqr\.io\/image\/MB-0905428801/);
   assert.match(js, /openSupport/);
+  assert.match(html, /data-action="script-run"/);
+  assert.match(html, /data-action="script-github"/);
+  assert.match(js, /downloadScript/);
+  assert.match(js, /rollbackLast/);
   assert.equal(fs.existsSync(new URL('../public/support-pi-qr.jpg', import.meta.url)), true);
+  assert.equal(fs.existsSync(new URL('../fallback/run-docker-app.ps1', import.meta.url)), true);
+  assert.equal(fs.existsSync(new URL('../fallback/GitHub-ZIP-Image-Publisher-v5.0.ps1', import.meta.url)), true);
 });
 
 test('preview back bar returns to the current project', () => {

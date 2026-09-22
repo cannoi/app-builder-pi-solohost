@@ -13,6 +13,8 @@ test('natural-language problems route to debugging and access errors get concret
   assert.equal(inferAction('GitHub upload failed because workflow permission is read only'), 'analyze');
   assert.equal(inferAction('the app has a problem and does not work'), 'analyze');
   assert.equal(inferAction('sửa code vì cannot find module express'), 'improve');
+  assert.equal(inferAction('add this feature: save high scores'), 'improve');
+  assert.equal(inferAction('create a new app for invoices'), 'build');
   assert.equal(classifyLogs('docker compose up -d failed: ghcr.io/example/app:0.1.0 Error response from daemon: unauthorized').code, 'registry_unauthorized');
   assert.equal(classifyLogs('GitHub workflow permission is read-only').code, 'github_workflow_permission');
 });

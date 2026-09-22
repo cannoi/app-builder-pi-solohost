@@ -451,39 +451,42 @@ export function registerRoutes(r, app) {
     res.end(data);
   });
 
-  r.get('/api/projects/:id/github-fallback', async (req, res) => {
-    const p = projects.get(req.params.id);
-    if (!p) return res.status(404).json({ error: 'Project not found' });
-    const names = ['GitHub-ZIP-Image-Publisher-v5.0.ps1'];
+  async function resolveFallbackScript(preferredNames = []) {
     const roots = [
       path.resolve(process.cwd(), 'fallback'),
       path.resolve(process.cwd(), 'app', 'fallback'),
       path.resolve('/app/fallback'),
       path.resolve(path.dirname(new URL(import.meta.url).pathname), '../../fallback'),
     ];
-    let fallbackPath = null;
-    let filename = names[0];
     for (const root of roots) {
-      for (const name of names) {
+      for (const name of preferredNames) {
         const candidate = path.join(root, name);
-        try {
-          await fs.access(candidate);
-          fallbackPath = candidate;
-          filename = name;
-          break;
-        } catch {}
+        try { await fs.access(candidate); return { path: candidate, filename: name }; } catch {}
       }
-      if (fallbackPath) break;
-      try {
-        const entries = await fs.readdir(root);
-        const hit = entries.find((n) => n.toLowerCase().endsWith('.ps1'));
-        if (hit) { fallbackPath = path.join(root, hit); filename = hit; break; }
-      } catch {}
     }
-    if (!fallbackPath) return res.status(404).json({ error: 'GitHub fallback script is not installed.' });
+    return null;
+  }
+
+  async function sendFallbackScript(res, names, missing) {
+    const hit = await resolveFallbackScript(names);
+    if (!hit) return res.status(404).json({ error: missing });
     res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-    createReadStream(fallbackPath).pipe(res);
+    res.setHeader('Content-Disposition', `attachment; filename="${hit.filename}"`);
+    createReadStream(hit.path).pipe(res);
+  }
+
+  r.get('/api/projects/:id/github-fallback', async (req, res) => {
+    const p = projects.get(req.params.id);
+    if (!p) return res.status(404).json({ error: 'Project not found' });
+    await sendFallbackScript(res, ['GitHub-ZIP-Image-Publisher-v5.0.ps1'], 'GitHub fallback script is not installed.');
+  });
+
+  r.get('/api/scripts/github-publisher', async (_req, res) => {
+    await sendFallbackScript(res, ['GitHub-ZIP-Image-Publisher-v5.0.ps1'], 'GitHub fallback script is not installed.');
+  });
+
+  r.get('/api/scripts/run-docker-app', async (_req, res) => {
+    await sendFallbackScript(res, ['run-docker-app.ps1'], 'Run-from-ZIP script is not installed.');
   });
 
   r.get('/api/projects/:id/image', async (req, res) => {

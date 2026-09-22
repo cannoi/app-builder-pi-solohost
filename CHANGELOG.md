@@ -1,3 +1,10 @@
+## 1.4.29
+
+- Universal App Factory Expert Mode: CREATE / MODIFY / REPAIR / DIAGNOSE. Targeted changes are not blocked by diagnosis. App-type rules stay local to the project.
+- Job lock + live status stay on while AI repair/build runs so extra commands cannot start.
+- Rollback button on each Builder reply restores the latest checkpoint.
+- Help actions download Windows helpers: run-docker-app.ps1 and GitHub-ZIP-Image-Publisher-v5.0.ps1, with a short how-to in chat.
+
 ## Reliability upgrade — 2026-09-21
 
 - GitHub publishing now follows an existing repository's default branch and generates the GHCR workflow with the exact release tag being published.

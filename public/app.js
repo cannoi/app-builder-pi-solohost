@@ -17,7 +17,58 @@ function add(role, text, meta = {}) {
   const stick = chatNearBottom();
   const el = document.createElement('div'); el.className = `msg ${role}`; el.textContent = text;
   if (meta.small) { const s = document.createElement('span'); s.className = 'small'; s.textContent = meta.small; el.appendChild(s); }
+  if (role === 'ai' && !meta.noTools) attachReplyTools(el);
   $('chat').appendChild(el); if (stick) $('chat').scrollTop = $('chat').scrollHeight; else maybeJump();
+}
+function attachReplyTools(box) {
+  if (!state.projectId || !box) return;
+  const row = document.createElement('div'); row.className = 'actionCard replyTools';
+  const b = document.createElement('button');
+  b.type = 'button';
+  b.textContent = '↩ Rollback';
+  b.title = 'Restore the last checkpoint';
+  b.onclick = () => rollbackLast();
+  row.appendChild(b);
+  box.appendChild(row);
+}
+async function rollbackLast() {
+  if (!state.projectId) { add('ai', 'No project yet. Build first.', { noTools: true }); return; }
+  if (state.busy) { add('system', 'Wait for the current step to finish, then rollback.'); return; }
+  setBusy(true, 'Restoring last checkpoint…');
+  try {
+    const r = await api(`/api/projects/${state.projectId}/rollback`, { method: 'POST', body: '{}' });
+    add('ai', `↩ Restored checkpoint${r.snapshot?.reason ? ` (${r.snapshot.reason})` : ''}. Working files are back to that snapshot. Tap Run to verify.`);
+  } catch (e) { add('ai', e.message || 'No snapshot available yet.'); }
+  finally { setBusy(false); }
+}
+async function downloadScript(kind) {
+  const map = {
+    github: {
+      url: '/api/scripts/github-publisher',
+      name: 'GitHub-ZIP-Image-Publisher-v5.0.ps1',
+      guide: 'GitHub helper downloaded.\n1) On Windows, right-click the .ps1 → Run with PowerShell (or: powershell -ExecutionPolicy Bypass -File .\\GitHub-ZIP-Image-Publisher-v5.0.ps1).\n2) Choose the app ZIP and the GitHub repo (or a new name).\n3) Sign in with a classic token: repo + workflow + write:packages.\n4) Wait until the script prints the GHCR image URL.\n5) Come back here and send: tạo file install SoloHost <image-url>',
+    },
+    run: {
+      url: '/api/scripts/run-docker-app',
+      name: 'run-docker-app.ps1',
+      guide: 'Run-from-ZIP helper downloaded.\n1) Install Docker Desktop and keep it running.\n2) Put run-docker-app.ps1 next to your app ZIP.\n3) Right-click → Run with PowerShell (or: powershell -ExecutionPolicy Bypass -File .\\run-docker-app.ps1 -ZipFile app.zip).\n4) The script unpacks, builds/starts compose, then opens the UI URL.\n5) Use the on-screen menu to check logs or stop the app.',
+    },
+  };
+  const spec = map[kind];
+  if (!spec) return;
+  try {
+    const r = await fetch(spec.url);
+    if (!r.ok) {
+      const data = await r.json().catch(() => ({}));
+      throw new Error(data.error || 'Could not download the helper script.');
+    }
+    const blob = await r.blob();
+    const href = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = href; a.download = spec.name; document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(href), 2000);
+    add('ai', spec.guide);
+  } catch (e) { add('ai', e.message); }
 }
 function event(stage, status, message) {
   const el = document.createElement('div'); el.className = `event ${status}`; el.textContent = `${status === 'done' ? '✓' : status === 'failed' ? '⚠' : '•'} ${message}`;
@@ -202,6 +253,8 @@ async function startSandboxDemo() {
 async function quick(action, extraPayload = {}) {
   if (state.busy) return;
   if (action === 'support') return openSupport();
+  if (action === 'script-run') return downloadScript('run');
+  if (action === 'script-github') return downloadScript('github');
   if (action === 'docker') return inspectDocker();
   if (action === 'sandbox') return startSandboxDemo();
   if (action === 'import') return pickImportZip();
