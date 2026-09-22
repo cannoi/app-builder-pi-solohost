@@ -9,6 +9,10 @@ test('settings modal can be hidden and all setup buttons exist', () => {
   assert.match(css, /\.modal\[hidden\]\{display:none!important\}/);
   assert.match(html, /id="settings"[^>]*hidden/);
   assert.match(html, /id="saveSettings"/);
+  assert.match(html, /app\.js\?v=1\.4\.26/);
+  assert.match(html, /styles\.css\?v=1\.4\.26/);
+  assert.match(html, /Sandbox:\s*<b>Auto<\/b>/);
+  assert.match(html, /GitHub token/);
   assert.match(html, /App Builder/);
   const js = fs.readFileSync(new URL('../public/app.js', import.meta.url), 'utf8');
   assert.match(js, /closeSettings/);
@@ -103,6 +107,12 @@ test('preview back bar returns to the current project', () => {
   const js = fs.readFileSync(new URL('../public/app.js', import.meta.url), 'utf8');
   assert.match(js, /paf\.projectId/);
   assert.match(js, /savedProjectId/);
+});
+
+test('release Actions failures expose a diagnostic repair action in the chat UI', () => {
+  const text = fs.readFileSync('public/app.js', 'utf8');
+  assert.match(text, /github_actions_failed/);
+  assert.match(text, /renderRepairAction\(result\.diagnosis\)/);
 });
 
 test('failed jobs expose a direct AI repair action in the chat UI', () => {

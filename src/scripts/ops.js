@@ -67,6 +67,11 @@ export function classifyLogs(logs = '') {
   if (/enoent|no such file/i.test(t) && /package\.json/i.test(t)) {
     return { code: 'missing_package', title: 'package.json was not in the workspace.', hint: 'Do not run npm in an empty sandbox. Use Build, then Run.' };
   }
+  if (/container did not become reachable/i.test(t) && /running on port\s+(\d+)/i.test(t)) {
+    const port = t.match(/running on port\s+(\d+)/i)?.[1] || 'the app port';
+    return { code: 'workflow_port_mismatch', title: `The GitHub smoke test did not reach the app port (${port}).`, hint: `The app reports port ${port}. The old smoke test can miss valid ports; regenerate the Builder workflow and retry. Do not change the app just to satisfy a wrong CI port.` };
+  }
+  if (/container did not become reachable/i.test(t)) return { code: 'workflow_smoke_timeout', title: 'GitHub built the image, but its smoke test could not reach the web service.', hint: 'Check the failed Actions log for the app listening port, startup error, or health route. Fix only the confirmed cause, then rebuild the image.' };
   if (/eaddrinuse/i.test(t)) return { code: 'port_busy', title: 'Port is already in use.', hint: 'Stop the previous preview and Run again.' };
   if (/syntaxerror|unexpected token/i.test(t)) return { code: 'syntax', title: 'The server file has a syntax error.', hint: 'I will patch the file and Run again.' };
   if (/ENOTFOUND|EAI_AGAIN|getaddrinfo|dns|name resolution/i.test(t)) {

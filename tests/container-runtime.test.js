@@ -102,6 +102,20 @@ test('Compose host:container mapping detects the container port, not the host po
   }
 });
 
+test('Container Sandbox endpoint is auto-detected at Run time without Settings configuration', async () => {
+  const old = process.env.PODMAN_API_URL;
+  delete process.env.PODMAN_API_URL;
+  try {
+    const runner = new BuildRunner({ cfg: { runtime: { mode: 'auto', podman: { apiUrl: '' } }, limits: { sandboxTimeoutSec: 1 } } });
+    assert.equal(Boolean(runner.podman), false);
+    process.env.PODMAN_API_URL = 'http://sandbox-late';
+    runner.refreshPodmanFromEnvironment();
+    assert.equal(runner.podman.baseUrl, 'http://sandbox-late');
+  } finally {
+    if (old == null) delete process.env.PODMAN_API_URL; else process.env.PODMAN_API_URL = old;
+  }
+});
+
 test('ordinary Node/static RUN stays native even when Container Sandbox is configured', async () => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'paf-native-with-podman-'));
   await fs.writeFile(path.join(dir, 'index.html'), '<html><body>Native UI</body></html>');

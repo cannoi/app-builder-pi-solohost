@@ -95,7 +95,7 @@ test('native preview gives an accurate, actionable error for a Dockerfile-only a
   assert.equal(result.status, 'failed');
   assert.doesNotMatch(result.error, /Tap Build first/);
   assert.match(result.error, /Container Sandbox/);
-  assert.match(result.error, /real Docker container/);
+  assert.match(result.error, /container-only app|Container Sandbox/);
 });
 
 test('native preview keeps the original "Tap Build" message for a project with neither UI files nor a Dockerfile', async () => {

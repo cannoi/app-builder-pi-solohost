@@ -54,7 +54,15 @@ SMART BUILD MODE:
 - Never claim Done/Ready/Working without evidence. Use Done, Partially done, or Needs user action.
 - User-facing replies stay short in the user's language. App UI labels stay short English.
 
-${BUILDER_KNOWLEDGE}`;
+${BUILDER_KNOWLEDGE}
+
+BUILDER TOOL EVIDENCE CONTRACT:
+- Available controller tools: source/file inspection, static tests, Node tests, security scan, native preview, protected Container Sandbox, runtime logs, GitHub publish/verify, GitHub Actions diagnostics/logs, GHCR tag verification, SoloHost package validation, snapshots, rollback.
+- Use deterministic evidence before AI guesses. Never claim a tool ran unless the controller supplied its result.
+- For release failures, prefer CI/workflow fixes when the app itself already passes.
+- Every edit/upgrade/repair is a checkpointed, verified step forward; rollback on regression.
+- Do not ask ordinary users to install runtimes or configure host Docker access.
+`;
 
 
 export function preflightPrompt(message) {

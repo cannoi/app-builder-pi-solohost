@@ -199,7 +199,7 @@ async function startSandboxDemo() {
     watch(r.jobId);
   } catch (e) { setBusy(false); add('ai', e.message); }
 }
-async function quick(action) {
+async function quick(action, extraPayload = {}) {
   if (state.busy) return;
   if (action === 'support') return openSupport();
   if (action === 'docker') return inspectDocker();
@@ -216,7 +216,7 @@ async function quick(action) {
   if (action === 'export') {
     if (!state.projectId) { add('ai', 'Create an app first, then tap Zip.'); return; }
     add('ai', 'Preparing a ZIP of your app…');
-    try { await downloadZip(state.projectId, 'project'); }
+    try { await downloadZip(state.projectId, extraPayload.kind || 'project'); }
     catch (e) { add('ai', e.message); }
     return;
   }
@@ -224,7 +224,7 @@ async function quick(action) {
   setBusy(true, `${actionText(action)}…`);
   try {
     let r;
-    if (action === 'publish') r = await api(`/api/projects/${state.projectId}/release`, { method: 'POST', body: JSON.stringify({ approved: true, confirm: true, push: true }) });
+    if (action === 'publish') r = await api(`/api/projects/${state.projectId}/release`, { method: 'POST', body: JSON.stringify({ approved: true, confirm: true, push: true, ...extraPayload }) });
     else if (action === 'improve' || action === 'edit') {
       const kind = action === 'edit' ? 'SAFE EDIT' : 'SAFE UPGRADE';
       const request = await askSafeAction(kind);
@@ -281,6 +281,9 @@ async function watch(jobId) {
           const failure = `Step ${reportFailure.action} was not completed: ${reportFailure.error || 'blocked by a previous failure.'}`;
           add('ai', failure);
           renderRepairAction(failure);
+        }
+        if (result.status === 'github_actions_failed' && result.diagnosis) {
+          renderRepairAction(result.diagnosis);
         }
         if (result.brief) add('ai', result.brief);
         else if (result.reply) add('ai', result.reply);
@@ -521,15 +524,21 @@ async function importContainer(name) {
 function renderFiles() { $('attachments').innerHTML = state.files.map((f, i) => `<span class="attachment">📎 ${esc(f.name)} <button data-remove="${i}">×</button></span>`).join(''); }
 function esc(v) { return String(v || '').replace(/[&<>'"]/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c])); }
 async function loadSettings() {
-  try { state.settings = await api('/api/settings'); $('setProvider').value = state.settings.ai?.provider || 'deepseek'; } catch {}
+  try {
+    state.settings = await api('/api/settings');
+    $('setProvider').value = state.settings.ai?.mode === 'council' ? 'council' : (state.settings.ai?.provider || 'deepseek');
+    $('setGhOwner').value = state.settings.github?.owner || '';
+    $('settingsState').textContent = '';
+  } catch {}
 }
 async function saveSettings() {
   try {
     const raw = $('setProvider').value;
-    const body = { AI_PROVIDER: raw === 'council' ? 'deepseek' : raw, AI_MODE: raw === 'council' ? 'council' : 'single', PODMAN_API_URL: $('setPodman').value, DEEPSEEK_API_KEY: $('setDeepseek').value, GEMINI_API_KEY: $('setGemini').value, GITHUB_TOKEN: $('setGhToken').value, GITHUB_OWNER: $('setGhOwner').value, setupComplete: true };
+    const body = { AI_PROVIDER: raw === 'council' ? 'deepseek' : raw, AI_MODE: raw === 'council' ? 'council' : 'single', DEEPSEEK_API_KEY: $('setDeepseek').value, GEMINI_API_KEY: $('setGemini').value, GITHUB_TOKEN: $('setGhToken').value, GITHUB_OWNER: $('setGhOwner').value, setupComplete: true };
     const r = await api('/api/settings', { method: 'POST', body: JSON.stringify(body) });
-    $('setDeepseek').value = ''; $('setGemini').value = ''; $('setGhToken').value = ''; $('setPodman').value = ''; $('settingsState').textContent = 'Saved.'; $('settings').hidden = true; await loadStatus();
-    add('system', r.discovery?.model ? `Gemini model selected: ${r.discovery.model}` : 'Settings saved.');
+    $('setDeepseek').value = ''; $('setGemini').value = ''; $('setGhToken').value = ''; $('settingsState').textContent = 'Saved. Builder will use the new provider/model on the next task.'; await loadStatus();
+    add('system', r.discovery?.model ? `Gemini ready: ${r.discovery.model}` : 'Settings saved.');
+    setTimeout(() => { $('settings').hidden = true; }, 350);
   } catch (e) { $('settingsState').textContent = e.message; }
 }
 function renderGuide(guide) {
@@ -539,19 +548,20 @@ function renderGuide(guide) {
   const d = document.createElement('div'); d.className = 'small'; d.textContent = guide.detail || ''; box.appendChild(d);
   if (guide.label && guide.action) {
     const row = document.createElement('div'); row.className = 'actionCard';
-    const b = document.createElement('button'); b.textContent = guide.label; b.onclick = () => { if (state.busy) return; quick(guide.action); }; row.appendChild(b);
+    const b = document.createElement('button'); b.textContent = guide.label; b.onclick = () => { if (state.busy) return; quick(guide.action, guide.payload || {}); }; row.appendChild(b);
     box.appendChild(row);
   }
   $('chat').appendChild(box); maybeJump();
 }
 async function applyAiNow(value) {
+  if (state.busy) { await loadStatus(); return; }
   const council = value === 'council';
   const provider = council ? 'deepseek' : value;
   try {
     await api('/api/settings', { method: 'POST', body: JSON.stringify({ AI_PROVIDER: provider, AI_MODE: council ? 'council' : 'single' }) });
-    add('system', council ? 'Council on: one model builds, the other reviews.' : `AI switched to ${provider}.`);
+    add('system', council ? 'Council selected. The next task will use both configured models.' : `AI selected: ${provider}. The next task will use an available supported model automatically.`);
     await loadStatus();
-  } catch (e) { add('system', e.message); }
+  } catch (e) { add('system', e.message); await loadSettings(); }
 }
 function renderWelcome() {
   $('chat').innerHTML = '';

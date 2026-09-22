@@ -175,12 +175,17 @@ export class GitHubManager {
     return { ok: missing.length === 0 && mismatched.length === 0, missing, mismatched, verifiedFiles: localEntries.length, commit: head.sha };
   }
 
-  async latestWorkflowRun(repoName, workflowFile = 'docker.yml') {
+  async latestWorkflowRun(repoName, workflowFile = 'docker.yml', { headSha = null, branch = null } = {}) {
     const owner = encodeURIComponent(this.cfg.github.owner);
     const repo = encodeURIComponent(repoName);
     try {
-      const result = await this.api('GET', `/repos/${owner}/${repo}/actions/workflows/${encodeURIComponent(workflowFile)}/runs?per_page=5`);
-      const run = Array.isArray(result.workflow_runs) ? result.workflow_runs[0] : null;
+      const params = new URLSearchParams({ per_page: '10' });
+      if (headSha) params.set('head_sha', headSha);
+      if (branch) params.set('branch', branch);
+      const result = await this.api('GET', `/repos/${owner}/${repo}/actions/workflows/${encodeURIComponent(workflowFile)}/runs?${params.toString()}`);
+      const run = Array.isArray(result.workflow_runs)
+        ? result.workflow_runs.find((item) => !headSha || item.head_sha === headSha) || result.workflow_runs[0]
+        : null;
       return run ? {
         id: run.id,
         status: run.status || null,
@@ -188,10 +193,58 @@ export class GitHubManager {
         html_url: run.html_url || null,
         created_at: run.created_at || null,
         updated_at: run.updated_at || null,
+        head_sha: run.head_sha || null,
+        head_branch: run.head_branch || null,
+        run_number: run.run_number || null,
       } : null;
     } catch (err) {
       return { status: 'unknown', conclusion: null, error: err.message || String(err) };
     }
+  }
+
+  async actionJobLogs(owner, repoName, jobId) {
+    const who = encodeURIComponent(owner || this.cfg.github.owner);
+    const repo = encodeURIComponent(repoName);
+    const id = encodeURIComponent(String(jobId));
+    const res = await fetch(`${API}/repos/${who}/${repo}/actions/jobs/${id}/logs`, {
+      headers: this.headers(),
+      redirect: 'follow',
+      signal: AbortSignal.timeout(30000),
+    });
+    const raw = await res.text();
+    if (!res.ok) throw new Error(`GitHub ${res.status}: ${raw.slice(0, 300)}`);
+    return redactActionLog(raw);
+  }
+
+  async workflowDiagnostics(repoName, runId) {
+    const owner = this.cfg.github.owner;
+    const run = await this.api('GET', `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repoName)}/actions/runs/${encodeURIComponent(String(runId))}`);
+    const jobsResult = await this.api('GET', `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repoName)}/actions/runs/${encodeURIComponent(String(runId))}/jobs?per_page=100`);
+    const jobs = Array.isArray(jobsResult.jobs) ? jobsResult.jobs : [];
+    const failedJobs = jobs.filter((job) => job.conclusion && job.conclusion !== 'success');
+    const details = [];
+    for (const job of failedJobs.slice(0, 5)) {
+      let logs = '';
+      try { logs = await this.actionJobLogs(owner, repoName, job.id); } catch (err) { logs = `Unable to read job log: ${String(err.message || err).slice(0, 220)}`; }
+      details.push({
+        id: job.id,
+        name: job.name || null,
+        status: job.status || null,
+        conclusion: job.conclusion || null,
+        started_at: job.started_at || null,
+        completed_at: job.completed_at || null,
+        html_url: job.html_url || null,
+        failed_steps: (job.steps || []).filter((step) => step.conclusion && step.conclusion !== 'success').map((step) => ({ name: step.name, status: step.status, conclusion: step.conclusion })),
+        log: String(logs).slice(-9000),
+      });
+    }
+    const combined = details.map((d) => `JOB: ${d.name || d.id}\nFAILED STEPS: ${JSON.stringify(d.failed_steps)}\nLOG:\n${d.log}`).join('\n\n');
+    return {
+      run: { id: run.id, status: run.status, conclusion: run.conclusion, html_url: run.html_url, head_sha: run.head_sha, head_branch: run.head_branch },
+      jobs: details,
+      summary: `GitHub Actions ${run.conclusion || run.status || 'unknown'}; ${failedJobs.length} failed job(s).`,
+      logTail: combined.slice(-14000),
+    };
   }
 
   async verifyContainerImage(packageName, tag) {
@@ -253,4 +306,14 @@ export class GitHubManager {
     if (!res.ok) { const err = new Error(`GitHub ${res.status}: ${text.slice(0, 300)}`); err.status = res.status; err.code = classifyGitHubError(res.status, text); throw err; }
     return text ? JSON.parse(text) : {};
   }
+}
+
+function redactActionLog(value) {
+  return String(value || '')
+    .replace(/ghp_[A-Za-z0-9_\-]+/g, 'ghp_***')
+    .replace(/github_pat_[A-Za-z0-9_\-]+/g, 'github_pat_***')
+    .replace(/AIza[0-9A-Za-z_\-]+/g, 'AIza***')
+    .replace(/sk-[0-9A-Za-z_\-]{20,}/g, 'sk-***')
+    .replace(/Bearer\s+[A-Za-z0-9._\-]+/gi, 'Bearer ***')
+    .replace(/(GEMINI_API_KEY|DEEPSEEK_API_KEY|GITHUB_TOKEN)=([^\s]+)/gi, '$1=***');
 }

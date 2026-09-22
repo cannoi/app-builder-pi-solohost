@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>App Builder — Pi SoloHost</title>
   <meta name="theme-color" content="#0e1116">
-  <link rel="stylesheet" href="/styles.css?v=1.4.13">
+  <link rel="stylesheet" href="/styles.css?v=1.4.26">
 <style>.paf-made-by{position:fixed;right:8px;bottom:8px;width:min(72px,12vw);max-width:12vw;height:auto;object-fit:contain;opacity:.5;background:transparent;padding:0;border:0;box-shadow:none;filter:none;pointer-events:none;z-index:30}</style></head>
 <body>
   <div id="app">
@@ -78,18 +78,21 @@
   <div id="settings" class="modal" hidden>
     <div class="sheet">
       <div class="sheetHead"><h2>Settings</h2><button id="closeSettings" class="iconBtn">✕</button></div>
-      <label>AI provider<select id="setProvider"><option value="deepseek">DeepSeek</option><option value="gemini">Google Gemini</option><option value="council">Council (both)</option></select></label>
-      <label>DeepSeek API key<input id="setDeepseek" type="password" autocomplete="off" placeholder="Paste key"></label>
-      <label>Gemini API key<input id="setGemini" type="password" autocomplete="off" placeholder="Needed for Council"></label>
-      <label>GitHub token <span class="muted">optional</span><input id="setGhToken" type="password" autocomplete="off" placeholder="Personal access token (classic)"><span class="small">Use classic token: <b>repo</b> + <b>workflow</b> + <b>write:packages</b>. Create: github.com/settings/tokens/new</span></label>
-      <label>GitHub owner <span class="muted">optional</span><input id="setGhOwner" type="text" placeholder="username or org"></label>
-      <label>Container Sandbox <span class="muted">auto</span><input id="setPodman" type="password" autocomplete="off" placeholder="Auto-detected" hidden><span class="small">Automatically detected when the SoloHost platform provides a protected container runner. No installation or manual endpoint setup is required. Never use docker.sock.</span></label><div class="info">If GitHub Actions says permission is read-only: Repository → Settings → Actions → General → Workflow permissions → <b>Read and write permissions</b> → Save.</div>
-      <div class="info">Council: one model writes, the other reviews. Trust scores prefer the model that finishes with fewer errors. No host Docker access is required.</div>
+      <div class="settingsGrid">
+        <label>AI provider<select id="setProvider"><option value="deepseek">DeepSeek</option><option value="gemini">Google Gemini</option><option value="council">Council (both)</option></select></label>
+        <label>GitHub owner<input id="setGhOwner" type="text" placeholder="username or org"></label>
+        <label>DeepSeek API key<input id="setDeepseek" type="password" autocomplete="off" placeholder="Paste key"></label>
+        <label>Gemini API key<input id="setGemini" type="password" autocomplete="off" placeholder="Paste key"></label>
+        <label>GitHub token<input id="setGhToken" type="password" autocomplete="off" placeholder="Classic token"></label>
+        <div class="settingNote"><span>⚙ Sandbox: <b>Auto</b></span><span>🛡 No docker.sock · no extra setup</span></div>
+      </div>
+      <div class="info compactInfo">GitHub token: use classic <b>repo + workflow + write:packages</b>. Actions permission is checked automatically during Publish.</div>
+      <div class="info compactInfo">AI models are auto-detected and rotated when a model is unavailable. Save once; Builder handles the switch.</div>
       <button id="saveSettings" class="primary wide">Save</button>
       <p id="settingsState" class="muted"></p>
     </div>
   </div>
 
-  <script src="/app.js?v=1.4.13"></script>
+  <script src="/app.js?v=1.4.26"></script>
 <img class="paf-made-by" src="/made-by.png" alt="Made with App Builder — Pi SoloHost"></body>
 </html>

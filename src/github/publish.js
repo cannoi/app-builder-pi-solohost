@@ -1,7 +1,7 @@
 import { writeGithubWorkflow } from '../projects/generator.js';
 import { publishWithGit, validateReleaseProject, manualFallback, githubSetupGuide } from './git-publisher.js';
 
-export async function publishToGitHub({ github, project, sourceDir, version = '0.1.0', emit = () => {}, runtimeOk = true, repoName = null, existingAction = 'confirm' }) {
+export async function publishToGitHub({ github, project, sourceDir, version = '0.1.0', emit = () => {}, runtimeOk = true, repoName = null, existingAction = 'confirm', refreshWorkflow = true }) {
   const report = {
     ok: false,
     stage: 'preparing',
@@ -38,7 +38,7 @@ export async function publishToGitHub({ github, project, sourceDir, version = '0
   // Keep the GHCR tag in the workflow identical to the release being published.
   // The old code generated the workflow from project.version before release notes,
   // which could leave GitHub Actions building an older tag than the installer used.
-  await writeGithubWorkflow(sourceDir, { ...project, version });
+  if (refreshWorkflow) await writeGithubWorkflow(sourceDir, { ...project, version });
   step('validating', 'Validating…');
   const validation = await validateReleaseProject(sourceDir);
   if (!validation.ok) {

@@ -24,6 +24,17 @@ export class BuildRunner {
     return Boolean(this.podman);
   }
 
+  refreshPodmanFromEnvironment() {
+    if (this.podman) return this.podman;
+    const apiUrl = this.cfg?.runtime?.podman?.apiUrl
+      || process.env.PODMAN_API_URL
+      || process.env.SANDBOX_PODMAN_API_URL
+      || process.env.CONTAINER_SANDBOX_PODMAN_API_URL
+      || '';
+    if (apiUrl) this.configurePodman(apiUrl);
+    return this.podman;
+  }
+
   status() {
     const mode = String(this.cfg?.runtime?.mode || process.env.PREVIEW_MODE || 'auto').toLowerCase();
     const podman = podmanStatus(this.cfg);
@@ -60,6 +71,7 @@ export class BuildRunner {
   }
 
   async buildImage({ sourcePath, projectSlug, timeout, runtimeSpec = null } = {}) {
+    this.refreshPodmanFromEnvironment();
     if (!this.podman) {
       return { status: 'skipped', engine: 'native-preview', reason: 'Local image builds are disabled without the optional Container Sandbox endpoint. GitHub Actions builds the final SoloHost image.' };
     }
@@ -105,6 +117,7 @@ export class BuildRunner {
   }
 
   async runApp({ sourcePath, projectSlug, timeout = 180, keepRunning = true } = {}) {
+    this.refreshPodmanFromEnvironment();
     const mode = String(this.cfg?.runtime?.mode || process.env.PREVIEW_MODE || 'auto').toLowerCase();
     const runtimeSpec = await detectContainerRuntime(sourcePath);
     const previewable = await hasPreviewableSource(sourcePath);
@@ -118,6 +131,7 @@ export class BuildRunner {
   }
 
   async runPodmanApp({ sourcePath, projectSlug, timeout = 180, keepRunning = true } = {}) {
+    this.refreshPodmanFromEnvironment();
     if (!this.podman) return { status: 'skipped', runtime: 'podman-sandbox', error: 'Protected Container Sandbox is not available in this environment.' };
     const safeSlug = slug(projectSlug);
     const image = imageName(safeSlug);

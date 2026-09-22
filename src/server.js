@@ -3,6 +3,7 @@ import { loadConfig, validateConfig } from './config/index.js';
 import { createLogger } from './utils/logger.js';
 import { openDb } from './storage/db.js';
 import { AIGateway } from './ai/gateway.js';
+import { normalizeDeepSeekModel } from './ai/providers/deepseek.js';
 import { ProjectManager } from './projects/manager.js';
 import { SnapshotStore } from './projects/snapshots.js';
 import { JobQueue } from './jobs/queue.js';
@@ -91,7 +92,7 @@ function hydrateSecrets(cfg, db) {
   if (saved.GEMINI_API_KEY) { process.env.GEMINI_API_KEY = saved.GEMINI_API_KEY; cfg.ai.geminiKey = saved.GEMINI_API_KEY; }
   if (saved.GEMINI_MODEL) { process.env.GEMINI_MODEL = saved.GEMINI_MODEL; cfg.ai.geminiModel = saved.GEMINI_MODEL; }
   if (saved.DEEPSEEK_API_KEY) { process.env.DEEPSEEK_API_KEY = saved.DEEPSEEK_API_KEY; cfg.ai.deepseekKey = saved.DEEPSEEK_API_KEY; }
-  if (saved.DEEPSEEK_MODEL) { process.env.DEEPSEEK_MODEL = saved.DEEPSEEK_MODEL; cfg.ai.deepseekModel = saved.DEEPSEEK_MODEL; }
+  if (saved.DEEPSEEK_MODEL) { process.env.DEEPSEEK_MODEL = normalizeDeepSeekModel(saved.DEEPSEEK_MODEL); cfg.ai.deepseekModel = normalizeDeepSeekModel(saved.DEEPSEEK_MODEL); }
   if (saved.GITHUB_TOKEN) { process.env.GITHUB_TOKEN = saved.GITHUB_TOKEN; cfg.github.token = saved.GITHUB_TOKEN; }
   if (saved.GITHUB_OWNER) { process.env.GITHUB_OWNER = saved.GITHUB_OWNER; cfg.github.owner = saved.GITHUB_OWNER; }
   const podmanUrl = saved.PODMAN_API_URL || saved.SANDBOX_PODMAN_API_URL || saved.CONTAINER_SANDBOX_PODMAN_API_URL || '';

@@ -9,6 +9,18 @@
 
 # Changelog
 
+## 1.4.26
+
+- GitHub release flow now waits for the exact pushed commit's GHCR image before creating the SoloHost install kit.
+- Failed GitHub Actions builds are read and classified; one low-risk AI repair can be proposed/applied, verified, and rolled back on regression.
+- Generated workflows test the actual container web port (including common ports such as 3000) before pushing the tested image.
+- Container-only Run uses the protected Sandbox automatically when available; ordinary Node/static projects stay on native preview.
+- AI provider/model switching is normalized with clearer auth, quota, model, network, and billing errors.
+- Settings uses a compact no-scroll key/token layout and keeps Sandbox setup automatic.
+- Build/Edit/Repair steps now checkpoint and verify forward progress before the next mutating step.
+- Builder keeps a proactive next-step guide for publish and SoloHost installation.
+
+
 ## 1.4.13
 
 - ⬆ Zip imports an app, unpacks it, and flattens a single wrapper folder.

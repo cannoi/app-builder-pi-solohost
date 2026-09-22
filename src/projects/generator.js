@@ -114,32 +114,62 @@ jobs:
         run: |
           set -euo pipefail
           IMAGE="ghcr.io/\${{ github.repository }}:${version}"
-          # The generated SoloHost apps use 8080; imported container apps may
-          # declare another port. Detect the first EXPOSE port when available.
-          PORT="$(awk '/^EXPOSE[[:space:]]/{print $2; exit}' Dockerfile | cut -d/ -f1)"
-          PORT="\${PORT:-8080}"
-          docker run -d --rm --name paf-smoke -p "127.0.0.1:18080:\${PORT}" "\${IMAGE}" >/dev/null
+          # Do not assume port 8080. Many valid apps listen on 3000/4173/5173/etc.
+          # Prefer image EXPOSE values, then probe a small universal web-port set.
+          mapfile -t EXPOSED < <(docker image inspect "\${IMAGE}" --format '{{range $p, $_ := .Config.ExposedPorts}}{{println $p}}{{end}}' 2>/dev/null | sed -E 's#/.*$##' | sed '/^$/d' | sort -u)
+          COMMON=(3000 3001 4173 5000 5173 6080 8000 8080 8081 8501)
+          PORTS=()
+          add_port() {
+            local p="$1"
+            [[ "$p" =~ ^[0-9]+$ ]] || return 0
+            local existing
+            for existing in "\${PORTS[@]}"; do [[ "$existing" == "$p" ]] && return 0; done
+            PORTS+=("$p")
+          }
+          for p in "\${EXPOSED[@]}"; do add_port "$p"; done
+          for p in "\${COMMON[@]}"; do add_port "$p"; done
+          if [[ "\${#PORTS[@]}" -eq 0 ]]; then PORTS=(8080); fi
+          if [[ "\${#PORTS[@]}" -gt 10 ]]; then PORTS=("\${PORTS[@]:0:10}"); fi
+
+          RUN_ARGS=()
+          i=0
+          for p in "\${PORTS[@]}"; do
+            RUN_ARGS+=( -p "127.0.0.1:$((18080+i)):$p" )
+            i=$((i+1))
+          done
+          docker run -d --rm --name paf-smoke "\${RUN_ARGS[@]}" "\${IMAGE}" >/dev/null
           trap 'docker logs paf-smoke 2>/dev/null || true; docker stop paf-smoke >/dev/null 2>&1 || true' EXIT
-          for i in {1..30}; do
-            if curl -fsS --max-time 3 "http://127.0.0.1:18080/health" >/dev/null 2>&1 || curl -fsS --max-time 3 "http://127.0.0.1:18080/" >/dev/null 2>&1; then
-              exit 0
-            fi
+
+          for i in {1..45}; do
+            j=0
+            for p in "\${PORTS[@]}"; do
+              host_port=$((18080+j))
+              if curl -fsS --max-time 3 "http://127.0.0.1:\${host_port}/health" >/dev/null 2>&1 || curl -fsS --max-time 3 "http://127.0.0.1:\${host_port}/" >/dev/null 2>&1; then
+                echo "Smoke test passed on container port \${p}."
+                exit 0
+              fi
+              j=$((j+1))
+            done
             if ! docker inspect -f '{{.State.Running}}' paf-smoke 2>/dev/null | grep -q true; then
               echo 'Container exited before smoke test passed.'
+              docker logs paf-smoke 2>/dev/null || true
               exit 1
             fi
             sleep 2
           done
-          echo 'Container did not become reachable within 60 seconds.'
+          echo 'Container did not become reachable on any detected/common web port within 90 seconds.'
+          docker logs paf-smoke 2>/dev/null || true
           exit 1
 
-      - name: Push image
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          push: true
-          tags: \${{ steps.meta.outputs.tags }}
-          labels: \${{ steps.meta.outputs.labels }}
+      - name: Push tested image
+        shell: bash
+        run: |
+          set -euo pipefail
+          while IFS= read -r tag; do
+            [[ -n "$tag" ]] || continue
+            echo "Pushing tested image: $tag"
+            docker image push "$tag"
+          done <<< "\${{ steps.meta.outputs.tags }}"
 `;
 
   await writeSafeFile(root, '.github/workflows/docker.yml', yml);

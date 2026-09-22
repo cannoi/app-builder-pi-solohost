@@ -333,22 +333,20 @@ export function registerPipeline(app) {
   async function runRelease(project, payload, emit) {
     emit('validate', 'running', '✓ App generated — validating project files…');
     const tests = await projects.readMetadata(project, 'test-plan.json', {});
-    // Never trust a stale security.json at release time. Re-scan the exact source
-    // that is about to be published so the user gets the current, actionable issue.
-    const security = await scanProject(projects.sourceDir(project.slug));
+    const source = projects.sourceDir(project.slug);
+    const security = await scanProject(source);
     await projects.saveMetadata(project, 'security.json', security);
     const runtime = await projects.readMetadata(project, 'runtime.json', {});
     if (payload.approved !== true && payload.confirm !== true) throw new Error('Release blocked: approve the tested app first.');
     if (security.critical > 0) {
       const report = security.copy_for_ai || 'APP BUILDER SECURITY REPORT\nNo detailed report was generated.';
       emit('security', 'failed', `${security.summary}\n\n${report}`);
-      throw new Error(`RELEASE_SECURITY_BLOCKED\n${security.summary}\n\n${report}\n\nNEXT: Tap Improve and paste/copy this report so the AI can apply the smallest targeted security fix, then Run and Publish again.`);
+      throw new Error(`RELEASE_SECURITY_BLOCKED\n${security.summary}\n\n${report}\n\nNEXT: Tap Improve and let the AI apply the smallest targeted security fix, then Run and Publish again.`);
     }
     if (runtime.status !== 'passed' || runtime.health !== true) throw new Error('Release blocked: run the app successfully before publishing. Tap Run first.');
     if (tests.nodeResult?.status === 'failed') throw new Error('Release blocked: tests failed. Tap Improve, then Run.');
-    const source = projects.sourceDir(project.slug);
+
     await stampMadeBy(source, cfg);
-    await writeGithubWorkflow(source, project);
     const quality = await review(project);
     let aiDescription = '';
     try {
@@ -356,10 +354,21 @@ export function registerPipeline(app) {
       aiDescription = String(desc.json?.description || '').trim();
     } catch { /* deterministic fallback below */ }
     const notes = await releases.prepareNotes(project, source, quality);
-    emit('package', 'running', 'Creating the SoloHost package…');
-    let githubUrl = null;
+
     let githubPublish = null;
-    if (github.configured() && payload.push !== false) {
+    let githubUrl = null;
+    let imageVerification = { ok: false };
+    let workflowRun = null;
+    let workflowDiagnostics = null;
+    let autoRepair = null;
+
+    const pending = await projects.readMetadata(project, 'release-pending.json', null);
+    const verifyOnly = payload.verifyImage === true && pending?.githubUrl;
+    if (verifyOnly) {
+      githubUrl = pending.githubUrl;
+      githubPublish = { ok: true, verified: true, owner: pending.owner, repo: pending.repo, url: pending.githubUrl, sha: pending.sha };
+      emit('github', 'done', 'GitHub source is already verified. Checking the matching Actions run…');
+    } else if (github.configured() && payload.push !== false) {
       emit('github', 'running', 'Publishing source…');
       githubPublish = await publishToGitHub({
         github,
@@ -368,26 +377,23 @@ export function registerPipeline(app) {
         version: notes.version,
         emit,
         runtimeOk: runtime.health === true && runtime.status === 'passed',
-        repoName: payload.repoName || project.slug,
-        existingAction: payload.existingAction || 'confirm',
+        repoName: payload.repoName || pending?.repo || project.slug,
+        existingAction: payload.existingAction || (pending?.repo ? 'overwrite' : 'confirm'),
       });
       githubUrl = githubPublish.ok && githubPublish.verified ? githubPublish.url : null;
       if (githubPublish.code === 'REPO_EXISTS') {
         return {
           status: 'needs_repository_choice', githubUrl: githubPublish.url || null, githubPublish,
           installReady: false, checklist: ['✓ Build', '✓ Test', '• GitHub', '• GHCR', '• SoloHost'],
-          repoChoice: true, choices: githubPublish.choices || [], guide: { step: 3, title: 'Choose what to do with the existing repository', action: 'publish', label: '🚀 Publish', detail: 'The repository already exists. Choose Overwrite to replace its files, or Create new repository to keep it unchanged.' },
-          brief: `RESULT: GitHub needs your choice.\nWHY: The repository ${githubPublish.owner}/${githubPublish.repo} already exists.\nDONE: The app passed the pre-publish checks.\nMISSING: Your choice — overwrite the existing repository or create a new one.\nNEXT: Choose one option below.`,
+          repoChoice: true, choices: githubPublish.choices || [], guide: { step: 3, title: 'Choose the repository action', action: 'publish', label: '🚀 Publish', detail: 'Choose Overwrite to replace the existing repository, or Create new repository to keep it unchanged.' },
+          brief: `RESULT: GitHub needs your choice.\nDONE: The app passed the pre-publish checks.\nMISSING: Choose Overwrite or Create new repository.\nNEXT: Choose one option below.`,
           next: 'Choose Overwrite or Create new repository.',
         };
       }
       if (!githubPublish.ok) {
         const zipFail = await createProjectZip({ sourceDir: source, outputDir: path.join(projects.projectDir(project), 'artifacts'), slug: project.slug, kind: 'project' }).catch(() => null);
         return {
-          status: 'blocked',
-          githubUrl: null,
-          githubPublish,
-          installReady: false,
+          status: 'blocked', githubUrl: null, githubPublish, installReady: false,
           checklist: ['✓ Build', '✓ Test', '✗ GitHub', '• GHCR', '• SoloHost'],
           downloads: [
             ...(zipFail ? [{ kind: 'project', filename: zipFail.filename, url: `/api/projects/${project.id}/download?kind=project` }] : []),
@@ -395,73 +401,207 @@ export function registerPipeline(app) {
           ],
           fallback: { ...(githubPublish.fallback || {}), scriptUrl: `/api/projects/${project.id}/github-fallback`, scriptFilename: 'GitHub-ZIP-Image-Publisher-v5.0.ps1' },
           brief: [githubPublish.error, githubPublish.fix].filter(Boolean).join('\n'),
-          next: 'GitHub source was not verified. Tap Download Project and upload the files on github.com, or fix access and tap Publish once.',
+          next: 'GitHub source was not verified. Fix the GitHub access shown above, then tap Publish once.',
         };
       }
     } else {
       githubPublish = { ok: false, code: 'GITHUB_NOT_CONFIGURED', error: 'GitHub authorization is required.', fallback: { action: 'download', label: 'Download Project' } };
     }
-    const owner = githubPublish?.owner || cfg.github.owner || 'YOUR_GITHUB';
-    const registryImage = `ghcr.io/${owner}/${project.slug}:${notes.version}`.toLowerCase();
-    let pushedImage = { status: 'github-actions', reason: 'The repository workflow builds and publishes the GHCR image. App Builder does not access the host Docker daemon.' };
-    let imageVerification = { ok: false };
+
+    const owner = githubPublish?.owner || pending?.owner || cfg.github.owner || 'YOUR_GITHUB';
+    const repo = githubPublish?.repo || pending?.repo || project.slug;
+    const registryImage = `ghcr.io/${owner}/${repo}:${notes.version}`.toLowerCase();
+
+    async function savePending(extra = {}) {
+      await projects.saveMetadata(project, 'release-pending.json', {
+        owner, repo, githubUrl, version: notes.version, sha: githubPublish?.sha || pending?.sha || null,
+        image: registryImage, createdAt: pending?.createdAt || new Date().toISOString(),
+        autoRepairAttempts: Number(pending?.autoRepairAttempts || 0), ...extra,
+      });
+    }
+
     if (githubUrl) {
-      emit('docker-publish', 'running', 'Waiting for GitHub Actions to publish GHCR…');
-      const verifyDeadline = Date.now() + 120000;
-      let workflowRun = null;
-      while (Date.now() < verifyDeadline) {
-        imageVerification = await github.verifyContainerImage(`${owner}/${project.slug}`, notes.version).catch((err) => ({ ok: false, error: err.message }));
-        if (imageVerification.ok) break;
-        if (typeof github.latestWorkflowRun === 'function') workflowRun = await github.latestWorkflowRun(project.slug).catch(() => null) || workflowRun;
-        if (workflowRun?.status === 'completed' && workflowRun.conclusion && workflowRun.conclusion !== 'success') {
-          imageVerification = { ...imageVerification, workflow: workflowRun, error: `GitHub Actions finished with ${workflowRun.conclusion}.` };
-          break;
+      await savePending({ status: 'waiting_image' });
+      for (let cycle = 0; cycle < 2; cycle += 1) {
+        emit('docker-publish', 'running', cycle === 0 ? 'Checking GitHub Actions → GHCR image…' : 'Re-checking the repaired GitHub Actions build…');
+        const wait = await waitForGithubImage({ repo, owner, version: notes.version, headSha: githubPublish?.sha || pending?.sha || null, emit });
+        imageVerification = wait.imageVerification || { ok: false };
+        workflowRun = wait.workflowRun || null;
+        workflowDiagnostics = wait.diagnostics || null;
+        if (wait.ok) break;
+        if (wait.pending) {
+          await savePending({ status: 'waiting_image', workflowRun: workflowRun || null, lastCheckedAt: new Date().toISOString() });
+          const detail = 'GitHub source is uploaded. The matching image is still building. Tap Check image when GitHub Actions finishes.';
+          emit('release', 'done', detail);
+          return {
+            status: 'waiting_github_actions', release: null, quality, githubUrl, githubPublish, installReady: false,
+            checklist: ['✓ Build', '✓ Test', '✓ GitHub', '• GHCR', '• SoloHost'], image: registryImage,
+            imageVerification, workflowRun, workflowDiagnostics, autoRepair,
+            guide: { step: 4, title: 'Waiting for the GHCR image', action: 'publish', label: '🔄 Check image', detail },
+            next: detail, brief: `RESULT: GitHub source is verified.\nMISSING: ${registryImage}\nNEXT: Wait for GitHub Actions to finish, then tap Check image.`,
+          };
         }
-        await new Promise((resolve) => setTimeout(resolve, 3000));
-      }
-      if (imageVerification.ok) {
-        try { await github.setContainerPublic(`${owner}/${project.slug}`); } catch {}
-        await github.createRelease(project.slug, notes.version, notes.notes).catch((err) => log.warn('GitHub release notes failed', { error: String(err.message || err).replace(/ghp_[A-Za-z0-9]+/g, 'ghp_***') }));
+
+        if (!wait.failed) break;
+        const attempts = Number((pending?.autoRepairAttempts || autoRepair?.attempts || 0));
+        if (attempts >= 1 || cycle >= 1) break;
+        autoRepair = await repairGithubActionsFailure({ project, source, owner, repo, version: notes.version, githubUrl, workflowRun, diagnostics: workflowDiagnostics, emit, notes, projectPayload: payload });
+        if (!autoRepair?.ok) break;
+        pending.autoRepairAttempts = 1;
+        githubPublish = autoRepair.githubPublish || githubPublish;
+        githubUrl = githubPublish?.url || githubUrl;
+        await savePending({ status: 'waiting_image', autoRepairAttempts: 1, sha: githubPublish?.sha || null });
       }
     }
+
+    const imageOk = Boolean(imageVerification.ok);
+    if (!imageOk) {
+      await savePending({ status: workflowDiagnostics ? 'workflow_failed' : 'waiting_image', workflowRun, diagnostics: workflowDiagnostics, autoRepairAttempts: autoRepair?.attempts || pending?.autoRepairAttempts || 0, lastCheckedAt: new Date().toISOString() });
+      const classified = classifyLogs(workflowDiagnostics?.logTail || imageVerification?.error || '');
+      const diagnosisText = workflowDiagnostics
+        ? `${workflowDiagnostics.summary}\n${classified?.title || ''}\n${classified?.hint || ''}\n${String(workflowDiagnostics.logTail || '').slice(-5000)}`
+        : (imageVerification?.error || 'The image is not visible in GHCR yet.');
+      const detail = workflowDiagnostics
+        ? `GitHub Actions failed. I read the failed job log and separated the workflow/build error from the app source. ${classified?.hint || 'The Builder is waiting for a safe fix.'}`
+        : 'GitHub Actions is still building or GHCR has not finished indexing the image.';
+      emit('release', 'done', detail);
+      return {
+        status: workflowDiagnostics ? 'github_actions_failed' : 'waiting_github_actions', release: null, quality, githubUrl, githubPublish,
+        installReady: false, checklist: ['✓ Build', '✓ Test', '✓ GitHub', '✗ GHCR', '• SoloHost'], image: registryImage,
+        imageVerification, workflowRun, workflowDiagnostics, autoRepair, diagnosis: diagnosisText,
+        guide: { step: 4, title: workflowDiagnostics ? 'Fix the GitHub Actions build' : 'Waiting for the GHCR image', action: 'publish', label: workflowDiagnostics ? '🚀 Re-check build' : '🔄 Check image', detail: workflowDiagnostics ? `${detail} Tap Re-check build after the safe repair completes.` : detail },
+        next: workflowDiagnostics ? 'Review the detected Actions error above. A safe auto-fix was attempted once; tap Re-check build to verify the image.' : 'Wait for GitHub Actions, then tap Check image.',
+        brief: `RESULT: GitHub source is verified.\nWHY: ${detail}\nMISSING: ${registryImage}\nNEXT: ${workflowDiagnostics ? 'Tap Re-check build after the repair.' : 'Tap Check image when the build finishes.'}`,
+      };
+    }
+
+    try { await github.setContainerPublic(`${owner}/${repo}`); } catch {}
+    await github.createRelease(repo, notes.version, notes.notes).catch((err) => log.warn('GitHub release notes failed', { error: String(err.message || err).replace(/ghp_[A-Za-z0-9]+/g, 'ghp_***') }));
+
+    // IMPORTANT: do not create or offer the SoloHost install kit before the exact
+    // GHCR image tag has been verified. This removes the previous race condition.
+    emit('package', 'running', 'GHCR image verified. Creating the SoloHost install kit…');
     const packageInfo = await releases.prepareSoloHost(project, source, registryImage, aiDescription);
     const validation = await releases.validateSoloHost(source);
+    if (validation?.ok === false) throw new Error(`SoloHost package validation failed: ${(validation.errors || []).join(' ')}`);
     const zip = await createProjectZip({ sourceDir: source, outputDir: path.join(projects.projectDir(project), 'artifacts'), slug: project.slug, kind: 'solohost' }).catch(() => null);
-    const imageOk = Boolean(imageVerification.ok);
-    const installReady = Boolean(validation?.ok !== false && runtime.health && githubUrl && imageOk);
-    const status = installReady ? 'released' : (githubUrl ? 'github_published' : 'blocked');
+    const installReady = Boolean(validation?.ok !== false && runtime.health && githubUrl && imageOk && zip);
+    const status = installReady ? 'released' : 'github_published';
     const rec = releases.record(project, { version: notes.version, notes: notes.notes, githubUrl, status });
     projects.setStatus(project, installReady ? 'RELEASED' : 'WAITING_APPROVAL');
-    const checklist = [
-      '✓ Build',
-      runtime.health ? '✓ Test' : '• Test',
-      githubUrl ? '✓ GitHub' : '✗ GitHub',
-      imageOk ? '✓ GHCR' : '✗ GHCR',
-      installReady ? '✓ SoloHost' : '• SoloHost',
-    ];
-    const ghcrNote = imageOk
-      ? `GHCR image confirmed: ${registryImage}`
-      : `GitHub source is ready, but ${registryImage} is not confirmed yet. The repository workflow may still be building it. Do not install on SoloHost until this exact image tag exists. If the workflow fails, use the Windows GitHub Publisher fallback to verify/upload and diagnose the image.`;
-    if (installReady) emit('release', 'done', 'Complete');
-    else if (githubUrl) emit('release', 'done', ghcrNote);
+    await fs.rm(path.join(projects.projectDir(project), 'metadata', 'release-pending.json'), { force: true }).catch(() => {});
+
+    const checklist = ['✓ Build', runtime.health ? '✓ Test' : '• Test', githubUrl ? '✓ GitHub' : '✗ GitHub', imageOk ? '✓ GHCR' : '✗ GHCR', installReady ? '✓ SoloHost' : '• SoloHost'];
+    const next = installReady
+      ? 'Download the SoloHost ZIP → import it in SoloHost → save any requested settings → Start the app.'
+      : 'GHCR is verified, but the SoloHost ZIP was not created. Use Zip to retry packaging.';
+    if (installReady) emit('release', 'done', 'GitHub ✓ · GHCR ✓ · SoloHost install kit ✓');
     return {
       status, release: rec, quality, githubUrl, githubPublish, installReady, checklist,
-      image: registryImage, imageVerification, workflowRun: imageVerification?.workflow || null, soloHostPackage: packageInfo, validation, imageOk,
+      image: registryImage, imageVerification, workflowRun, workflowDiagnostics, autoRepair, soloHostPackage: packageInfo, validation, imageOk,
       downloads: [
         zip ? { kind: 'solohost', filename: zip.filename, url: `/api/projects/${project.id}/download?kind=solohost` } : null,
         { kind: 'project', filename: `${project.slug}-source.zip`, url: `/api/projects/${project.id}/download?kind=project` },
         { kind: 'github-fallback', filename: 'GitHub-ZIP-Image-Publisher-v5.0.ps1', url: `/api/projects/${project.id}/github-fallback` },
       ].filter(Boolean),
       fallback: githubPublish?.fallback || null,
-      missing: installReady ? [] : [imageOk ? null : 'GHCR image is not confirmed yet.'].filter(Boolean),
-      next: installReady
-        ? 'GitHub and GHCR are verified. Use the SoloHost files to install.'
-        : (githubUrl ? ghcrNote : 'Connect GitHub in Settings, then tap Publish.'),
+      missing: installReady ? [] : ['SoloHost install kit was not created.'],
+      next,
+      guide: { step: 5, title: 'Install on SoloHost', action: 'export', payload: { kind: 'solohost' }, label: '⬇ Install kit', detail: '1. Download the SoloHost ZIP. 2. In SoloHost choose Import/Add App and select the ZIP. 3. Save any requested settings and tap Start.' },
       install: githubPublish?.install || null,
-      brief: githubUrl
-        ? [`GitHub: ${githubUrl}`, ghcrNote, githubPublish?.install].filter(Boolean).join('\n')
-        : [githubPublish?.error, githubPublish?.fix].filter(Boolean).join('\n'),
+      brief: `RESULT: ${installReady ? 'Ready for SoloHost.' : 'GHCR verified, packaging needs retry.'}\nDONE: GitHub source and exact GHCR image are verified.\nNEXT: ${next}`,
     };
+  }
+
+  async function waitForGithubImage({ repo, owner, version, headSha, emit }) {
+    const deadline = Date.now() + 180000;
+    let imageVerification = { ok: false };
+    let workflowRun = null;
+    let diagnostics = null;
+    while (Date.now() < deadline) {
+      // When we know the freshly published commit SHA, first bind the check to
+      // that exact Actions run. A pre-existing GHCR tag must never satisfy a
+      // new release before its own workflow has passed.
+      workflowRun = await github.latestWorkflowRun(repo, 'docker.yml', { headSha }).catch(() => null) || workflowRun;
+      if (headSha && !workflowRun) {
+        emit('docker-publish', 'running', 'Waiting for the GitHub Actions run for this commit…');
+        await new Promise((resolve) => setTimeout(resolve, 3000));
+        continue;
+      }
+      if (workflowRun?.status === 'completed' && workflowRun.conclusion && workflowRun.conclusion !== 'success') {
+        if (workflowRun.id && typeof github.workflowDiagnostics === 'function') {
+          diagnostics = await github.workflowDiagnostics(repo, workflowRun.id).catch((err) => ({ summary: 'Unable to read GitHub Actions logs.', logTail: String(err.message || err) }));
+        }
+        imageVerification = await github.verifyContainerImage(`${owner}/${repo}`, version).catch((err) => ({ ok: false, error: err.message }));
+        return { failed: true, imageVerification: { ...imageVerification, workflow: workflowRun, error: `GitHub Actions finished with ${workflowRun.conclusion}.` }, workflowRun, diagnostics };
+      }
+      imageVerification = await github.verifyContainerImage(`${owner}/${repo}`, version).catch((err) => ({ ok: false, error: err.message }));
+      if (workflowRun?.status === 'completed' && workflowRun.conclusion === 'success' && imageVerification.ok) {
+        return { ok: true, imageVerification, workflowRun, diagnostics };
+      }
+      emit('docker-publish', 'running', workflowRun?.status === 'in_progress' || workflowRun?.status === 'queued' ? `GitHub Actions: ${workflowRun.status}…` : 'Waiting for the matching GHCR tag…');
+      await new Promise((resolve) => setTimeout(resolve, 3000));
+    }
+    return { pending: true, imageVerification, workflowRun, diagnostics };
+  }
+
+  async function repairGithubActionsFailure({ project, source, owner, repo, version, githubUrl, workflowRun, diagnostics, emit, notes, projectPayload }) {
+    if (!diagnostics?.logTail) return { ok: false, reason: 'No readable GitHub Actions log.' };
+    const classified = classifyLogs(diagnostics.logTail);
+    const evidence = clampText(`${diagnostics.summary}\nCLASSIFICATION: ${JSON.stringify(classified || {})}\nFAILED JOBS:\n${JSON.stringify(diagnostics.jobs || [])}\nLOG:\n${diagnostics.logTail}`, 16000);
+    emit('diagnose', 'running', 'Reading the failed GitHub Actions job and asking AI for the smallest safe fix…');
+    let r;
+    try {
+      const relevant = await collectProjectContext(source);
+      r = await ai.completeJson({
+        task: 'DEBUGGING',
+        system: SYSTEM,
+        prompt: `${languageInstruction(project.idea)}\nGITHUB ACTIONS RELEASE FAILURE\nRepository: ${owner}/${repo}\nWorkflow run: ${workflowRun?.html_url || workflowRun?.id || 'unknown'}\n\nEVIDENCE:\n${evidence}\n\nPROJECT FILES:\n${relevant}\n\nREQUIRED RESPONSE:\n- Diagnose the concrete root cause from the Actions log.\n- Prefer workflow/config fixes when the app itself is healthy. Do not change working app code for a CI-only problem.\n- Return only files that are strictly required.\n- Risk must be low for automatic repair.\n- Do not invent secrets, tokens, permissions, or host access.\n${patchPrompt(project, evidence, relevant, 'Fix only the current GitHub Actions build failure. Preserve the working app and SoloHost contract.')}`,
+        projectId: project.id,
+      });
+    } catch (err) {
+      emit('diagnose', 'failed', friendlyAiError(err));
+      return { ok: false, reason: friendlyAiError(err) };
+    }
+    const proposed = Array.isArray(r.json?.files) ? r.json.files : [];
+    const risk = String(r.json?.risk || 'medium').toLowerCase();
+    if (!proposed.length || risk !== 'low') {
+      emit('diagnose', 'done', `AI diagnosis: ${String(r.json?.root_cause || classified?.title || 'The workflow failure needs manual review.').slice(0, 240)}`);
+      return { ok: false, reason: r.json?.explanation || 'AI did not return a low-risk automatic fix.' };
+    }
+
+    const beforeStatic = await runStaticTests(source);
+    const beforeNode = await runNodeTests(source, 45000);
+    const beforeSecurity = await scanProject(source);
+    const checkpoint = await applySafeAiPatch({ sourceDir: source, files: proposed, project, snapshots, reason: 'github-actions-auto-fix' });
+    emit('repair', 'running', `Applying one low-risk GitHub Actions repair (${proposed.length} file${proposed.length === 1 ? '' : 's'})…`);
+    try {
+      const afterStatic = await runStaticTests(source);
+      const afterNode = await runNodeTests(source, 45000);
+      const afterSecurity = await scanProject(source);
+      const worse = failureScore(afterStatic, afterNode) > failureScore(beforeStatic, beforeNode) || afterSecurity.critical > beforeSecurity.critical;
+      if (worse) {
+        await snapshots.restore(project, checkpoint.snapshot.id).catch(() => {});
+        emit('rollback', 'done', 'The automatic Actions repair made verification worse, so the previous working state was restored.');
+        return { ok: false, rolledBack: true, reason: 'Verification became worse.' };
+      }
+      await stampMadeBy(source, cfg);
+      const republish = await publishToGitHub({
+        github, project, sourceDir: source, version, emit,
+        runtimeOk: true, repoName: repo, existingAction: 'overwrite', refreshWorkflow: false,
+      });
+      if (!republish.ok || !republish.verified) {
+        await snapshots.restore(project, checkpoint.snapshot.id).catch(() => {});
+        emit('rollback', 'done', 'The repaired source could not be republished safely, so the previous working state was restored.');
+        return { ok: false, rolledBack: true, githubPublish: republish, reason: republish.error || 'Re-publish verification failed.' };
+      }
+      emit('repair', 'done', `✓ Safe repair applied: ${String(r.json?.root_cause || 'GitHub Actions issue fixed.').slice(0, 220)}`);
+      return { ok: true, attempts: 1, githubPublish: republish, rootCause: r.json?.root_cause || '', explanation: r.json?.explanation || '', files: proposed.map((f) => f.path) };
+    } catch (err) {
+      await snapshots.restore(project, checkpoint.snapshot.id).catch(() => {});
+      emit('rollback', 'done', 'The automatic GitHub Actions repair did not verify, so the previous working state was restored.');
+      return { ok: false, rolledBack: true, reason: String(err.message || err).slice(0, 500) };
+    }
   }
 
   jobs.on('release', async (job, { emit }) => {
@@ -660,7 +800,7 @@ export function registerPipeline(app) {
     } else {
       await gcDocker({ keepImage: latestRuntime.image || null, keepContainer: latestRuntime.status === 'passed' ? latestRuntime.container : null, log }).catch(() => {});
     }
-    payload.guide = guideCard({ runtime: latestRuntime, findings: diagnosis.findings, action, publishReady: payload.publish_ready });
+    payload.guide = payload.result?.guide || guideCard({ runtime: latestRuntime, findings: diagnosis.findings, action, publishReady: payload.publish_ready });
     payload.next = payload.guide.detail;
     payload.brief = formatUserBrief({ action, runtime: latestRuntime, diagnosis, reply, next: payload.next, language: userLanguage, reports: payload.reports });
     await gcDocker({ keepImage: latestRuntime.image || null, keepContainer: latestRuntime.status === 'passed' ? latestRuntime.container : null, log }).catch(() => {});
@@ -771,10 +911,17 @@ export function registerPipeline(app) {
     emit('snapshot', 'running', 'Saving a restore point…');
     await snapshots.create(project, 'before-patch');
     emit('patch', 'running', 'Applying the change…');
-    await applySafeAiPatch({ sourceDir: projects.sourceDir(project.slug), files, project, snapshots, reason: 'apply-patch' });
+    const checkpoint = await applySafeAiPatch({ sourceDir: projects.sourceDir(project.slug), files, project, snapshots, reason: 'apply-patch' });
     await stampMadeBy(projects.sourceDir(project.slug), cfg);
     await writeGithubWorkflow(projects.sourceDir(project.slug), project);
-    return testAndMaybeFix(projects.get(project.id), emit);
+    const verified = await testAndMaybeFix(projects.get(project.id), emit);
+    const failed = verified.staticResult?.status === 'failed' || verified.nodeResult?.status === 'failed' || verified.scan?.critical > 0 || verified.dockerBuild?.status === 'failed';
+    if (failed && checkpoint?.snapshot?.id) {
+      await snapshots.restore(project, checkpoint.snapshot.id).catch(() => {});
+      emit('rollback', 'done', 'The explicit patch did not verify as a complete step forward, so the previous checkpoint was restored.');
+      throw new Error('PATCH_ROLLED_BACK: the requested change did not pass verification. The previous working state is restored.');
+    }
+    return verified;
   });
 
   jobs.on('sandbox_demo', async (job, { emit }) => {
@@ -902,6 +1049,7 @@ export function registerPipeline(app) {
     // This keeps ordinary users from having to copy a security report manually.
     if (scan.critical > 0 && scan.findings.every((f) => f.autoFix)) {
       emit('repair', 'running', 'A safe security fix is available. Applying one targeted repair…');
+      let securityCheckpoint = null;
       try {
         const relevant = await collectProjectContext(source);
         const r = await ai.completeJson({
@@ -911,12 +1059,26 @@ export function registerPipeline(app) {
           projectId: project.id,
         });
         if (!r.json?.files?.length) throw new Error('AI did not return a safe security patch.');
-        await applySafeAiPatch({ sourceDir: source, files: r.json.files, project, snapshots, reason: 'before-security-fix' });
-        securityRepair = { status: 'attempted', files: r.json.files.map((f) => f.path) };
-        scan = await scanProject(source);
-        if (scan.critical === 0) emit('security', 'done', '✓ Security issue fixed and re-scanned.');
-        else emit('security', 'failed', 'Security fix was applied, but the re-scan still found a blocking issue.');
+        securityCheckpoint = await applySafeAiPatch({ sourceDir: source, files: r.json.files, project, snapshots, reason: 'before-security-fix' });
+        const afterSecurityStatic = await runStaticTests(source);
+        const afterSecurityNode = await runNodeTests(source, 45000);
+        const afterSecurityScan = await scanProject(source);
+        const securityWorse = afterSecurityScan.critical > scan.critical
+          || failureScore(afterSecurityStatic, afterSecurityNode) > failureScore(staticResult, nodeResult);
+        if (securityWorse || afterSecurityScan.critical > 0) {
+          await snapshots.restore(project, securityCheckpoint.snapshot.id).catch(() => {});
+          emit('rollback', 'done', 'The automatic security change was not a verified step forward, so the previous checkpoint was restored.');
+          scan = await scanProject(source);
+          securityRepair = { status: 'rolled_back', files: r.json.files.map((f) => f.path), reason: 'Security/runtime verification did not pass.' };
+        } else {
+          securityRepair = { status: 'attempted', files: r.json.files.map((f) => f.path) };
+          scan = afterSecurityScan;
+          staticResult = afterSecurityStatic;
+          nodeResult = afterSecurityNode;
+          emit('security', 'done', '✓ Security issue fixed and re-scanned.');
+        }
       } catch (err) {
+        if (securityCheckpoint?.snapshot?.id) await snapshots.restore(project, securityCheckpoint.snapshot.id).catch(() => {});
         securityRepair = { status: 'failed', error: String(err.message || err).slice(0, 500) };
         emit('repair', 'failed', `Security repair could not be applied automatically: ${securityRepair.error}`);
       }
@@ -1041,19 +1203,34 @@ export function registerPipeline(app) {
     if (declaredRisk !== 'low') throw new Error('NEEDS_USER_ACTION: AI marked this change as medium/high risk. No files were changed; review and confirm the requested change before applying it.');
     const patchCheckpoint = await applySafeAiPatch({ sourceDir: source, files: r.json.files, project, snapshots, reason: 'ai-improve' });
     await stampMadeBy(source, cfg);
-    const tested = await testAndMaybeFix(projects.get(project.id), emit);
+    // First verify the proposed patch WITHOUT another mutating auto-fix. A later
+    // repair must never hide a regression introduced by this step.
+    const afterStatic = await runStaticTests(source);
+    const afterNode = await runNodeTests(source, 45000);
+    const afterScan = await scanProject(source);
+    const afterScore = failureScore(afterStatic, afterNode);
     let runtime = null;
-    if (tested.staticResult?.status === 'passed' && tested.nodeResult?.status !== 'failed' && tested.scan?.critical === 0) runtime = await runProject(projects.get(project.id), emit);
-    const afterScore = failureScore(tested.staticResult, tested.nodeResult);
-    if (afterScore > baselineScore || runtime?.status === 'failed') {
+    const changedSecurity = afterScan.critical > security.critical || afterScan.warning > security.warning;
+    if (afterScore > baselineScore || afterScan.critical > 0 || changedSecurity) {
       const latest = patchCheckpoint?.snapshot || snapshots.list(project.id)[0];
       if (latest?.id) {
         await snapshots.restore(project, latest.id).catch(() => {});
-        emit('rollback', 'done', 'The repair did not improve verification, so I restored the latest checkpoint.');
+        emit('rollback', 'done', 'The change did not produce a verified step forward, so I restored the previous checkpoint.');
+        const restored = await inspectOnly(project, emit);
+        runtime = null;
+        return { feedback, rootCause: r.json.root_cause || '', explanation: 'Change rolled back because verification regressed.', files: [], tested: { staticResult: restored.staticResult, nodeResult: restored.nodeResult, scan: restored.scan }, runtime };
+      }
+    }
+    const tested = { staticResult: afterStatic, nodeResult: afterNode, scan: afterScan };
+    if (afterStatic.status === 'passed' && afterNode.status !== 'failed' && afterScan.critical === 0) runtime = await runProject(projects.get(project.id), emit);
+    if (runtime?.status === 'failed') {
+      const latest = patchCheckpoint?.snapshot || snapshots.list(project.id)[0];
+      if (latest?.id) {
+        await snapshots.restore(project, latest.id).catch(() => {});
+        emit('rollback', 'done', 'The live regression after this change was not verified, so I restored the previous checkpoint.');
         const restored = await inspectOnly(project, emit);
         runtime = null;
         tested.staticResult = restored.staticResult; tested.nodeResult = restored.nodeResult; tested.scan = restored.scan;
-        tested.diagnosis = baselineDiagnosis;
       }
     }
     const networkIssue = /\b(internet|offline|online|network|dns|proxy|gateway|browse|browsing|fetch|connection|kết nối|mạng|truy cập web)\b/i.test(feedback);
@@ -1288,30 +1465,39 @@ Return JSON with full file contents for every changed file:
 }
 
 async function collectProjectContext(source) {
-  const names = ['package.json', 'src/server.js', 'server.js', 'app.js', 'src/app.js', 'src/proxy.js', 'src/gateway.js', 'src/routes.js', 'public/index.html', 'public/game.js', 'public/app.js', 'public/browser.js', 'Dockerfile', 'docker-compose.yml', 'README.md'];
-  const existing = new Set(await listFiles(source));
-  const chunks = [];
-  for (const name of names) {
-    if (!existing.has(name)) continue;
+  const allFiles = await listFiles(source);
+  const preferred = ['package.json', 'Dockerfile', 'docker-compose.yml', 'config_options.yml', '.github/workflows/docker.yml', 'README.md', 'INSTALL.md', 'src/server.js', 'server.js', 'app.js', 'src/app.js', 'src/proxy.js', 'src/gateway.js', 'src/routes.js', 'public/index.html', 'public/game.js', 'public/app.js', 'public/browser.js'];
+  const names = [...preferred, ...allFiles.filter((f) => /^(src|server|public|tests)\//.test(f) && /\.(js|mjs|cjs|ts|tsx|jsx|html|css|json|yml|yaml)$/.test(f)).slice(0, 24)];
+  const unique = [...new Set(names)].filter((name) => allFiles.includes(name));
+  const chunks = [
+    `--- BUILDER TOOLBOX ---\ninspect files · static tests · Node tests · security scan · native preview · Container Sandbox · runtime logs · GitHub publish · Actions diagnostics · GHCR verify · SoloHost validator · checkpoint · rollback`,
+    `--- FILE INVENTORY (${allFiles.length}) ---\n${allFiles.slice(0, 120).join('\n')}`,
+  ];
+  let total = chunks.join('\n\n').length;
+  for (const name of unique.slice(0, 36)) {
+    if (total > 30000) break;
     const text = await fs.readFile(path.join(source, name), 'utf8').catch(() => '');
-    chunks.push(`--- ${name} ---\n${clampText(text, 3500)}`);
+    const part = `--- ${name} ---\n${clampText(text, name === 'README.md' || name.endsWith('.css') ? 2200 : 4200)}`;
+    chunks.push(part);
+    total += part.length;
   }
-  return chunks.join('\n\n');
+  return clampText(chunks.join('\n\n'), 32000);
 }
 
 function friendlyAiError(err) {
   const m = String(err?.message || err);
-  if (/API key is not configured/i.test(m) || /No AI provider/i.test(m)) {
-    return 'No AI key is configured. Add a DeepSeek or Gemini key in Settings.';
-  }
-  if (/HTTP 401|HTTP 403/.test(m)) return 'The AI key was rejected. Check Settings and confirm the selected provider/model is enabled.';
-  if (/HTTP 429/.test(m)) return 'The AI provider asked us to slow down.';
-  if (/timeout|timed out|fetch failed|ECONNRESET|ENOTFOUND|network/i.test(m)) return 'The AI request timed out or the network dropped. No files were changed; retry after checking the connection.';
-  if (/AI_BAD_JSON|invalid JSON|FORMAT_ERROR/i.test(m)) return 'The AI returned an invalid work format. No files were changed; the next attempt will use a stricter JSON contract.';
-  const providers = Array.isArray(err?.providerErrors) ? err.providerErrors.map((x) => String(x).replace(/\s+/g, ' ').slice(0, 180)).join(' | ') : '';
-  return providers
-    ? `AI could not complete this step. No files were changed. Details: ${providers}`
-    : 'The AI provider was unavailable. No files were changed; check the selected provider key/model in Settings.';
+  const providers = Array.isArray(err?.providerErrors) ? err.providerErrors.map((x) => String(x).replace(/\s+/g, ' ').slice(0, 260)) : [];
+  const detail = providers.join(' | ');
+  if (/No AI provider is configured|API key is not configured/i.test(m)) return 'No active AI key is available. Builder can use DeepSeek or Gemini; save a valid key in Settings.';
+  if (/HTTP 401|HTTP 403|bad credentials|invalid api key/i.test(m)) return `AI authentication failed. ${detail || 'The selected key was rejected.'} Check the provider key, then Save Settings.`;
+  if (/HTTP 404|model.*not found|invalid.*model/i.test(m)) return `AI model is unavailable. ${detail || 'Builder will rotate to a supported model automatically.'} Save Settings to reset model selection.`;
+  if (/HTTP 429|quota|rate limit|resource exhausted/i.test(m)) return `AI quota/rate limit was reached. ${detail || 'The request was throttled.'} Builder will try another configured provider when available.`;
+  if (/HTTP 402|Insufficient Balance|billing/i.test(m)) return `The AI provider requires available credit. ${detail || 'Use another configured provider/key.'}`;
+  if (/timeout|timed out|fetch failed|ECONNRESET|ECONNREFUSED|ENOTFOUND|network/i.test(m)) return `AI connection failed. ${detail || 'No files were changed.'} Builder will retry transient failures and switch provider when possible.`;
+  if (/AI_BAD_JSON|invalid JSON|FORMAT_ERROR/i.test(m)) return 'The AI returned an invalid work format. No files were changed; Builder will retry with the strict JSON contract.';
+  return detail
+    ? `AI could not complete this step. No files were changed. Details: ${detail}`
+    : 'AI could not complete this step. No files were changed. Save a valid provider key/model, then retry.';
 }
 
 function gateAction(action, { files = [], runtime = {}, githubConfigured = false, imageRef = '' } = {}) {

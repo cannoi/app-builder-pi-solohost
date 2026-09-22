@@ -8,7 +8,7 @@ export function loadConfig() {
     templatesDir: process.env.TEMPLATES_DIR || './templates',
     logLevel: process.env.LOG_LEVEL || 'info',
     locale: process.env.APP_LOCALE || 'en',
-    version: '1.4.25',
+    version: '1.4.26',
     runtime: {
       mode: process.env.PREVIEW_MODE || 'auto',
       podman: { apiUrl: process.env.PODMAN_API_URL || process.env.SANDBOX_PODMAN_API_URL || process.env.CONTAINER_SANDBOX_PODMAN_API_URL || '' },
@@ -18,12 +18,12 @@ export function loadConfig() {
       requireBrowserTest: String(process.env.PREVIEW_REQUIRE_BROWSER_TEST || 'true').toLowerCase() === 'true',
     },
     ai: {
-      provider: process.env.AI_PROVIDER || 'deepseek',
+      provider: ['gemini', 'deepseek'].includes(String(process.env.AI_PROVIDER || 'deepseek').toLowerCase()) ? String(process.env.AI_PROVIDER || 'deepseek').toLowerCase() : 'deepseek',
       mode: (process.env.AI_MODE || 'single').toLowerCase() === 'council' ? 'council' : 'single',
       geminiKey: process.env.GEMINI_API_KEY || '',
       geminiModel: process.env.GEMINI_MODEL || '',
       deepseekKey: process.env.DEEPSEEK_API_KEY || '',
-      deepseekModel: process.env.DEEPSEEK_MODEL || 'deepseek-flash',
+      deepseekModel: process.env.DEEPSEEK_MODEL || 'deepseek-v4-flash',
     },
     github: {
       token: process.env.GITHUB_TOKEN || '',

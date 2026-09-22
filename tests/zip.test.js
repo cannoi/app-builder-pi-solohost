@@ -88,5 +88,5 @@ test('generated workflow builds, smoke-tests, then pushes the exact version imag
   assert.match(yml, /load: true/);
   assert.match(yml, /docker run -d/);
   assert.match(yml, /ghcr\.io\/\$\{\{ github\.repository \}\}:1\.4\.22/);
-  assert.match(yml, /name: Push image/);
+  assert.match(yml, /name: Push tested image/);
 });

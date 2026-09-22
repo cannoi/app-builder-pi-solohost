@@ -3,7 +3,7 @@ eyebrow: SoloHost App
 description: "Build, test, repair, and publish simple SoloHost apps with AI."
 footer_hint: "Only enter the important AI and GitHub details you need. Secrets are password fields."
 output_file: .env
-after_save: "Settings saved. Start the app if a provider or GitHub setting does not update immediately."
+after_save: "Settings saved. Changes apply automatically to the next Builder task."
 fixed_values:
   - name: PREVIEW_MODE
     value: auto

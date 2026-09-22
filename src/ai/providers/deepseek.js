@@ -1,17 +1,24 @@
 import { maskKey } from '../../utils/mask.js';
 
+export function normalizeDeepSeekModel(model) {
+  const requested = String(model || '').trim().toLowerCase();
+  if (!requested || /^(deepseek-chat|deepseek-reasoner|deepseek-flash)$/i.test(requested)) return 'deepseek-v4-flash';
+  if (requested === 'deepseek-v4-pro' || requested === 'deepseek-v4-flash') return requested;
+  return String(model).trim();
+}
+
 export class DeepSeekProvider {
   constructor({ apiKey, model }) {
     this.name = 'deepseek';
     this.apiKey = apiKey;
-    this.model = model || 'deepseek-chat';
+    this.model = normalizeDeepSeekModel(model);
   }
 
   configured() { return Boolean(this.apiKey); }
 
   async complete({ prompt, system, json = false, images = [] }) {
     if (!this.apiKey) throw new Error('DeepSeek API key is not configured');
-    const models = [this.model, 'deepseek-chat', 'deepseek-reasoner'].filter((value, index, list) => value && list.indexOf(value) === index);
+    const models = [this.model, 'deepseek-v4-flash', 'deepseek-v4-pro'].filter((value, index, list) => value && list.indexOf(value) === index);
     let lastError = null;
     for (const model of models) {
       try {

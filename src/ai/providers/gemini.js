@@ -1,16 +1,15 @@
 import { maskKey } from '../../utils/mask.js';
 
 export const GEMINI_MODEL_CANDIDATES = [
-  'gemini-flash-latest',
-  'gemini-2.5-flash',
+  'gemini-3.8-flash',
+  'gemini-3.7-flash',
+  'gemini-3.6-flash',
   'gemini-3.5-flash',
-  'gemini-3-flash-preview',
+  'gemini-3.5-flash-lite',
+  'gemini-2.5-flash',
+  'gemini-3.1-flash-lite',
   'gemini-2.5-flash-lite',
-  'gemini-flash-lite-latest',
-  'gemini-3.1-flash-lite-preview',
-  'gemini-2.5-pro',
   'gemini-3.1-pro-preview',
-  'gemini-3-pro-preview',
 ];
 
 export function geminiVersion(name) {
@@ -109,8 +108,15 @@ export class GeminiProvider {
       this.setStickyModel(this.model);
       return this.model;
     }
-    const found = await this.discover({ force: true });
-    return found.model;
+    try {
+      const found = await this.discover({ force: true });
+      return found.model;
+    } catch (err) {
+      const fallback = 'gemini-3.8-flash';
+      this.model = fallback;
+      this.log?.warn?.('Gemini model discovery unavailable; using stable fallback candidate', { error: err.message, model: fallback });
+      return fallback;
+    }
   }
 
   async complete({ prompt, system, json = false }) {

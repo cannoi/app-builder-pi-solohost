@@ -70,7 +70,7 @@ export class NativePreview {
       // that case. Give the real, actionable reason instead.
       const hasDockerfile = await fs.access(path.join(sourcePath, 'Dockerfile')).then(() => true).catch(() => false);
       const error = hasDockerfile
-        ? 'This app has no package.json or index.html — it can only run as a real Docker container (it likely installs system packages or runs a non-Node service). Enable Container Sandbox (Podman) in Settings; the built-in safe preview only supports Node.js or static-file apps.'
+        ? 'This is a container-only app. Builder will use the protected Container Sandbox automatically when the SoloHost platform provides it; no local installation or manual Docker setup is required. If Sandbox is not available, Publish can still build the final image on GitHub Actions.'
         : 'No UI files were found. Tap Build first so the app has an index page.';
       return { status: 'failed', runtime: 'native-preview', health: false, error };
     }

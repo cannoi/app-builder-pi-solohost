@@ -3,7 +3,7 @@
 The preview flow is:
 
 1. Validate the generated source.
-2. Select `Container Sandbox` when `PODMAN_API_URL` is configured and `PREVIEW_MODE` is `auto` or `container`.
+2. Detect the app type automatically. Real container apps use the protected `PODMAN_API_URL` Sandbox when the platform provides it; ordinary Node/static apps stay on native preview.
 3. Build a temporary preview image through the protected Podman API.
 4. Start a temporary container with CPU/memory limits and a loopback-only port.
 5. Wait for `/health` and run Playwright against the live UI.

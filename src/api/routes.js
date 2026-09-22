@@ -11,6 +11,7 @@ import { maskKey } from '../utils/mask.js';
 import { saveAttachment, attachmentList } from '../projects/attachments.js';
 import { powerWarning } from '../docker/modes.js';
 import { preflightPrompt } from '../ai/prompts.js';
+import { normalizeDeepSeekModel } from '../ai/providers/deepseek.js';
 import { inferAction } from '../scripts/ops.js';
 import { createProjectZip } from '../projects/exporter.js';
 import { gcDocker } from '../docker/cleanup.js';
@@ -77,6 +78,9 @@ export function registerRoutes(r, app) {
     const applied = [];
     const stored = db.setting('runtimeSecrets', {}) || {};
     const oldGeminiKey = stored.GEMINI_API_KEY || cfg.ai.geminiKey || '';
+    const oldProvider = String(cfg.ai.provider || 'deepseek').toLowerCase();
+    const oldGeminiModel = String(cfg.ai.geminiModel || '');
+    const oldDeepseekModel = String(cfg.ai.deepseekModel || '');
     for (const key of allowed) {
       // Empty secret fields mean "keep the existing value", not "erase it".
       if (body[key] != null && String(body[key]) !== '') {
@@ -86,14 +90,16 @@ export function registerRoutes(r, app) {
       }
     }
     if (body.setupComplete) db.setSetting('setupComplete', true);
-    if (stored.GEMINI_API_KEY && stored.GEMINI_API_KEY !== oldGeminiKey) db.setSetting('geminiStickyModel', '');
+    if ((stored.GEMINI_API_KEY && stored.GEMINI_API_KEY !== oldGeminiKey) || (body.GEMINI_MODEL != null && String(body.GEMINI_MODEL) !== oldGeminiModel) || (body.AI_PROVIDER != null && String(body.AI_PROVIDER).toLowerCase() !== oldProvider)) db.setSetting('geminiStickyModel', '');
     db.setSetting('runtimeSecrets', stored);
-    cfg.ai.provider = (process.env.AI_PROVIDER || cfg.ai.provider).toLowerCase();
+    const selectedProvider = String(process.env.AI_PROVIDER || cfg.ai.provider || 'deepseek').toLowerCase();
+    cfg.ai.provider = ['gemini', 'deepseek'].includes(selectedProvider) ? selectedProvider : 'deepseek';
     cfg.ai.mode = (process.env.AI_MODE || cfg.ai.mode || 'single').toLowerCase() === 'council' ? 'council' : 'single';
     cfg.ai.geminiKey = process.env.GEMINI_API_KEY || cfg.ai.geminiKey;
     cfg.ai.geminiModel = process.env.GEMINI_MODEL || cfg.ai.geminiModel;
     cfg.ai.deepseekKey = process.env.DEEPSEEK_API_KEY || cfg.ai.deepseekKey;
-    cfg.ai.deepseekModel = process.env.DEEPSEEK_MODEL || cfg.ai.deepseekModel;
+    cfg.ai.deepseekModel = normalizeDeepSeekModel(process.env.DEEPSEEK_MODEL || cfg.ai.deepseekModel || 'deepseek-v4-flash');
+    if (body.DEEPSEEK_MODEL != null) cfg.ai.deepseekModel = normalizeDeepSeekModel(body.DEEPSEEK_MODEL);
     cfg.github.token = process.env.GITHUB_TOKEN || cfg.github.token;
     cfg.github.owner = process.env.GITHUB_OWNER || cfg.github.owner;
     cfg.runtime.podman.apiUrl = process.env.PODMAN_API_URL || process.env.SANDBOX_PODMAN_API_URL || process.env.CONTAINER_SANDBOX_PODMAN_API_URL || cfg.runtime.podman.apiUrl || '';

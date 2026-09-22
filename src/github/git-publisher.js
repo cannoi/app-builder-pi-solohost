@@ -252,21 +252,26 @@ export async function publishWithGit({ token, repoName, sourceDir, version = '0.
     try {
       let sha = null;
       let lastPublishError = null;
-      try {
-        sha = await gitPushWorktree({ work, token, owner: realOwner, repo: name, branch, version });
-      } catch (gitErr) {
-        lastPublishError = gitErr;
-        step('publishing', 'Git upload failed, retrying with the GitHub API…');
-        for (let attempt = 1; attempt <= 3; attempt += 1) {
-          try {
-            sha = await publishWorktreeWithGitHubApi({ octokit, work, owner: realOwner, repo: name, branch, version });
-            lastPublishError = null;
-            break;
-          } catch (err) {
-            lastPublishError = err;
-            if (err?.code !== 'conflict' || attempt === 3) break;
-            step('retrying', `GitHub changed while uploading; retrying (${attempt}/2)…`);
-          }
+      // Prefer the GitHub API: it is deterministic and does not depend on a local
+      // git executable, credential helper, or shell environment. Keep git as a
+      // fallback for compatibility with older environments.
+      for (let attempt = 1; attempt <= 3 && !sha; attempt += 1) {
+        try {
+          sha = await publishWorktreeWithGitHubApi({ octokit, work, owner: realOwner, repo: name, branch, version });
+          lastPublishError = null;
+        } catch (err) {
+          lastPublishError = err;
+          if (err?.code !== 'conflict' || attempt === 3) break;
+          step('retrying', `GitHub changed while uploading; retrying (${attempt}/2)…`);
+        }
+      }
+      if (!sha) {
+        step('publishing', 'GitHub API upload failed, trying the local Git fallback…');
+        try {
+          sha = await gitPushWorktree({ work, token, owner: realOwner, repo: name, branch, version });
+          lastPublishError = null;
+        } catch (gitErr) {
+          lastPublishError = gitErr;
         }
       }
       if (!sha) throw lastPublishError || new Error('GitHub upload did not return a commit SHA.');
