@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>App Builder — Pi SoloHost</title>
   <meta name="theme-color" content="#0e1116">
-  <link rel="stylesheet" href="/styles.css?v=1.4.29">
+  <link rel="stylesheet" href="/styles.css?v=1.4.30">
 <style>.paf-made-by{position:fixed;right:8px;bottom:8px;width:min(72px,12vw);max-width:12vw;height:auto;object-fit:contain;opacity:.5;background:transparent;padding:0;border:0;box-shadow:none;filter:none;pointer-events:none;z-index:30}</style></head>
 <body>
   <div id="app">
@@ -79,20 +79,24 @@
     <div class="sheet">
       <div class="sheetHead"><h2>Settings</h2><button id="closeSettings" class="iconBtn">✕</button></div>
       <div class="settingsGrid">
-        <label>AI provider<select id="setProvider"><option value="deepseek">DeepSeek</option><option value="gemini">Google Gemini</option><option value="council">Council (both)</option></select></label>
+        <label>AI mode<select id="setProvider"><option value="auto">AUTO</option><option value="deepseek">DeepSeek</option><option value="gemini">Google Gemini</option><option value="council">Council</option></select></label>
         <label>GitHub owner<input id="setGhOwner" type="text" placeholder="username or org"></label>
-        <label>DeepSeek API key<input id="setDeepseek" type="password" autocomplete="off" placeholder="Paste key"></label>
-        <label>Gemini API key<input id="setGemini" type="password" autocomplete="off" placeholder="Paste key"></label>
+        <label>Add AI<select id="hubProvider"><option value="deepseek">DeepSeek</option><option value="gemini">Gemini</option><option value="openai">OpenAI</option><option value="anthropic">Anthropic</option><option value="openrouter">OpenRouter</option><option value="groq">Groq</option><option value="mistral">Mistral</option><option value="xai">xAI</option><option value="custom">Custom</option></select></label>
+        <label>API key<input id="hubKey" type="password" autocomplete="off" placeholder="Paste key"></label>
+        <label id="hubBaseWrap" hidden>Base URL<input id="hubBase" type="text" placeholder="https://api.example.com/v1"></label>
         <label>GitHub token<input id="setGhToken" type="password" autocomplete="off" placeholder="Classic token"></label>
-        <div class="settingNote"><span>⚙ Sandbox: <b>Auto</b></span><span>🛡 No docker.sock · no extra setup</span></div>
+        <input id="setDeepseek" type="password" hidden>
+        <input id="setGemini" type="password" hidden>
+        <div class="settingNote"><span>⚙ Sandbox: <b>Auto</b></span><span>🛡 No docker.sock</span></div>
       </div>
-      <div class="info compactInfo">GitHub token: use classic <b>repo + workflow + write:packages</b>. Actions permission is checked automatically during Publish.</div>
-      <div class="info compactInfo">AI models are auto-detected and rotated when a model is unavailable. Save once; Builder handles the switch.</div>
+      <div id="hubList" class="info compactInfo">No AI provider connected yet.</div>
+      <button id="hubTest" class="primary wide" type="button">Test connection</button>
+      <div class="info compactInfo">GitHub token: classic <b>repo + workflow + write:packages</b>.</div>
       <button id="saveSettings" class="primary wide">Save</button>
       <p id="settingsState" class="muted"></p>
     </div>
   </div>
 
-  <script src="/app.js?v=1.4.29"></script>
+  <script src="/app.js?v=1.4.30"></script>
 <img class="paf-made-by" src="/made-by.png" alt="Made with App Builder — Pi SoloHost"></body>
 </html>

@@ -114,6 +114,59 @@ export function registerRoutes(r, app) {
     res.json({ ok: true, applied, discovery, status: { ...publicConfig(cfg), ai: { ...publicConfig(cfg).ai, geminiModel: ai.status().geminiModel } } });
   });
 
+  r.get('/api/ai/hub', (_req, res) => {
+    res.json(ai.hub.publicState());
+  });
+
+  r.post('/api/ai/hub/connect', async (req, res) => {
+    const body = req.body || {};
+    const provider = String(body.provider || '').toLowerCase();
+    const apiKey = String(body.apiKey || '').trim();
+    const baseUrl = String(body.baseUrl || '').trim();
+    if (!provider) return res.status(400).json({ error: 'Choose a provider.' });
+    if (!apiKey) return res.status(400).json({ error: 'Paste an API key.' });
+    try {
+      const models = await ai.hub.testConnection({ provider, apiKey, baseUrl, model: body.model });
+      ai.hub.upsertConnection({
+        provider,
+        apiKey,
+        baseUrl,
+        status: 'VERIFIED',
+        models,
+        lastVerified: new Date().toISOString(),
+        lastError: null,
+      });
+      if (provider === 'deepseek') { cfg.ai.deepseekKey = apiKey; process.env.DEEPSEEK_API_KEY = apiKey; }
+      if (provider === 'gemini') { cfg.ai.geminiKey = apiKey; process.env.GEMINI_API_KEY = apiKey; }
+      const stored = db.setting('runtimeSecrets', {}) || {};
+      if (provider === 'deepseek') stored.DEEPSEEK_API_KEY = apiKey;
+      if (provider === 'gemini') stored.GEMINI_API_KEY = apiKey;
+      db.setSetting('runtimeSecrets', stored);
+      ai.refresh();
+      res.json({ ok: true, models, hub: ai.hub.publicState() });
+    } catch (err) {
+      const cls = err.classify || { user: err.message };
+      res.status(400).json({ error: cls.user || err.message, code: cls.code || 'UNKNOWN_PROVIDER_ERROR' });
+    }
+  });
+
+  r.post('/api/ai/hub/remove', (req, res) => {
+    const id = String(req.body?.id || '');
+    if (!id) return res.status(400).json({ error: 'Missing connection id.' });
+    ai.hub.removeConnection(id);
+    ai.refresh();
+    res.json({ ok: true, hub: ai.hub.publicState() });
+  });
+
+  r.post('/api/ai/hub/routing', (req, res) => {
+    ai.hub.setRouting({
+      mode: req.body?.mode,
+      preferredProvider: req.body?.preferredProvider,
+      preferredModel: req.body?.preferredModel,
+    });
+    res.json({ ok: true, hub: ai.hub.publicState() });
+  });
+
   r.get('/api/ai/gemini/discover', async (req, res) => {
     if (!cfg.ai.geminiKey) {
       return res.json({

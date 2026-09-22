@@ -1,3 +1,8 @@
+## 1.4.30
+
+- AI Provider Hub: shared adapters, credential validation, model discovery, AUTO routing and fallback.
+- Existing DeepSeek/Gemini keys migrate. Chat/build/repair still use ai.complete().
+
 ## 1.4.29
 
 - Universal App Factory Expert Mode: CREATE / MODIFY / REPAIR / DIAGNOSE. Targeted changes are not blocked by diagnosis. App-type rules stay local to the project.

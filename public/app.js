@@ -576,20 +576,51 @@ async function importContainer(name) {
 }
 function renderFiles() { $('attachments').innerHTML = state.files.map((f, i) => `<span class="attachment">📎 ${esc(f.name)} <button data-remove="${i}">×</button></span>`).join(''); }
 function esc(v) { return String(v || '').replace(/[&<>'"]/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c])); }
+function renderHubList(hub) {
+  const box = $('hubList');
+  if (!box) return;
+  const rows = hub?.connections || [];
+  if (!rows.length) { box.textContent = 'No AI provider connected yet.'; return; }
+  box.innerHTML = rows.map((c) => `${c.status === 'VERIFIED' ? '✓' : '•'} ${c.name} · ${c.masked || 'key'} · ${c.verifiedCount || c.models?.length || 0} models`).join('<br>');
+}
+async function loadHub() {
+  try { renderHubList(await api('/api/ai/hub')); } catch {}
+}
+async function testHubConnection() {
+  const provider = $('hubProvider')?.value;
+  const apiKey = $('hubKey')?.value?.trim();
+  const baseUrl = $('hubBase')?.value?.trim();
+  if (!apiKey) { $('settingsState').textContent = 'Paste an API key first.'; return; }
+  $('settingsState').textContent = 'Testing connection…';
+  try {
+    const r = await api('/api/ai/hub/connect', { method: 'POST', body: JSON.stringify({ provider, apiKey, baseUrl }) });
+    $('hubKey').value = '';
+    renderHubList(r.hub);
+    $('settingsState').textContent = `Verified. ${r.models?.length || 0} model(s). AUTO will pick one.`;
+    await loadStatus();
+  } catch (e) { $('settingsState').textContent = e.message; }
+}
 async function loadSettings() {
   try {
     state.settings = await api('/api/settings');
-    $('setProvider').value = state.settings.ai?.mode === 'council' ? 'council' : (state.settings.ai?.provider || 'deepseek');
+    const mode = state.settings.ai?.mode === 'council' ? 'council' : (state.settings.ai?.provider || 'deepseek');
+    if ($('setProvider')) $('setProvider').value = mode;
     $('setGhOwner').value = state.settings.github?.owner || '';
     $('settingsState').textContent = '';
+    await loadHub();
   } catch {}
 }
 async function saveSettings() {
   try {
     const raw = $('setProvider').value;
-    const body = { AI_PROVIDER: raw === 'council' ? 'deepseek' : raw, AI_MODE: raw === 'council' ? 'council' : 'single', DEEPSEEK_API_KEY: $('setDeepseek').value, GEMINI_API_KEY: $('setGemini').value, GITHUB_TOKEN: $('setGhToken').value, GITHUB_OWNER: $('setGhOwner').value, setupComplete: true };
+    const body = { AI_PROVIDER: raw === 'council' || raw === 'auto' ? 'deepseek' : raw, AI_MODE: raw === 'council' ? 'council' : 'single', DEEPSEEK_API_KEY: $('setDeepseek')?.value || '', GEMINI_API_KEY: $('setGemini')?.value || '', GITHUB_TOKEN: $('setGhToken').value, GITHUB_OWNER: $('setGhOwner').value, setupComplete: true };
     const r = await api('/api/settings', { method: 'POST', body: JSON.stringify(body) });
-    $('setDeepseek').value = ''; $('setGemini').value = ''; $('setGhToken').value = ''; $('settingsState').textContent = 'Saved. Builder will use the new provider/model on the next task.'; await loadStatus();
+    await api('/api/ai/hub/routing', { method: 'POST', body: JSON.stringify({ mode: raw === 'auto' ? 'AUTO' : 'PROVIDER', preferredProvider: raw === 'auto' || raw === 'council' ? 'AUTO' : raw }) }).catch(() => ({}));
+    if ($('setDeepseek')) $('setDeepseek').value = '';
+    if ($('setGemini')) $('setGemini').value = '';
+    $('setGhToken').value = '';
+    $('settingsState').textContent = 'Saved.';
+    await loadStatus();
     add('system', r.discovery?.model ? `Gemini ready: ${r.discovery.model}` : 'Settings saved.');
     setTimeout(() => { $('settings').hidden = true; }, 350);
   } catch (e) { $('settingsState').textContent = e.message; }
@@ -631,6 +662,10 @@ $('attachments').onclick = (e) => { const b = e.target.closest('[data-remove]');
 $('settingsBtn').onclick = () => { loadSettings(); $('settings').hidden = false; };
 $('closeSettings').onclick = () => $('settings').hidden = true;
 $('saveSettings').onclick = saveSettings;
+if ($('hubTest')) $('hubTest').onclick = testHubConnection;
+if ($('hubProvider')) $('hubProvider').onchange = () => {
+  if ($('hubBaseWrap')) $('hubBaseWrap').hidden = $('hubProvider').value !== 'custom';
+};
 if ($('aiSelect')) $('aiSelect').onchange = () => applyAiNow($('aiSelect').value);
 if ($('setProvider')) $('setProvider').onchange = () => applyAiNow($('setProvider').value);
 $('projectSelect').onchange = async () => { if (state.busy) return; state.projectId = $('projectSelect').value || null; if (state.projectId) await openProject(state.projectId); else { rememberProject(null); renderWelcome(); } };

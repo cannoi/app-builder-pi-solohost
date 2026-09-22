@@ -3,6 +3,7 @@ import { DeepSeekProvider } from './providers/deepseek.js';
 import { extractJson } from '../utils/validate.js';
 import { uuid } from '../utils/ids.js';
 import { pickRoles, recordTrust, reviewPrompt, scoreOf } from './council.js';
+import { AIProviderHub } from './hub/hub.js';
 
 export const SAFE_CHANGE_RULES = {
   CODING: `[ACTION: SAFE BUILD — MANDATORY]
@@ -33,17 +34,21 @@ export class AIGateway {
   refresh() {
     this.gemini = new GeminiProvider({ apiKey: this.cfg.ai.geminiKey, model: this.cfg.ai.geminiModel, db: this.db, log: this.log });
     this.deepseek = new DeepSeekProvider({ apiKey: this.cfg.ai.deepseekKey, model: this.cfg.ai.deepseekModel });
+    this.hub = new AIProviderHub({ cfg: this.cfg, db: this.db, log: this.log });
   }
 
   status() {
     const roles = pickRoles(this.cfg, this.db);
+    const hub = this.hub?.publicState?.() || { connections: [] };
     return {
       primary: this.cfg.ai.provider,
       mode: this.cfg.ai.mode || 'single',
+      routing: hub.mode || 'AUTO',
       gemini: this.gemini.configured(),
       deepseek: this.deepseek.configured(),
-      configured: this.gemini.configured() || this.deepseek.configured(),
+      configured: this.gemini.configured() || this.deepseek.configured() || (hub.connections || []).some((c) => c.status !== 'INVALID'),
       geminiModel: this.gemini.getStickyModel() || this.cfg.ai.geminiModel || null,
+      hub,
       trust: {
         deepseek: scoreOf(roles.trust.deepseek),
         gemini: scoreOf(roles.trust.gemini),
@@ -71,6 +76,18 @@ export class AIGateway {
     const rule = actionRule(task);
     const safeSystem = rule ? `${system || ''}\n\n${rule}`.trim() : (system || '').trim();
     const safePrompt = rule ? `${prompt || ''}\n\n${rule}`.trim() : (prompt || '').trim();
+    if (this.hub && !images?.length) {
+      try {
+        const routed = await this.hub.execute({ task, prompt: safePrompt, system: safeSystem, json });
+        this.record({ projectId, task, provider: routed.provider, model: routed.model, success: 1, durationMs: routed.durationMs, tokens: routed.tokens, error: null });
+        return routed;
+      } catch (err) {
+        if (err.code !== 'AI_UNAVAILABLE') {
+          errors.push(String(err.message || err).slice(0, 500));
+          this.log.warn('AI hub execute failed; using legacy providers', { error: err.message });
+        }
+      }
+    }
     const order = this.pickOrder(images);
     for (const name of order) {
       const provider = this.providerByName(name);
