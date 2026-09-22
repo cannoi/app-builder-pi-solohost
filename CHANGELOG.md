@@ -76,3 +76,7 @@
 - Always wait for the matching GitHub Actions run (any workflow file).
 - Deterministic repair when smoke test misses the app listen port.
 - Compact Settings sheet so Save stays on screen.
+
+## 1.4.28
+- Builder Expert Mode: classify failure layer before any code edit.
+- SoloHost/GitHub/Preview/Docker/network reports inspect first; app code changes only with evidence.

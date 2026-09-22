@@ -56,6 +56,17 @@ SMART BUILD MODE:
 
 ${BUILDER_KNOWLEDGE}
 
+BUILDER EXPERT MODE:
+- Identify the failure boundary BEFORE modifying application code.
+- Classify the layer first: BUILD, PREVIEW/SANDBOX, GITHUB, GHCR/IMAGE, DOCKER, SOLOHOST, NETWORK, GENERATED APP, USER CONFIG, UNKNOWN.
+- If the problem is SoloHost, GitHub Actions, GHCR visibility, compose/config, Preview/Sandbox, or network: do not edit app source. Diagnose and guide.
+- Edit application code only when evidence shows the generated app itself is responsible.
+- Prefer configuration repair over source rewrites. Smallest safe change. Checkpoint + rollback on regression.
+- Never claim Fixed unless the relevant test passed.
+- User-facing diagnosis format: Problem / Where / Likely cause / Test / Code changes / Next step.
+- If Preview fails, check Sandbox baseline before blaming the app.
+- If Preview=PASS and SoloHost=FAIL, investigate install/image/compose, not app rewrite.
+
 BUILDER TOOL EVIDENCE CONTRACT:
 - Available controller tools: source/file inspection, static tests, Node tests, security scan, native preview, protected Container Sandbox, runtime logs, GitHub publish/verify, GitHub Actions diagnostics/logs, GHCR tag verification, SoloHost package validation, snapshots, rollback.
 - Use deterministic evidence before AI guesses. Never claim a tool ran unless the controller supplied its result.
@@ -175,7 +186,7 @@ Attachments:\n${JSON.stringify(attachments)}
 
 Use ACTIVITY LOG to see what the user just did and which errors already happened. Do not repeat a failed identical patch.
 Decide the next useful action. Do not pretend an action was completed.
-If the user reports a bug, set action=improve and put the concrete error + suggested fix in feedback. Never return a vague "something failed".
+If the user reports a problem, first classify the failure layer. Use action=analyze or reply when the issue is SoloHost, GitHub/GHCR, Preview/Sandbox, Docker compose, network, or user configuration. Use action=improve only when evidence shows the generated app code is the cause. Never return a vague "something failed".
 Return JSON:
 {
  "reply":"short response in the user's language. Put RESULT first, then DONE, MISSING, NEXT.",
@@ -187,7 +198,7 @@ Return JSON:
  "steps":[{"action":"improve","goal":"one atomic user request","tests":["relevant test","preview if applicable"]}],"requiresChoices":false
 }
 If the user asked for several things (fix A then run, change color and add a button, build then publish), put each as a separate steps[] item in order. Do not merge them into one patch.
-Use action=build for a new build, improve for code changes or debugging, run to test the current app, analyze for inspection/security work, publish only when the user asks and release gates can be checked, export when the user asks for a ZIP/source/install kit/download artifact. If the user reports a problem, prefer improve or analyze over reply, depending on whether code/config changes are needed. Do not return a successful result merely because a job started.`;
+Use action=build for a new build, improve only for evidenced app-code fixes, run to test the current app, analyze to isolate the failure layer, publish only when the user asks and release gates can be checked, export when the user asks for a ZIP/source/install kit/download artifact. Do not return a successful result merely because a job started.`;
 }
 
 export function chatPrompt(project, question, context) {

@@ -11,7 +11,7 @@ import dns from 'node:dns/promises';
 import https from 'node:https';
 import { saveAttachment, attachmentContext, attachmentList, imageInputsFromAttachments } from '../projects/attachments.js';
 import { writeSoloHostPackage } from '../release/solohost.js';
-import { inferAction, extractGhcrImage, guessSoloHostPorts, classifyLogs, describeFailure, diagnoseSource, nextStep, guideCard, isHostDockerCommand, isNpmOnEmptyRisk, splitUserSteps } from '../scripts/ops.js';
+import { inferAction, extractGhcrImage, guessSoloHostPorts, classifyLogs, classifyFailureLayer, formatLayerDiagnosis, describeFailure, diagnoseSource, nextStep, guideCard, isHostDockerCommand, isNpmOnEmptyRisk, splitUserSteps } from '../scripts/ops.js';
 import { stampMadeBy } from '../projects/badge.js';
 import { createProjectZip } from '../projects/exporter.js';
 import { gcDocker } from '../docker/cleanup.js';
@@ -684,6 +684,10 @@ export function registerPipeline(app) {
     }
     let action = String(r.json?.action || inferAction(message) || 'reply');
     if (installFromImage) action = 'export';
+    const failureLayer = classifyFailureLayer(message);
+    if (failureLayer.layer && failureLayer.layer !== 'GENERATED_APP' && failureLayer.codeChange === false && action === 'improve') {
+      action = 'analyze';
+    }
     if (action === 'reply') {
       const inferred = inferAction(message);
       if (inferred && inferred !== 'reply') action = inferred;
@@ -758,10 +762,19 @@ export function registerPipeline(app) {
           } else if (stepAction === 'run') {
             payload.runtime = await runWithRepair(project, emit, step.goal);
           } else if (stepAction === 'analyze') {
-            emit('analyze', 'running', 'Checking files, crash logs, and security…');
+            emit('analyze', 'running', 'Checking files, crash logs, and security without changing code…');
             payload.tested = await inspectOnly(project, emit);
             payload.diagnosis = payload.tested.diagnosis || await diagnoseSource(source);
             if (runtimeNow.logs) payload.crash = classifyLogs(runtimeNow.logs || runtimeNow.error || '');
+            const layerNow = classifyFailureLayer(step.goal || message);
+            payload.layer = layerNow.layer || 'UNKNOWN';
+            payload.layerReport = formatLayerDiagnosis({
+              layer: payload.layer,
+              message: step.goal || message,
+              crash: payload.crash,
+              next: layerNow.ask || 'I will not change app code until this layer is confirmed.',
+            });
+            emit('analyze', 'done', payload.layerReport);
           } else if (stepAction === 'export') {
             const image = extractGhcrImage(step.goal) || extractGhcrImage(message);
             const kind = image || /install|solohost|config|cài đặt|solo\s*host/i.test(step.goal) ? 'solohost' : 'project';
@@ -828,6 +841,7 @@ export function registerPipeline(app) {
     payload.guide = payload.result?.guide || guideCard({ runtime: latestRuntime, findings: diagnosis.findings, action, publishReady: payload.publish_ready });
     payload.next = payload.guide.detail;
     payload.brief = formatUserBrief({ action, runtime: latestRuntime, diagnosis, reply, next: payload.next, language: userLanguage, reports: payload.reports });
+    if (payload.layerReport) payload.brief = `${payload.layerReport}\n${payload.brief || ''}`.trim();
     await gcDocker({ keepImage: latestRuntime.image || null, keepContainer: latestRuntime.status === 'passed' ? latestRuntime.container : null, log }).catch(() => {});
     await projects.chat(project, payload.brief, 'assistant', { action, next: payload.next });
     const failCard = describeFailure({

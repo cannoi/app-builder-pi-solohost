@@ -33,9 +33,54 @@ export function guessSoloHostPorts(text = '', image = '') {
   return { hostPort: 18080, containerPort: 8080 };
 }
 
+export function classifyFailureLayer(message = '') {
+  const m = String(message || '').toLowerCase();
+  const wantsCode = /\b(sửa code|sua code|fix the code|rewrite|thay code|patch the app)\b/i.test(m);
+  if (/solohost|cài trên pi|cai tren pi|pi desktop/.test(m) && /(không chạy|khong chay|not start|không mở|khong mo|fail|lỗi|loi|error|install)/i.test(m)) {
+    return { layer: 'SOLOHOST', codeChange: wantsCode, ask: 'When does it fail? Install, Start, container exits, or the page is blank after start?' };
+  }
+  if (/(github actions|workflow|ghcr|upload github|package visibility|write:packages)/i.test(m)) {
+    return { layer: 'GITHUB', codeChange: wantsCode, ask: 'Did source upload succeed, or did GitHub Actions / GHCR fail?' };
+  }
+  if (/(docker-compose|config_options|compose file|unsupported field)/i.test(m) && /(invalid|reject|error|lỗi|loi)/i.test(m)) {
+    return { layer: 'DOCKER', codeChange: false, ask: 'Is SoloHost rejecting docker-compose.yml or the container itself?' };
+  }
+  if (/(preview|sandbox|fetch failed|err_empty|err_connection)/i.test(m) && !wantsCode) {
+    return { layer: 'PREVIEW', codeChange: false, ask: 'Does Sandbox Benchmark pass? If Sandbox fails, do not change app code yet.' };
+  }
+  if (/(internet|offline|dns|network|không có mạng|khong co mang)/i.test(m)) {
+    return { layer: 'NETWORK', codeChange: false, ask: 'Does the page load locally but fail only when calling the internet?' };
+  }
+  if (wantsCode || /(app\.listen|cannot find module|express|crash before listen|white screen in the app page)/i.test(m)) {
+    return { layer: 'GENERATED_APP', codeChange: true, ask: '' };
+  }
+  if (/\b(lỗi|loi|error|failed|failure|không chạy|khong chay|không hoạt động|khong hoat dong|does not work|doesn't work|broken)\b/.test(m)) {
+    return { layer: 'UNKNOWN', codeChange: false, ask: 'Where did it fail: Build, Preview, GitHub, GHCR, or SoloHost?' };
+  }
+  return { layer: '', codeChange: null, ask: '' };
+}
+
+export function formatLayerDiagnosis({ layer, message = '', crash = null, next = '' } = {}) {
+  const where = layer || 'UNKNOWN';
+  const cause = crash?.title || 'Need one more check before changing code.';
+  const test = crash?.hint || 'Inspect logs and configuration first.';
+  return [
+    `🔎 Problem: ${String(message || cause).replace(/\s+/g, ' ').slice(0, 180)}`,
+    `📍 Where: ${where}`,
+    `🧩 Likely cause: ${cause}`,
+    `🧪 Test: ${test}`,
+    `🔒 Code changes: ${where === 'GENERATED_APP' ? 'Required only after evidence' : 'None yet'}`,
+    `➡️ Next: ${next || 'Do not rewrite the app. Confirm the failing step, then I will apply the smallest safe fix.'}`,
+  ].join('\n');
+}
+
 export function inferAction(message) {
   const m = String(message || '').toLowerCase();
   if (extractGhcrImage(m) && /(solohost|cài đặt|cai dat|install kit|docker-compose|config_options|file cài|tạo file|tao file|generate)/i.test(m)) return 'export';
+  const layer = classifyFailureLayer(m);
+  if (['SOLOHOST', 'GITHUB', 'PREVIEW', 'DOCKER', 'NETWORK'].includes(layer.layer)) return 'analyze';
+  if (layer.layer === 'GENERATED_APP') return 'improve';
+  if (layer.layer === 'UNKNOWN' && layer.codeChange === false && !/\b(bảo mật|security)\b/.test(m)) return 'analyze';
   if (/(tổng hợp|liệt kê|summary|summarize|list)[\s\S]*(lỗi|error|issue|problem|failure|warning|security)|(lỗi|error|issue|problem|failure)[\s\S]*(tổng hợp|liệt kê|summary|summarize|list)|(diagnose|diagnosis|kiểm tra toàn bộ|check all)/i.test(m)) return 'analyze';
   if (isQuestion(m)) return 'reply';
   if (/\b(chỉnh sửa|sửa đổi|thay đổi|edit|change|modify|update|customize|customise)\b/.test(m)) return 'improve';

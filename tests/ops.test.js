@@ -1,17 +1,18 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import { inferAction, classifyLogs, describeFailure, isHostDockerCommand, isNpmOnEmptyRisk } from '../src/scripts/ops.js';
+import { inferAction, classifyLogs, classifyFailureLayer, describeFailure, isHostDockerCommand, isNpmOnEmptyRisk } from '../src/scripts/ops.js';
 
 test('user language maps to controller scripts', () => {
   assert.equal(inferAction('chạy app và cho tôi link'), 'run');
-  assert.equal(inferAction('app bị lỗi hãy sửa'), 'improve');
+  assert.equal(inferAction('app bị lỗi hãy sửa'), 'analyze');
   assert.equal(inferAction('quét bảo mật'), 'analyze');
 });
 
 test('natural-language problems route to debugging and access errors get concrete causes', () => {
-  assert.equal(inferAction('GitHub upload failed because workflow permission is read only'), 'improve');
-  assert.equal(inferAction('the app has a problem and does not work'), 'improve');
+  assert.equal(inferAction('GitHub upload failed because workflow permission is read only'), 'analyze');
+  assert.equal(inferAction('the app has a problem and does not work'), 'analyze');
+  assert.equal(inferAction('sửa code vì cannot find module express'), 'improve');
   assert.equal(classifyLogs('docker compose up -d failed: ghcr.io/example/app:0.1.0 Error response from daemon: unauthorized').code, 'registry_unauthorized');
   assert.equal(classifyLogs('GitHub workflow permission is read-only').code, 'github_workflow_permission');
 });
