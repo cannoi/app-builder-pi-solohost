@@ -71,3 +71,8 @@
 ## 1.4.25
 - Windows GitHub publisher v5.0 only (Git Data API + Contents fallback).
 - Removed unused .bak files and the previous v4.0 script.
+
+## 1.4.27
+- Always wait for the matching GitHub Actions run (any workflow file).
+- Deterministic repair when smoke test misses the app listen port.
+- Compact Settings sheet so Save stays on screen.

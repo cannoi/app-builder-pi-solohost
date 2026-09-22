@@ -197,8 +197,25 @@ export class GitHubManager {
         head_branch: run.head_branch || null,
         run_number: run.run_number || null,
       } : null;
-    } catch (err) {
-      return { status: 'unknown', conclusion: null, error: err.message || String(err) };
+    } catch {
+      try {
+        const all = await this.api('GET', `/repos/${owner}/${repo}/actions/runs?per_page=15`);
+        const runs = Array.isArray(all.workflow_runs) ? all.workflow_runs : [];
+        const run = runs.find((item) => !headSha || item.head_sha === headSha) || runs[0];
+        return run ? {
+          id: run.id,
+          status: run.status || null,
+          conclusion: run.conclusion || null,
+          html_url: run.html_url || null,
+          created_at: run.created_at || null,
+          updated_at: run.updated_at || null,
+          head_sha: run.head_sha || null,
+          head_branch: run.head_branch || null,
+          run_number: run.run_number || null,
+        } : null;
+      } catch {
+        return null;
+      }
     }
   }
 

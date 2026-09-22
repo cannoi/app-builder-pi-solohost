@@ -63,6 +63,7 @@ export function localPlan(idea, analysis) {
 
 export async function writeGithubWorkflow(root, project = {}) {
   const version = String(project.version || '0.1.0').replace(/[^0-9A-Za-z._-]/g, '-');
+  const listenPort = Number(project.listenPort || 0);
   const yml = `name: Build SoloHost image
 
 on:
@@ -117,7 +118,7 @@ jobs:
           # Do not assume port 8080. Many valid apps listen on 3000/4173/5173/etc.
           # Prefer image EXPOSE values, then probe a small universal web-port set.
           mapfile -t EXPOSED < <(docker image inspect "\${IMAGE}" --format '{{range $p, $_ := .Config.ExposedPorts}}{{println $p}}{{end}}' 2>/dev/null | sed -E 's#/.*$##' | sed '/^$/d' | sort -u)
-          COMMON=(3000 3001 4173 5000 5173 6080 8000 8080 8081 8501)
+          COMMON=(${listenPort ? `${listenPort} ` : ''}3000 3001 4173 5000 5173 6080 8000 8080 8081 8501)
           PORTS=()
           add_port() {
             local p="$1"

@@ -514,7 +514,7 @@ export function registerPipeline(app) {
   }
 
   async function waitForGithubImage({ repo, owner, version, headSha, emit }) {
-    const deadline = Date.now() + 180000;
+    const deadline = Date.now() + 480000;
     let imageVerification = { ok: false };
     let workflowRun = null;
     let diagnostics = null;
@@ -548,6 +548,31 @@ export function registerPipeline(app) {
   async function repairGithubActionsFailure({ project, source, owner, repo, version, githubUrl, workflowRun, diagnostics, emit, notes, projectPayload }) {
     if (!diagnostics?.logTail) return { ok: false, reason: 'No readable GitHub Actions log.' };
     const classified = classifyLogs(diagnostics.logTail);
+    const portHit = String(diagnostics.logTail).match(/running on port\s+(\d+)/i);
+    if ((classified?.code === 'workflow_port_mismatch' || classified?.code === 'workflow_smoke_timeout') && portHit) {
+      emit('repair', 'running', `The smoke test missed port ${portHit[1]}. Updating the GitHub workflow without rewriting the app…`);
+      try {
+        await writeGithubWorkflow(source, { ...project, version, listenPort: Number(portHit[1]) });
+        const df = path.join(source, 'Dockerfile');
+        const current = await fs.readFile(df, 'utf8').catch(() => '');
+        if (current && !new RegExp(`EXPOSE\\s+${portHit[1]}\\b`).test(current)) {
+          const next = /EXPOSE\s+\d+/.test(current)
+            ? current.replace(/EXPOSE\s+\d+/, `EXPOSE ${portHit[1]}`)
+            : `${current.trim()}\nEXPOSE ${portHit[1]}\n`;
+          await fs.writeFile(df, next);
+        }
+        const republish = await publishToGitHub({
+          github, project, sourceDir: source, version, emit,
+          runtimeOk: true, repoName: repo, existingAction: 'overwrite', refreshWorkflow: false,
+        });
+        if (republish.ok && republish.verified) {
+          emit('repair', 'done', `✓ Workflow now probes port ${portHit[1]}. GitHub Actions will rebuild the image.`);
+          return { ok: true, attempts: 1, githubPublish: republish, rootCause: classified.title, explanation: classified.hint, files: ['.github/workflows/docker.yml'] };
+        }
+      } catch (err) {
+        emit('repair', 'failed', String(err.message || err).slice(0, 240));
+      }
+    }
     const evidence = clampText(`${diagnostics.summary}\nCLASSIFICATION: ${JSON.stringify(classified || {})}\nFAILED JOBS:\n${JSON.stringify(diagnostics.jobs || [])}\nLOG:\n${diagnostics.logTail}`, 16000);
     emit('diagnose', 'running', 'Reading the failed GitHub Actions job and asking AI for the smallest safe fix…');
     let r;
