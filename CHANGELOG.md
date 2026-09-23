@@ -1,3 +1,8 @@
+## 1.4.37
+- Deterministic GitHub Actions repair: if the image crashes with a missing Node package (example: sqlite3 used but not in package.json), Builder adds the dependency and republishes without waiting for AI quota.
+- New apps are scanned for require()/import vs package.json before the first GitHub push.
+- Smoke test sets PORT=8080 and resolves the locally built image tag if the version tag is missing.
+
 ## 1.4.36
 - Publish no longer loops on a stale npm-test failure after a passing live preview.
 - Successful Run refreshes the saved verification report so Release can continue.

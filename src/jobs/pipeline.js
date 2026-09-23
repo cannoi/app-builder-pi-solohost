@@ -17,6 +17,7 @@ import { createProjectZip } from '../projects/exporter.js';
 import { gcDocker } from '../docker/cleanup.js';
 import { detectUserLanguage, languageInstruction, languageInstructionFor } from '../ai/language.js';
 import { publishToGitHub } from '../github/publish.js';
+import { ensureMissingDependencies } from '../projects/deps-fix.js';
 import { shouldBlockRepeatedAction, nextRepeatState } from './loop-guard.js';
 import { mergeVerificationState } from './verification.js';
 
@@ -591,6 +592,23 @@ export function registerPipeline(app) {
   async function repairGithubActionsFailure({ project, source, owner, repo, version, githubUrl, workflowRun, diagnostics, emit, notes, projectPayload }) {
     if (!diagnostics?.logTail) return { ok: false, reason: 'No readable GitHub Actions log.' };
     const classified = classifyLogs(diagnostics.logTail);
+    try {
+      const depFix = await ensureMissingDependencies(source);
+      if (depFix.changed) {
+        emit('repair', 'running', `Adding missing packages so the image can start: ${depFix.added.join(', ')}.`);
+        await writeGithubWorkflow(source, { ...project, version });
+        const republish = await publishToGitHub({
+          github, project, sourceDir: source, version, emit,
+          runtimeOk: true, repoName: repo, existingAction: 'overwrite', refreshWorkflow: false,
+        });
+        if (republish.ok && republish.verified) {
+          emit('repair', 'done', `✓ Added ${depFix.added.join(', ')} and pushed a new build. Wait for GitHub Actions, then tap Re-check build.`);
+          return { ok: true, attempts: 1, githubPublish: republish, rootCause: classified?.title || 'Missing Node package in the image.', explanation: 'The container crashed because a required package was not listed in package.json.', files: ['package.json', ...(depFix.dockerfile ? ['Dockerfile'] : [])] };
+        }
+      }
+    } catch (err) {
+      emit('repair', 'failed', String(err.message || err).slice(0, 240));
+    }
     const portHit = String(diagnostics.logTail).match(/running on port\s+(\d+)/i);
     if ((classified?.code === 'workflow_port_mismatch' || classified?.code === 'workflow_smoke_timeout') && portHit) {
       emit('repair', 'running', `The smoke test missed port ${portHit[1]}. Updating the GitHub workflow without rewriting the app…`);
@@ -1070,6 +1088,7 @@ export function registerPipeline(app) {
       log.warn('Code generation used template', { error: err.message });
     }
     await stampMadeBy(dest, cfg);
+    await ensureMissingDependencies(dest).catch(() => ({ changed: false }));
     await writeGithubWorkflow(dest, project);
     await snapshots.create(project, 'after-generate');
     const pkg = await writeSoloHostPackage({

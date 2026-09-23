@@ -114,7 +114,13 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          IMAGE="ghcr.io/\${{ github.repository }}:${version}"
+          REPO="ghcr.io/\${{ github.repository }}"
+          IMAGE="$REPO:${version}"
+          if ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
+            IMAGE="$(docker images "$REPO" --format '{{.Repository}}:{{.Tag}}' | head -n 1)"
+          fi
+          if [[ -z "$IMAGE" ]]; then echo "Built image tag was not found locally."; docker images; exit 1; fi
+          echo "Smoke-testing $IMAGE"
           # Do not assume port 8080. Many valid apps listen on 3000/4173/5173/etc.
           # Prefer image EXPOSE values, then probe a small universal web-port set.
           mapfile -t EXPOSED < <(docker image inspect "\${IMAGE}" --format '{{range $p, $_ := .Config.ExposedPorts}}{{println $p}}{{end}}' 2>/dev/null | sed -E 's#/.*$##' | sed '/^$/d' | sort -u)
@@ -138,7 +144,7 @@ jobs:
             RUN_ARGS+=( -p "127.0.0.1:$((18080+i)):$p" )
             i=$((i+1))
           done
-          docker run -d --rm --name paf-smoke "\${RUN_ARGS[@]}" "\${IMAGE}" >/dev/null
+          docker run -d --rm --name paf-smoke -e PORT=8080 -e NODE_ENV=production "\${RUN_ARGS[@]}" "\${IMAGE}" >/dev/null
           trap 'docker logs paf-smoke 2>/dev/null || true; docker stop paf-smoke >/dev/null 2>&1 || true' EXIT
 
           for i in {1..45}; do
