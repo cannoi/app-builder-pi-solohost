@@ -65,3 +65,23 @@ test('hub supports manual model validation when discovery is unavailable', async
   assert.equal(result.verifiedModel, 'custom-model');
   assert.equal(result.models[0].verified, true);
 });
+
+test('provider routing updates the active provider immediately and normalizes legacy model objects', () => {
+  const db = memDb();
+  const cfg = { dataDir: fs.mkdtempSync(path.join(os.tmpdir(), 'ai-hub-')), ai: { provider: 'deepseek', deepseekKey: '', geminiKey: '' } };
+  const hub = new AIProviderHub({ cfg, db, log: { warn() {} } });
+  hub.upsertConnection({ id: 'g', provider: 'gemini', apiKey: 'g', status: 'VERIFIED', models: { id: 'gemini-test', verified: true } });
+  hub.setRouting({ preferredProvider: 'gemini', preferredModels: ['gemini:gemini-test'] });
+  assert.equal(cfg.ai.provider, 'gemini');
+  assert.deepEqual(hub.state().connections[0].models, [{ id: 'gemini-test', verified: true }]);
+});
+
+test('locked provider selection does not silently fall back to another legacy provider', async () => {
+  const { AIGateway } = await import('../src/ai/gateway.js');
+  const db = memDb();
+  const cfg = { dataDir: fs.mkdtempSync(path.join(os.tmpdir(), 'ai-gw-')), ai: { provider: 'gemini', mode: 'single', deepseekKey: 'deepseek-secret', geminiKey: 'gemini-secret', deepseekModel: 'deepseek-chat', geminiModel: 'gemini-test' } };
+  const ai = new AIGateway({ cfg, db, log: { warn() {} } });
+  ai.hub.setRouting({ preferredProvider: 'gemini', preferredModels: ['gemini:missing'] });
+  ai.hub.execute = async () => { throw Object.assign(new Error('No verified AI model is available'), { code: 'AI_UNAVAILABLE' }); };
+  await assert.rejects(() => ai.complete({ task: 'USER_CHAT', prompt: 'hello', system: 'system' }), /No verified AI model/);
+});

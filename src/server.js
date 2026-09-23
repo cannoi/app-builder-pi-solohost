@@ -35,7 +35,15 @@ for (const w of check.warnings) log.warn(w);
 const snapshots = new SnapshotStore({ cfg, db, log });
 const projects = new ProjectManager({ cfg, db, log, snapshots });
 projects.pruneRetention().catch((err) => log.warn('history retention cleanup skipped', { error: String(err.message || err) }));
-const jobs = new JobQueue({ db, log });
+const jobs = new JobQueue({ db, log, history: async (job, status) => {
+  const project = projects.get(job.payload?.projectId);
+  if (!project) return;
+  const result = job.result || {};
+  const summary = job.error
+    ? String(job.error).split('\n')[0].slice(0, 500)
+    : String(result.brief || result.reply || result.next || `Job ${job.type} finished.`).split('\n')[0].slice(0, 500);
+  await projects.recordWorkHistory(project, { id: job.id, type: job.type, status, summary, error: job.error || null });
+} });
 const ai = new AIGateway({ cfg, db, log });
 const github = new GitHubManager({ cfg, log });
 const releases = new ReleaseManager({ cfg, db, log });

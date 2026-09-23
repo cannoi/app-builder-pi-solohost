@@ -1,9 +1,10 @@
 import { uuid } from '../utils/ids.js';
 
 export class JobQueue {
-  constructor({ db, log }) {
+  constructor({ db, log, history = null }) {
     this.db = db;
     this.log = log;
+    this.history = history;
     this.handlers = new Map();
     this.active = new Set();
   }
@@ -140,9 +141,11 @@ export class JobQueue {
         emit: (stage, status, message) => this.emit(job.id, stage, status, message),
       });
       this.finish(job.id, result);
+      if (this.history && job.payload?.projectId) Promise.resolve(this.history({ ...job, result }, 'done')).catch(() => {});
     } catch (err) {
       this.log.error('Job failed', { job: job.id, error: err.message });
       this.fail(job.id, err.message);
+      if (this.history && job.payload?.projectId) Promise.resolve(this.history({ ...job, error: err.message }, 'failed')).catch(() => {});
     } finally {
       this.active.delete(job.id);
     }

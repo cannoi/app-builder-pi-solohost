@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>App Builder — Pi SoloHost</title>
   <meta name="theme-color" content="#0e1116">
-  <link rel="stylesheet" href="/styles.css?v=1.4.34">
+  <link rel="stylesheet" href="/styles.css?v=1.4.35">
 <style>.paf-made-by{position:fixed;right:8px;bottom:8px;width:min(72px,12vw);max-width:12vw;height:auto;object-fit:contain;opacity:.5;background:transparent;padding:0;border:0;box-shadow:none;filter:none;pointer-events:none;z-index:30}</style></head>
 <body>
   <div id="app">
@@ -17,7 +17,7 @@
       <div class="topRight">
         <span id="workPill" class="pill ready">Ready</span>
         <button id="liveBtn" class="pill live" hidden type="button" title="Stop the test app and delete its container">Live · Stop</button>
-        <select id="aiSelect" aria-label="AI model"><option value="">AI model</option></select>
+        <select id="aiSelect" aria-label="AI provider"><option value="">AI provider</option></select>
         <select id="projectSelect" aria-label="Project"><option value="">New app</option></select>
         <button id="settingsBtn" class="iconBtn" title="Settings">⚙</button>
       </div>
@@ -79,6 +79,7 @@
         <label>API key<input id="hubKey" type="password" autocomplete="off" placeholder="Paste token"></label>
         <label id="hubBaseWrap" hidden>Base URL<input id="hubBase" type="text" placeholder="https://api.example.com/v1"></label>
         <button id="hubAdd" class="wide" type="button">＋ Add</button>
+        <div class="settingsGrid compactModels"><label>Model 1<select id="hubModel1"><option value="">Select verified model</option></select></label><label>Model 2<select id="hubModel2"><option value="">Optional reviewer model</option></select></label></div>
         <label>GitHub owner<input id="setGhOwner" type="text" placeholder="username or org"></label>
         <label>GitHub token<input id="setGhToken" type="password" autocomplete="off" placeholder="Classic token"></label>
         <div class="settingNote"><span>First added key is used first</span><span>🛡 No docker.sock</span></div>
@@ -90,6 +91,6 @@
     </div>
   </div>
 
-  <script src="/app.js?v=1.4.34"></script>
+  <script src="/app.js?v=1.4.35"></script>
 <img class="paf-made-by" src="/made-by.png" alt="Made with App Builder — Pi SoloHost"></body>
 </html>

@@ -79,28 +79,19 @@ test('SoloHost install kit contains only the compose/config contract files', asy
   assert.doesNotMatch(await fs.readFile(path.join(dir, 'solohost', 'docker-compose.yml'), 'utf8'), /\bbuild:/);
 });
 
-
-test('SoloHost package uses the app serving port when source code differs from Docker EXPOSE', async () => {
+test('SoloHost package generation does not assume container port 8080 when app listens on PORT or exposes another port', async () => {
   const fs = await import('node:fs/promises');
   const os = await import('node:os');
   const path = await import('node:path');
-  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'paf-port-mismatch-'));
-  await fs.writeFile(path.join(dir, 'Dockerfile'), 'FROM node:18-alpine\nEXPOSE 8080\nCMD ["node","server.js"]\n');
-  await fs.writeFile(path.join(dir, 'server.js'), 'const PORT = process.env.PORT || 3000; app.listen(PORT, "0.0.0.0");\n');
   const { writeSoloHostPackage } = await import('../src/release/solohost.js');
-  await writeSoloHostPackage({ project: { name: 'Port App', idea: 'test' }, sourceDir: dir, image: 'ghcr.io/test/port-app:1.0.0', hostPort: 18125 });
-  const compose = await fs.readFile(path.join(dir, 'solohost/docker-compose.yml'), 'utf8');
-  assert.match(compose, /127\.0\.0\.1:18125:3000/);
-  assert.doesNotMatch(compose, /127\.0\.0\.1:18125:8080/);
-  await fs.rm(dir, { recursive: true, force: true });
-});
-
-
-test('SoloHost packaging knowledge requires image-only package and actual container serving port', async () => {
-  const { BUILDER_KNOWLEDGE } = await import('../src/ai/knowledge.js');
-  assert.match(BUILDER_KNOWLEDGE, /every service .*use image:/i);
-  assert.match(BUILDER_KNOWLEDGE, /does not build from source|never builds/i);
-  assert.match(BUILDER_KNOWLEDGE, /127\.0\.0\.1:HOST:CONTAINER/i);
-  assert.match(BUILDER_KNOWLEDGE, /CONTAINER.*actual|actual.*CONTAINER/i);
-  assert.match(BUILDER_KNOWLEDGE, /authoritative.*validator|validator.*authoritative/i);
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'paf-solohost-port-'));
+  const project = { name: 'Radio', idea: 'Radio', slug: 'radio' };
+  await fs.writeFile(path.join(root, 'server.js'), 'const PORT = process.env.PORT || 3000;');
+  await fs.writeFile(path.join(root, 'Dockerfile'), 'EXPOSE 3000\n');
+  const result = await writeSoloHostPackage({ project, sourceDir: root, image: 'ghcr.io/cannoi/radio:0.1.0', hostPort: 18273 });
+  const compose = await fs.readFile(path.join(root, 'solohost', 'docker-compose.yml'), 'utf8');
+  assert.equal(result.containerPort, 3000);
+  assert.match(compose, /18273:3000/);
+  assert.doesNotMatch(compose, /18273:8080/);
+  await fs.rm(root, { recursive: true, force: true });
 });

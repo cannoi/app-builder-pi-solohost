@@ -100,6 +100,27 @@ export class ProjectManager {
     return trimmed;
   }
 
+  async workHistory(project) {
+    const file = path.join(this.projectRoot(project.slug), 'metadata', 'work-history.json');
+    const rows = await readJson(file, []);
+    return (Array.isArray(rows) ? rows : []).slice(-80);
+  }
+
+  async recordWorkHistory(project, entry = {}) {
+    const file = path.join(this.projectRoot(project.slug), 'metadata', 'work-history.json');
+    const rows = await this.workHistory(project);
+    rows.push({
+      id: entry.id || uuid(),
+      type: String(entry.type || 'action'),
+      status: String(entry.status || 'done'),
+      summary: String(entry.summary || '').slice(0, 500),
+      error: entry.error ? String(entry.error).slice(0, 700) : null,
+      createdAt: entry.createdAt || new Date().toISOString(),
+    });
+    await writeJson(file, rows.slice(-80));
+    return rows.slice(-80);
+  }
+
   async chatHistory(project) {
     const file = path.join(this.projectRoot(project.slug), 'metadata', 'chat.json');
     const rows = pruneRows(await readJson(file, []));

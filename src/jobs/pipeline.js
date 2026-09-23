@@ -17,6 +17,8 @@ import { createProjectZip } from '../projects/exporter.js';
 import { gcDocker } from '../docker/cleanup.js';
 import { detectUserLanguage, languageInstruction, languageInstructionFor } from '../ai/language.js';
 import { publishToGitHub } from '../github/publish.js';
+import { shouldBlockRepeatedAction, nextRepeatState } from './loop-guard.js';
+import { mergeVerificationState } from './verification.js';
 
 export function registerPipeline(app) {
   const { jobs, ai, projects, snapshots, runner, sandbox, github, releases, cfg, log } = app;
@@ -272,6 +274,15 @@ export function registerPipeline(app) {
       });
     }
     const language = detectUserLanguage(feedback);
+    const fingerprint = repeatFingerprint(feedback);
+    const guard = await projects.readMetadata(project, 'action-guard.json', null);
+    if (shouldBlockRepeatedAction(guard, fingerprint)) {
+      const message = 'NEEDS_USER_ACTION: The same failure was already handled twice recently without a verified step forward. I stopped the repair loop. Tell me what changed or provide the latest error/log so I can inspect a new cause.';
+      emit('repair', 'failed', message);
+      await projects.chat(project, message, 'assistant', { action: 'loop-guard', fingerprint });
+      throw new Error(message);
+    }
+    await projects.saveMetadata(project, 'action-guard.json', nextRepeatState(guard, fingerprint));
     const plan = await projects.startWorkPlan(project, {
       jobId: job.id,
       message: feedback,
@@ -284,6 +295,13 @@ export function registerPipeline(app) {
     emit('ai', 'running', 'AI is turning your feedback into a change…');
     try {
       const result = await improveProject(project, feedback, emit);
+      if (result.tested) {
+        const previousTests = await projects.readMetadata(project, 'test-plan.json', {});
+        await projects.saveMetadata(project, 'test-plan.json', mergeVerificationState(previousTests, result.tested));
+      }
+      if (result.runtime?.status === 'passed' || (result.tested?.staticResult?.status === 'passed' && result.tested?.nodeResult?.status !== 'failed' && result.tested?.scan?.critical === 0)) {
+        await projects.saveMetadata(project, 'action-guard.json', null);
+      }
       await projects.updateWorkPlan(project, {
         stepId: plan.steps[0].id,
         step: { status: 'done', files: result.files || [], result: result.explanation || 'Change verified.' },
@@ -344,7 +362,7 @@ export function registerPipeline(app) {
       throw new Error(`RELEASE_SECURITY_BLOCKED\n${security.summary}\n\n${report}\n\nNEXT: Tap Improve and let the AI apply the smallest targeted security fix, then Run and Publish again.`);
     }
     if (runtime.status !== 'passed' || runtime.health !== true) throw new Error('Release blocked: run the app successfully before publishing. Tap Run first.');
-    if (tests.nodeResult?.status === 'failed') throw new Error('Release blocked: tests failed. Tap Improve, then Run.');
+    if (tests.nodeResult?.status === 'failed') throw new Error('Release blocked: the latest saved verification still has a failed runtime test. Run Improve once for the reported failure; after a verified repair the test report will refresh automatically.');
 
     await stampMadeBy(source, cfg);
     const quality = await review(project);
@@ -1318,6 +1336,16 @@ export function registerPipeline(app) {
 
   function failureScore(staticResult, nodeResult) {
     return (staticResult?.status === 'failed' ? 1 : 0) + (nodeResult?.status === 'failed' ? 1 : 0);
+  }
+
+  function repeatFingerprint(text) {
+    return String(text || '')
+      .toLowerCase()
+      .replace(/\d{2,}/g, '#')
+      .replace(/https?:\/\/\S+/g, 'URL')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, 900);
   }
 
   function mustProject(id) {

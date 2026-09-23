@@ -9,8 +9,8 @@ test('settings modal can be hidden and all setup buttons exist', () => {
   assert.match(css, /\.modal\[hidden\]\{display:none!important\}/);
   assert.match(html, /id="settings"[^>]*hidden/);
   assert.match(html, /id="saveSettings"/);
-  assert.match(html, /app\.js\?v=1\.4\.33/);
-  assert.match(html, /styles\.css\?v=1\.4\.33/);
+  assert.match(html, /app\.js\?v=1\.4\.35/);
+  assert.match(html, /styles\.css\?v=1\.4\.35/);
   assert.match(html, /No docker\.sock/);
   assert.match(html, /GitHub token/);
   assert.match(html, /App Builder/);
@@ -139,4 +139,20 @@ test('AI Provider UI uses Add/Save flow and selected model pair without legacy m
   assert.doesNotMatch(html, />AUTO<\/option>/);
   assert.match(js, /function loadHub/);
   assert.match(js, /loadHub\(\)/);
+});
+
+test('main AI selector exposes connected providers and routes provider selection immediately', () => {
+  const html = fs.readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
+  const js = fs.readFileSync(new URL('../public/app.js', import.meta.url), 'utf8');
+  assert.match(html, /id="aiSelect" aria-label="AI provider"/);
+  assert.match(js, /renderProviderSelector/);
+  assert.match(js, /preferredProvider/);
+});
+
+test('preview return preserves the active project history', () => {
+  const src = fs.readFileSync(new URL('../src/preview.js', import.meta.url), 'utf8');
+  const js = fs.readFileSync(new URL('../public/app.js', import.meta.url), 'utf8');
+  assert.match(src, /\?p=\$\{id\}/);
+  assert.match(js, /workHistory/);
+  assert.match(js, /rememberProject\(id\)/);
 });

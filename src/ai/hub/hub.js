@@ -168,7 +168,13 @@ export class AIProviderHub {
     const pair = normalizePreferredModels(preferredModels || (preferredModel ? [preferredModel] : st.preferredModels));
     st.preferredModels = pair.slice(0, 2);
     st.preferredModel = st.preferredModels[0] || '';
+    this.syncLegacyKeys(st);
     return this.save(st);
+  }
+
+  isRoutingLocked() {
+    const st = this.state();
+    return Boolean(st.preferredProvider || normalizePreferredModels(st.preferredModels).length);
   }
 
   selectedModels() { return normalizePreferredModels(this.state().preferredModels || []); }

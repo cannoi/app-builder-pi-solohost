@@ -241,8 +241,9 @@ export function registerRoutes(r, app) {
     const chat = await projects.chatHistory(p);
     const attachments = await attachmentList(projects.projectDir(p));
     const workPlan = await projects.readMetadata(p, 'work-plan.json', null);
+    const workHistory = await projects.workHistory(p);
     const handoff = await projects.readMetadata(p, 'handoff.json', {});
-    res.json({ ...brief(p), files, analysis, plan, tests, security, runtime, snapshots: snaps, releases: rels, chat, attachments, workPlan, handoff });
+    res.json({ ...brief(p), files, analysis, plan, tests, security, runtime, snapshots: snaps, releases: rels, chat, attachments, workPlan, workHistory, handoff });
   });
 
   r.post('/api/chat', async (req, res) => {

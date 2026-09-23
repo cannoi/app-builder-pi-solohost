@@ -133,6 +133,13 @@ async function loadStatus() {
   } catch {}
 }
 function modelRef(c, m) { return `${c.provider}:${m.id}`; }
+function renderProviderSelector(hub) {
+  const top = $('aiSelect');
+  if (!top) return;
+  const rows = (hub?.connections || []).filter((c) => c.status !== 'INVALID' && (c.models || []).some((m) => m.verified));
+  top.innerHTML = '<option value="">AI provider</option>' + rows.map((c) => `<option value="${esc(c.provider)}">${esc(c.name || c.provider)}</option>`).join('');
+  top.value = hub?.preferredProvider || '';
+}
 function renderModelSelectors(hub) {
   const all = [];
   for (const c of (hub?.connections || [])) for (const m of (c.models || [])) if (m.verified) all.push({ value: modelRef(c, m), label: `${c.name} · ${m.id}` });
@@ -142,13 +149,11 @@ function renderModelSelectors(hub) {
     if (all.some(x => x.value === current)) el.value = current;
   };
   make('hubModel1', 'Select verified model'); make('hubModel2', 'Optional reviewer model');
-  const top = $('aiSelect');
-  if (top) { const selected = hub?.preferredModels?.[0] || ''; top.innerHTML = '<option value="">AI model</option>' + all.map(x => `<option value="${esc(x.value)}">${esc(x.label)}</option>`).join(''); top.value = all.some(x => x.value === selected) ? selected : ''; }
 }
 async function loadHub() {
   try {
     const hub = await api('/api/ai/hub');
-    renderHubList(hub); renderModelSelectors(hub);
+    renderHubList(hub); renderProviderSelector(hub); renderModelSelectors(hub);
     if ($('hubModel1')) $('hubModel1').value = hub.preferredModels?.[0] || '';
     if ($('hubModel2')) $('hubModel2').value = hub.preferredModels?.[1] || '';
     return hub;
@@ -186,6 +191,7 @@ async function openProject(id, announce = true) {
   if (p.chat?.length) p.chat.forEach((m) => add(m.role === 'user' ? 'user' : m.role === 'assistant' ? 'ai' : 'system', m.message));
   else add('ai', `I’m ready to build ${p.name}. Tell me what you want next.`);
   if (p.workPlan?.steps?.length) renderWorkPlan(p.workPlan);
+  if (Array.isArray(p.workHistory) && p.workHistory.length) renderWorkHistory(p.workHistory);
   if (announce) add('system', `Project: ${p.name}`);
   setLive(p.runtime?.status === 'passed');
 }
@@ -449,6 +455,17 @@ function summarizeResult(result, status) {
     if (result.githubPublish.guide.tokenUrl) addLink('Open GitHub token page', result.githubPublish.guide.tokenUrl, result.githubPublish.guide.tokenUrl);
   }
 }
+function renderWorkHistory(history) {
+  const box = document.createElement('div'); box.className = 'msg system';
+  const title = document.createElement('div'); title.textContent = '🕘 Recent work'; title.style.fontWeight = '700'; box.appendChild(title);
+  history.slice(-12).forEach((item) => {
+    const row = document.createElement('div');
+    const mark = item.status === 'done' ? '✓' : item.status === 'failed' ? '⚠' : '•';
+    row.textContent = `${mark} ${item.type}: ${item.summary || item.error || item.status}`;
+    box.appendChild(row);
+  });
+  $('chat').appendChild(box); maybeJump();
+}
 function renderWorkPlan(plan) {
   const box = document.createElement('div'); box.className = 'msg system';
   const title = document.createElement('div');
@@ -681,7 +698,25 @@ $('hubList').addEventListener('click', (e) => { const r=e.target.closest('[data-
 if ($('hubProvider')) $('hubProvider').onchange = () => {
   if ($('hubBaseWrap')) $('hubBaseWrap').hidden = $('hubProvider').value !== 'custom';
 };
-if ($('aiSelect')) $('aiSelect').onchange = async () => { const value = $('aiSelect').value; if (!value) return; await api('/api/ai/hub/routing', { method: 'POST', body: JSON.stringify({ preferredProvider: value.split(':')[0], preferredModels: [value] }) }); await loadHub(); };
+if ($('aiSelect')) $('aiSelect').onchange = async () => {
+  const provider = $('aiSelect').value; if (!provider) return;
+  const hub = await api('/api/ai/hub');
+  const conn = (hub.connections || []).find((c) => c.provider === provider);
+  const models = (conn?.models || []).filter((m) => m.verified).slice(0, 2).map((m) => `${provider}:${m.id}`);
+  await api('/api/ai/hub/routing', { method: 'POST', body: JSON.stringify({ preferredProvider: provider, preferredModels: models }) });
+  await loadHub();
+};
+if ($('hubModel1')) $('hubModel1').onchange = async () => {
+  const first = $('hubModel1').value; const second = $('hubModel2')?.value || '';
+  if (!first) return;
+  await api('/api/ai/hub/routing', { method: 'POST', body: JSON.stringify({ preferredProvider: first.split(':')[0], preferredModels: [first, second].filter(Boolean).slice(0, 2) }) });
+  await loadHub();
+};
+if ($('hubModel2')) $('hubModel2').onchange = async () => {
+  const first = $('hubModel1')?.value || ''; const second = $('hubModel2').value;
+  await api('/api/ai/hub/routing', { method: 'POST', body: JSON.stringify({ preferredProvider: first.split(':')[0] || second.split(':')[0], preferredModels: [first, second].filter(Boolean).slice(0, 2) }) });
+  await loadHub();
+};
 $('projectSelect').onchange = async () => { if (state.busy) return; state.projectId = $('projectSelect').value || null; if (state.projectId) await openProject(state.projectId); else { rememberProject(null); renderWelcome(); } };
 $('jumpDown').onclick = () => { $('chat').scrollTop = $('chat').scrollHeight; $('jumpDown').hidden = true; };
 $('chat').addEventListener('scroll', maybeJump);

@@ -1,9 +1,12 @@
-## 1.4.34
+## 1.4.35
 
-- Fixed SoloHost install-kit port mapping: infer the app's effective serving port instead of assuming container port 8080.
-- Added regression coverage for Docker `EXPOSE` / application `PORT` mismatches.
-- Strengthened embedded SoloHost packaging knowledge using the current official package contract.
-- Preserved the existing Builder, AI Provider Hub, Safe Actions, GitHub/GHCR, preview, and unrelated workflows.
+- Prevent repeated identical repair loops with a short-window action guard.
+- Refresh saved verification results after Improve so Publish never reuses stale failed tests.
+- Persist recent work history and restore it when returning from Preview or a new Builder session.
+- Make the main AI selector choose a connected provider immediately; keep verified two-model pairing available.
+- Lock explicit provider selection so AI cannot silently fall back to another legacy provider.
+- Normalize legacy Provider Hub model state before array operations.
+- Generate SoloHost install packages from the app's detected container port instead of assuming 8080.
 
 ## 1.4.33
 

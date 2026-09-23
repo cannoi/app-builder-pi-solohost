@@ -80,6 +80,7 @@ export class AIGateway {
       this.record({ projectId, task, provider: routed.provider, model: routed.model, success: 1, durationMs: routed.durationMs, tokens: routed.tokens, error: null });
       return routed;
     } catch (err) {
+      if (this.hub.isRoutingLocked?.()) throw err;
       this.log.warn('AI hub execute failed; trying saved DeepSeek/Gemini keys', { error: err.message });
     }
     const errors = [];
