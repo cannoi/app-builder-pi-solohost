@@ -11,7 +11,14 @@ Required path:
 4. Run starts a safe local preview, checks the app, and opens the preview link. GitHub Actions builds the final Docker image when publishing.
 5. If Run fails, send the error in chat. Improve then Run again.
 6. Publish creates/updates the GitHub repo, uploads files, and prepares docker-compose.yml + config_options.yml. Do not install on SoloHost until the GHCR image exists.
-7. SoloHost pulls a public image. It does not build from source.
+7. SoloHost pulls a public image. It never builds from source. Every service in docker-compose.yml must use image:; do not ship build:.
+8. A SoloHost package is only docker-compose.yml + config_options.yml. Keep the package minimal; application source stays in the published image.
+9. The UI service must have exactly one pi.ui.primary: "true" label and exactly one loopback port 127.0.0.1:HOST:CONTAINER. HOST should be distinctive/high; CONTAINER must be the port the image actually serves. Never assume 8080.
+10. Passing validation is necessary but not sufficient for rendering. Verify the app actually listens on the packaged container port and returns HTTP there. SoloHost has a readiness probe; blank/502 UI is a runtime/readiness problem.
+11. Use the authoritative SoloHost validator before handing the install kit to the user. Fix validator errors before export.
+12. Prefer immutable/versioned image tags instead of :latest for release packages.
+13. If the app persists data, use named volumes; never use host bind mounts. Installer fields must map to environment variables the image actually reads.
+14. Do not invent config_options.yml keys. It has a strict closed schema. Every $\{VAR\} used by compose must be declared by fields or fixed_values.
 
 Common errors:
 - exportImage / missing runner method: Builder should save the image with docker save; Run must not crash if save fails.

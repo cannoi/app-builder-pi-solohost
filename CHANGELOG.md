@@ -1,3 +1,10 @@
+## 1.4.34
+
+- Fixed SoloHost install-kit port mapping: infer the app's effective serving port instead of assuming container port 8080.
+- Added regression coverage for Docker `EXPOSE` / application `PORT` mismatches.
+- Strengthened embedded SoloHost packaging knowledge using the current official package contract.
+- Preserved the existing Builder, AI Provider Hub, Safe Actions, GitHub/GHCR, preview, and unrelated workflows.
+
 ## 1.4.33
 
 - Fix Provider Hub crash models.find.

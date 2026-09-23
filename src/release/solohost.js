@@ -1,11 +1,12 @@
 import { writeSafeFile, ensureDir } from '../utils/fsx.js';
 import path from 'node:path';
 
-export async function writeSoloHostPackage({ project, sourceDir, image, hostPort = 18080, containerPort = 8080, description = '' }) {
+export async function writeSoloHostPackage({ project, sourceDir, image, hostPort = 18080, containerPort = null, description = '' }) {
+  const resolvedContainerPort = Number(containerPort) || await inferServingPort(sourceDir);
   const out = path.join(sourceDir, 'solohost');
   await ensureDir(out);
   const yamlSafe = (value) => JSON.stringify(String(value || '').replace(/\r?\n/g, ' ').slice(0, 220));
-  const compose = `services:\n  app:\n    image: ${image}\n    restart: unless-stopped\n    labels:\n      pi.ui.primary: "true"\n    ports:\n      - "127.0.0.1:${hostPort}:${containerPort}"\n`;
+  const compose = `services:\n  app:\n    image: ${image}\n    restart: unless-stopped\n    labels:\n      pi.ui.primary: "true"\n    ports:\n      - "127.0.0.1:${hostPort}:${resolvedContainerPort}"\n`;
   const config = `title: ${yamlSafe(project.name)}\neyebrow: SoloHost App\ndescription: ${yamlSafe(project.idea)}\nfooter_hint: Ready to run on Pi Desktop SoloHost.\noutput_file: .env\nafter_save: Saved. Start the app from SoloHost.\nfields: []\n`;
   const blurb = normalizeDescription(description) || professionalBlurb(project);
   const appInfo = `# ${project.name}\n\nSuggested app name: ${project.name}\nSuggested description: ${blurb}\n\nDocker image:\n${image}\n\nDo not install until this image address exists on GHCR.\n`;
@@ -20,7 +21,50 @@ export async function writeSoloHostPackage({ project, sourceDir, image, hostPort
   await writeSafeFile(out, 'README.md', readme);
   await writeSafeFile(sourceDir, 'docker-compose.yml', compose);
   await writeSafeFile(sourceDir, 'config_options.yml', config);
-  return { directory: out, files: ['docker-compose.yml', 'config_options.yml', 'APP_INFO.md', 'LOGO_PROMPT.txt', 'INSTALL.md', 'README.md'], image, hostPort, description: blurb };
+  return {
+    directory: out,
+    files: ['docker-compose.yml', 'config_options.yml', 'APP_INFO.md', 'LOGO_PROMPT.txt', 'INSTALL.md', 'README.md'],
+    image,
+    hostPort,
+    containerPort: resolvedContainerPort,
+    description: blurb,
+  };
+}
+
+
+async function inferServingPort(sourceDir) {
+  // SoloHost's CONTAINER side must be the port the image actually serves.
+  // EXPOSE is only a hint and can be stale; prefer the app's effective PORT.
+  const files = [
+    'Dockerfile', 'server.js', 'src/server.js', 'app.js', 'src/app.js',
+    'index.js', 'src/index.js', 'main.js', 'src/main.js',
+  ];
+
+  let dockerfile = '';
+  try { dockerfile = await (await import('node:fs/promises')).readFile(path.join(sourceDir, 'Dockerfile'), 'utf8'); } catch {}
+  const envPort = dockerfile.match(/^\s*ENV\s+PORT\s*=\s*['"]?(\d{2,5})['"]?\s*$/im)?.[1];
+  if (validPort(envPort)) return Number(envPort);
+
+  for (const rel of files.slice(1)) {
+    let text = '';
+    try { text = await (await import('node:fs/promises')).readFile(path.join(sourceDir, rel), 'utf8'); } catch { continue; }
+    const matches = [
+      text.match(/\b(?:PORT|port)\s*=\s*(?:process\.env\.PORT\s*\|\|\s*)?['"]?(\d{2,5})['"]?/),
+      text.match(/\blisten\s*\(\s*['"]?(\d{2,5})['"]?\s*[,)]/),
+      text.match(/\b(?:port|PORT)\s*[:=]\s*['"](\d{2,5})['"]/),
+      text.match(/(?:--port|-p)\s+(\d{2,5})\b/),
+    ];
+    const found = matches.map((m) => m?.[1]).find(validPort);
+    if (found) return Number(found);
+  }
+
+  const exposed = dockerfile.match(/^\s*EXPOSE\s+(\d{2,5})/im)?.[1];
+  return validPort(exposed) ? Number(exposed) : 8080;
+}
+
+function validPort(value) {
+  const n = Number(value);
+  return Number.isInteger(n) && n > 0 && n < 65536;
 }
 
 function normalizeDescription(value) {
