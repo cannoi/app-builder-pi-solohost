@@ -44,16 +44,16 @@ test('hub never treats undocumented fallback models as verified', async () => {
   assert.equal(models.length, 0);
 });
 
-test('hub routes only to verified models and respects AUTO/provider/manual modes', () => {
+test('hub routes only to verified models and respects the selected model pair', () => {
   const db = memDb();
   const hub = new AIProviderHub({ cfg: { dataDir: fs.mkdtempSync(path.join(os.tmpdir(), 'ai-hub-')), ai: { deepseekKey: '', geminiKey: '' } }, db, log: { warn() {} } });
   hub.upsertConnection({ id: 'a', provider: 'openai', apiKey: 'a', status: 'VERIFIED', models: [{ id: 'fast', verified: true }, { id: 'bad', verified: false }] });
   hub.upsertConnection({ id: 'b', provider: 'groq', apiKey: 'b', status: 'VERIFIED', models: [{ id: 'reasoning', verified: true }] });
   assert.deepEqual(hub.candidates('LOW').map(x => x.model), ['fast', 'reasoning']);
-  hub.setRouting({ mode: 'PROVIDER', preferredProvider: 'groq', preferredModel: 'AUTO' });
+  hub.setRouting({ preferredProvider: 'groq', preferredModels: ['groq:reasoning'] });
   assert.deepEqual(hub.candidates('LOW').map(x => x.model), ['reasoning']);
-  hub.setRouting({ mode: 'MANUAL', preferredProvider: 'AUTO', preferredModel: 'fast' });
-  assert.deepEqual(hub.candidates('LOW').map(x => x.model), ['fast']);
+  hub.setRouting({ preferredProvider: 'openai', preferredModels: ['openai:fast', 'groq:reasoning'] });
+  assert.deepEqual(hub.candidates('LOW').map(x => x.model), ['fast', 'reasoning']);
 });
 
 test('hub supports manual model validation when discovery is unavailable', async () => {

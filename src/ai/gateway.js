@@ -71,12 +71,12 @@ export class AIGateway {
 
   providerByName(name) { return name === 'deepseek' ? this.deepseek : this.gemini; }
 
-  async complete({ task, prompt, system, json = false, projectId = null, images = [] }) {
+  async complete({ task, prompt, system, json = false, projectId = null, images = [], modelRef = '' }) {
     const rule = actionRule(task);
     const safeSystem = rule ? `${system || ''}\n\n${rule}`.trim() : (system || '').trim();
     const safePrompt = rule ? `${prompt || ''}\n\n${rule}`.trim() : (prompt || '').trim();
     try {
-      const routed = await this.hub.execute({ task, prompt: safePrompt, system: safeSystem, json, images });
+      const routed = await this.hub.execute({ task, prompt: safePrompt, system: safeSystem, json, images, modelRef });
       this.record({ projectId, task, provider: routed.provider, model: routed.model, success: 1, durationMs: routed.durationMs, tokens: routed.tokens, error: null });
       return routed;
     } catch (err) {
@@ -86,7 +86,10 @@ export class AIGateway {
   }
 
   async completeJson(opts) {
-    const council = (this.cfg.ai.mode === 'council') && ['CODING', 'DEBUGGING', 'CODE_REVIEW'].includes(opts.task);
+    const pair = this.hub.selectedModels?.() || [];
+    const pairTask = ['CODING', 'DEBUGGING', 'CODE_REVIEW'].includes(opts.task);
+    if (pair.length >= 2 && pairTask) return this.completeSelectedPair(opts, pair);
+    const council = (this.cfg.ai.mode === 'council') && pairTask;
     if (council) return this.completeCouncil(opts);
     const first = await this.complete({ ...opts, json: true });
     let parsed = extractJson(first.text);
@@ -100,6 +103,22 @@ export class AIGateway {
       this.log.warn('AI JSON retry failed', { error: err.message });
     }
     throw Object.assign(new Error(`AI response format was invalid. ${first.provider || 'AI Provider Hub'} did not return valid JSON. No files were changed.`), { code: 'AI_BAD_JSON' });
+  }
+
+  async completeSelectedPair(opts, pair) {
+    const draft = await this.complete({ ...opts, json: true, modelRef: pair[0] });
+    const parsed = extractJson(draft.text);
+    if (!parsed) throw Object.assign(new Error(`AI response format was invalid. ${draft.provider || 'Builder'} did not return valid JSON. No files were changed.`), { code: 'AI_BAD_JSON' });
+    const reviewPromptText = reviewPrompt(opts.task, parsed);
+    try {
+      const review = await this.complete({ task: 'CODE_REVIEW', prompt: reviewPromptText, json: true, modelRef: pair[1], projectId: opts.projectId });
+      const reviewJson = extractJson(review.text);
+      if (!reviewJson) throw new Error('Reviewer returned invalid JSON.');
+      return { ...draft, json: parsed, council: { builder: draft.provider, reviewer: review.provider, review: reviewJson } };
+    } catch (err) {
+      this.log.warn('Selected reviewer failed; preserving verified builder result', { error: err.message });
+      return { ...draft, json: parsed, council: { builder: draft.provider, reviewer: null, review: { accept: true, score: 80, issues: ['Reviewer unavailable'], reason: 'Builder result preserved because the selected reviewer could not complete.' }, reviewerError: String(err.message || err).slice(0, 180) } };
+    }
   }
 
   async completeCouncil(opts) {

@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>App Builder — Pi SoloHost</title>
   <meta name="theme-color" content="#0e1116">
-  <link rel="stylesheet" href="/styles.css?v=1.4.31">
+  <link rel="stylesheet" href="/styles.css?v=1.4.32">
 <style>.paf-made-by{position:fixed;right:8px;bottom:8px;width:min(72px,12vw);max-width:12vw;height:auto;object-fit:contain;opacity:.5;background:transparent;padding:0;border:0;box-shadow:none;filter:none;pointer-events:none;z-index:30}</style></head>
 <body>
   <div id="app">
@@ -17,11 +17,7 @@
       <div class="topRight">
         <span id="workPill" class="pill ready">Ready</span>
         <button id="liveBtn" class="pill live" hidden type="button" title="Stop the test app and delete its container">Live · Stop</button>
-        <select id="aiSelect" aria-label="AI mode">
-          <option value="auto">AUTO</option>
-          <option value="provider">Provider</option>
-          <option value="manual">Manual</option>
-        </select>
+        <select id="aiSelect" aria-label="AI model"><option value="">AI model</option></select>
         <select id="projectSelect" aria-label="Project"><option value="">New app</option></select>
         <button id="settingsBtn" class="iconBtn" title="Settings">⚙</button>
       </div>
@@ -79,24 +75,24 @@
     <div class="sheet">
       <div class="sheetHead"><h2>Settings</h2><button id="closeSettings" class="iconBtn">✕</button></div>
       <div class="settingsGrid">
-        <label>AI mode<select id="setProvider"><option value="auto">AUTO</option><option value="provider">Provider</option><option value="manual">Manual</option></select></label>
-        <label>GitHub owner<input id="setGhOwner" type="text" placeholder="username or org"></label>
-        <label>Add AI<select id="hubProvider"><option value="deepseek">DeepSeek</option><option value="gemini">Gemini</option><option value="openai">OpenAI</option><option value="anthropic">Anthropic</option><option value="openrouter">OpenRouter</option><option value="groq">Groq</option><option value="mistral">Mistral</option><option value="xai">xAI</option><option value="custom">Custom</option></select></label>
-        <label>API key<input id="hubKey" type="password" autocomplete="off" placeholder="Paste key"></label>
+        <label>AI Provider<select id="hubProvider"><option value="deepseek">DeepSeek</option><option value="gemini">Gemini</option><option value="openai">OpenAI</option><option value="anthropic">Anthropic</option><option value="openrouter">OpenRouter</option><option value="groq">Groq</option><option value="mistral">Mistral</option><option value="xai">xAI</option><option value="custom">Custom</option></select></label>
+        <label>API key<input id="hubKey" type="password" autocomplete="off" placeholder="Paste token / API key"></label>
         <label id="hubBaseWrap" hidden>Base URL<input id="hubBase" type="text" placeholder="https://api.example.com/v1"></label>
-        <label>Model (optional)<input id="hubModel" type="text" autocomplete="off" placeholder="AUTO"></label>
+        <button id="hubAdd" class="wide" type="button">＋ Add</button>
+        <label>Model 1<select id="hubModel1"><option value="">Select verified model</option></select></label>
+        <label>Model 2<select id="hubModel2"><option value="">Optional reviewer model</option></select></label>
+        <label>GitHub owner<input id="setGhOwner" type="text" placeholder="username or org"></label>
         <label>GitHub token<input id="setGhToken" type="password" autocomplete="off" placeholder="Classic token"></label>
-        <div class="settingNote"><span>⚙ Sandbox: <b>Auto</b></span><span>🛡 No docker.sock</span></div>
+        <div class="settingNote"><span>🔐 Tokens are stored securely</span><span>🛡 No docker.sock</span></div>
       </div>
       <div id="hubList" class="info compactInfo">No AI provider connected yet.</div>
-      <button id="hubTest" class="primary wide" type="button">Test connection</button>
-      <button id="hubRefresh" class="wide" type="button">Refresh models</button>
-      <div class="info compactInfo">GitHub token: classic <b>repo + workflow + write:packages</b>.</div>
+      <button id="hubRefresh" class="wide" type="button">↻ Refresh models</button>
+      <div class="info compactInfo">Select one model for normal work, or two for Builder + reviewer.</div>
       <button id="saveSettings" class="primary wide">Save</button>
       <p id="settingsState" class="muted"></p>
     </div>
   </div>
 
-  <script src="/app.js?v=1.4.31"></script>
+  <script src="/app.js?v=1.4.32"></script>
 <img class="paf-made-by" src="/made-by.png" alt="Made with App Builder — Pi SoloHost"></body>
 </html>

@@ -1,5 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { classifyProviderError, isTransient } from '../src/ai/hub/errors.js';
 import { PROVIDER_CATALOG, taskComplexity } from '../src/ai/hub/catalog.js';
 import { AIProviderHub } from '../src/ai/hub/hub.js';
@@ -44,4 +47,22 @@ test('hub routing prefers provider when locked', () => {
   hub.setRouting({ mode: 'PROVIDER', preferredProvider: 'deepseek' });
   const picks = hub.candidates('USER_CHAT');
   assert.ok(picks.every((p) => p.conn.provider === 'deepseek'));
+});
+
+test('hub normalizes malformed connection model state instead of calling array methods on non-arrays', () => {
+  const db = memDb();
+  const hub = new AIProviderHub({ cfg: { dataDir: fs.mkdtempSync(path.join(os.tmpdir(), 'ai-hub-')), ai: { deepseekKey: '', geminiKey: '' } }, db, log: { warn() {} } });
+  db.setSetting('aiHub', { mode: 'SELECTED', preferredProvider: 'gemini', preferredModel: 'gemini-test', preferredModels: ['gemini-test'], connections: [{ id: 'gm', provider: 'gemini', credentialRef: 'gm', models: { id: 'gemini-test', verified: true }, status: 'VERIFIED' }] });
+  assert.doesNotThrow(() => hub.publicState());
+  assert.doesNotThrow(() => hub.syncLegacyKeys(hub.state()));
+  assert.deepEqual(hub.state().connections[0].models, [{ id: 'gemini-test', verified: true }]);
+});
+
+test('hub stores a selected model pair without AUTO/PROVIDER/MANUAL modes', () => {
+  const db = memDb();
+  const hub = new AIProviderHub({ cfg: { dataDir: fs.mkdtempSync(path.join(os.tmpdir(), 'ai-hub-')), ai: { deepseekKey: '', geminiKey: '' } }, db, log: { warn() {} } });
+  hub.setRouting({ preferredProvider: 'gemini', preferredModels: ['gemini-a', 'deepseek-b'] });
+  const state = hub.state();
+  assert.equal(state.mode, 'SELECTED');
+  assert.deepEqual(state.preferredModels, ['gemini-a', 'deepseek-b']);
 });

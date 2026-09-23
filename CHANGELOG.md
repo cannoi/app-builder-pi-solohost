@@ -1,3 +1,11 @@
+# v1.4.32 — AI Provider Hub Simplified
+
+- Fixed malformed Provider Hub model state that caused `models.find is not a function`.
+- Added canonical `loadHub()` UI loading path and removed stale mode controls.
+- Simplified provider setup to Provider → Token → Add, then Save.
+- Added verified Model 1 + optional Model 2 (Builder + reviewer) selection.
+- Selected model pairs are used for code-task review without exposing provider credentials.
+
 ## 1.4.31 — AI Provider Hub
 
 - Standardized AI Provider Hub is now the single Builder AI access layer.

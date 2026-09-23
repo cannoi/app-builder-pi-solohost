@@ -16,8 +16,9 @@ export class AIProviderHub {
   }
 
   state() {
-    return this.db.setting('aiHub', { mode: 'AUTO', preferredProvider: 'AUTO', preferredModel: 'AUTO', connections: [] })
-      || { mode: 'AUTO', preferredProvider: 'AUTO', preferredModel: 'AUTO', connections: [] };
+    const raw = this.db.setting('aiHub', { mode: 'SELECTED', preferredProvider: '', preferredModel: '', preferredModels: [], connections: [] })
+      || { mode: 'SELECTED', preferredProvider: '', preferredModel: '', preferredModels: [], connections: [] };
+    return normalizeHubState(raw);
   }
   save(next) { this.db.setSetting('aiHub', next); return next; }
 
@@ -54,12 +55,12 @@ export class AIProviderHub {
   publicState() {
     const st = this.state();
     return {
-      mode: st.mode || 'AUTO', preferredProvider: st.preferredProvider || 'AUTO', preferredModel: st.preferredModel || 'AUTO',
+      mode: 'SELECTED', preferredProvider: st.preferredProvider || '', preferredModel: st.preferredModel || '', preferredModels: normalizePreferredModels(st.preferredModels || (st.preferredModel ? [st.preferredModel] : [])),
       catalog: PROVIDER_CATALOG.map(({ id, name, kind }) => ({ id, name, kind })),
       connections: (st.connections || []).map((c) => ({
         id: c.id, provider: c.provider, name: catalogEntry(c.provider)?.name || c.provider,
         credentialRef: c.credentialRef, masked: maskKey(this.key(c)), status: c.status || 'UNVERIFIED',
-        models: (c.models || []).map((m) => ({ id: m.id || m, verified: m.verified === true, capabilities: m.capabilities || {}, contextWindow: m.contextWindow || null, lastVerified: m.lastVerified || null })),
+        models: normalizeModelsState(c.models).map((m) => ({ id: m.id || m, verified: m.verified === true, capabilities: m.capabilities || {}, contextWindow: m.contextWindow || null, lastVerified: m.lastVerified || null })),
         verifiedCount: (c.models || []).filter((m) => m.verified === true).length,
         lastError: c.lastError || null, lastVerified: c.lastVerified || null, baseUrl: c.provider === 'custom' ? c.baseUrl : undefined,
       })),
@@ -131,7 +132,7 @@ export class AIProviderHub {
     const id = input.id || `${input.provider}-${Date.now().toString(36)}`;
     const ref = input.credentialRef || `${id}-credential`;
     if (input.apiKey) this.vault.set(ref, input.apiKey);
-    const next = { id, provider: input.provider, credentialRef: ref, baseUrl: input.baseUrl || catalogEntry(input.provider)?.baseUrl || '', status: input.status || 'UNVERIFIED', models: input.models || [], lastError: input.lastError || null, lastVerified: input.lastVerified || null, cacheAt: input.cacheAt || new Date().toISOString(), mode: 'AUTO' };
+    const next = { id, provider: input.provider, credentialRef: ref, baseUrl: input.baseUrl || catalogEntry(input.provider)?.baseUrl || '', status: input.status || 'UNVERIFIED', models: normalizeModelsState(input.models), lastError: input.lastError || null, lastVerified: input.lastVerified || null, cacheAt: input.cacheAt || new Date().toISOString() };
     const idx = st.connections.findIndex((c) => c.id === id || (c.provider === input.provider && c.provider !== 'custom'));
     if (idx >= 0) st.connections[idx] = { ...st.connections[idx], ...next };
     else st.connections.push(next);
@@ -145,40 +146,52 @@ export class AIProviderHub {
     st.connections = (st.connections || []).filter((c) => c.id !== id); this.syncLegacyKeys(st); return this.save(st);
   }
 
-  setRouting({ mode, preferredProvider, preferredModel }) {
+  setRouting({ preferredProvider, preferredModel, preferredModels }) {
     const st = this.state();
-    if (mode) st.mode = ['AUTO', 'PROVIDER', 'MANUAL'].includes(mode) ? mode : 'AUTO';
-    if (preferredProvider) st.preferredProvider = preferredProvider;
-    if (preferredModel) st.preferredModel = preferredModel;
+    st.mode = 'SELECTED';
+    if (preferredProvider != null) st.preferredProvider = String(preferredProvider || '');
+    const pair = normalizePreferredModels(preferredModels || (preferredModel ? [preferredModel] : st.preferredModels));
+    st.preferredModels = pair.slice(0, 2);
+    st.preferredModel = st.preferredModels[0] || '';
     return this.save(st);
   }
 
+  selectedModels() { return normalizePreferredModels(this.state().preferredModels || []); }
+
   syncLegacyKeys(st) {
+    for (const c of st.connections || []) c.models = normalizeModelsState(c.models);
     const ds = st.connections.find((c) => c.provider === 'deepseek' && this.key(c));
     const gm = st.connections.find((c) => c.provider === 'gemini' && this.key(c));
     this.cfg.ai.deepseekKey = ds ? this.key(ds) : '';
     this.cfg.ai.geminiKey = gm ? this.key(gm) : '';
     if (ds?.models?.find((m) => m.verified)?.id) this.cfg.ai.deepseekModel = ds.models.find((m) => m.verified).id;
     if (gm?.models?.find((m) => m.verified)?.id) this.cfg.ai.geminiModel = gm.models.find((m) => m.verified).id;
-    const preferred = st.preferredProvider && st.preferredProvider !== 'AUTO' ? st.preferredProvider : null;
-    this.cfg.ai.provider = preferred || 'deepseek';
+    const preferred = st.preferredProvider || '';
+    this.cfg.ai.provider = preferred || ds?.provider || gm?.provider || st.connections?.[0]?.provider || 'deepseek';
   }
 
-  candidates(task) {
+  candidates(task, modelRef = '') {
     const st = this.state(); const level = taskComplexity(task);
     let list = (st.connections || []).filter((c) => this.key(c) && c.status === 'VERIFIED');
-    if (st.mode === 'PROVIDER' && st.preferredProvider && st.preferredProvider !== 'AUTO') list = list.filter((c) => c.provider === st.preferredProvider);
-    const out = [];
-    for (const conn of list) for (const model of (conn.models || [])) {
-      if (!model?.id || model.verified !== true) continue;
-      if (st.mode === 'MANUAL' && st.preferredModel && st.preferredModel !== 'AUTO' && model.id !== st.preferredModel) continue;
-      out.push({ conn, model: model.id, score: scoreModel(model, level) });
+    const selected = normalizePreferredModels(st.preferredModels || []);
+    if (selected.length) {
+      list = list.filter((c) => selected.some((ref) => ref.startsWith(`${c.provider}:`) || ref.startsWith(`${c.id}:`)));
     }
-    return out.sort((a, b) => b.score - a.score);
+    const out = [];
+    for (const conn of list) for (const model of normalizeModelsState(conn.models)) {
+      if (!model?.id || model.verified !== true) continue;
+      const ref = `${conn.provider}:${model.id}`;
+      const legacyRef = `${conn.id}:${model.id}`;
+      if (modelRef && modelRef !== ref && modelRef !== legacyRef) continue;
+      if (selected.length && !selected.includes(ref) && !selected.includes(legacyRef) && !selected.includes(model.id)) continue;
+      out.push({ conn, model: model.id, ref, score: scoreModel(model, level) });
+    }
+    const rank = new Map(selected.map((ref, i) => [ref, selected.length - i]));
+    return out.sort((a, b) => (rank.get(b.ref) || 0) - (rank.get(a.ref) || 0) || b.score - a.score);
   }
 
-  async execute({ task, prompt, system, json = false, images = [] }) {
-    const picks = this.candidates(task);
+  async execute({ task, prompt, system, json = false, images = [], modelRef = '' }) {
+    const picks = this.candidates(task, modelRef);
     if (!picks.length) throw Object.assign(new Error('No verified AI model is available for this task. Connect a provider or refresh its models.'), { code: 'AI_UNAVAILABLE' });
     const errors = []; let tries = 0;
     for (const pick of picks) {
@@ -211,7 +224,25 @@ export class AIProviderHub {
   }
 }
 
-function firstModel(conn) { return (conn.models || []).find((m) => m?.verified === true)?.id || (conn.models || [])[0]?.id || ''; }
+function normalizeModelsState(models) {
+  if (Array.isArray(models)) return models.map((m) => typeof m === 'string' ? { id: m, verified: false } : (m && typeof m === 'object' ? { ...m } : null)).filter((m) => m?.id);
+  if (models && typeof models === 'object' && models.id) return [{ ...models }];
+  return [];
+}
+function normalizePreferredModels(models) {
+  if (!Array.isArray(models)) return models ? [String(models)] : [];
+  return models.filter(Boolean).map(String).slice(0, 2);
+}
+function normalizeHubState(raw) {
+  const st = { ...raw };
+  st.mode = 'SELECTED';
+  st.preferredProvider = st.preferredProvider && st.preferredProvider !== 'AUTO' ? String(st.preferredProvider) : '';
+  st.preferredModels = normalizePreferredModels(st.preferredModels || (st.preferredModel && st.preferredModel !== 'AUTO' ? [st.preferredModel] : []));
+  st.preferredModel = st.preferredModels[0] || '';
+  st.connections = Array.isArray(st.connections) ? st.connections.map((c) => ({ ...c, models: normalizeModelsState(c.models) })) : [];
+  return st;
+}
+function firstModel(conn) { return normalizeModelsState(conn.models).find((m) => m?.verified === true)?.id || normalizeModelsState(conn.models)[0]?.id || ''; }
 function normalizeModels(raw, provider) {
   return (raw || []).map((m) => {
     const id = String(typeof m === 'string' ? m : (m.id || m.name || '')).replace(/^models\//, '');

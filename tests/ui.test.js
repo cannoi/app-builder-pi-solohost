@@ -9,9 +9,9 @@ test('settings modal can be hidden and all setup buttons exist', () => {
   assert.match(css, /\.modal\[hidden\]\{display:none!important\}/);
   assert.match(html, /id="settings"[^>]*hidden/);
   assert.match(html, /id="saveSettings"/);
-  assert.match(html, /app\.js\?v=1\.4\.31/);
-  assert.match(html, /styles\.css\?v=1\.4\.31/);
-  assert.match(html, /Sandbox:\s*<b>Auto<\/b>/);
+  assert.match(html, /app\.js\?v=1\.4\.32/);
+  assert.match(html, /styles\.css\?v=1\.4\.32/);
+  assert.match(html, /No docker\.sock/);
   assert.match(html, /GitHub token/);
   assert.match(html, /App Builder/);
   const js = fs.readFileSync(new URL('../public/app.js', import.meta.url), 'utf8');
@@ -126,4 +126,17 @@ test('failed jobs expose a direct AI repair action in the chat UI', () => {
   assert.match(text, /renderRepairAction\(failure\)/);
   assert.match(text, /Diagnose & Fix/);
   assert.match(text, /Fix security issue/);
+});
+
+test('AI Provider UI uses Add/Save flow and selected model pair without legacy mode controls', () => {
+  const html = fs.readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
+  const js = fs.readFileSync(new URL('../public/app.js', import.meta.url), 'utf8');
+  assert.match(html, /id="hubAdd"/);
+  assert.match(html, /id="saveSettings"/);
+  assert.match(html, /id="hubModel1"/);
+  assert.match(html, /id="hubModel2"/);
+  assert.doesNotMatch(html, /id="setProvider"/);
+  assert.doesNotMatch(html, />AUTO<\/option>/);
+  assert.match(js, /function loadHub/);
+  assert.match(js, /loadHub\(\)/);
 });

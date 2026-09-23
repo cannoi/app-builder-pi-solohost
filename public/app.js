@@ -130,10 +130,29 @@ function actionText(action) { return ({ build:'Build the app', run:'Run the app'
 async function loadStatus() {
   try {
     const s = await api('/api/status'); state.settings = s;
-    const mode = s.ai?.routing || 'AUTO';
-    if ($('aiSelect')) $('aiSelect').value = mode.toLowerCase();
-    if ($('setProvider')) $('setProvider').value = mode.toLowerCase();
   } catch {}
+}
+function modelRef(c, m) { return `${c.provider}:${m.id}`; }
+function renderModelSelectors(hub) {
+  const all = [];
+  for (const c of (hub?.connections || [])) for (const m of (c.models || [])) if (m.verified) all.push({ value: modelRef(c, m), label: `${c.name} · ${m.id}` });
+  const make = (id, empty) => {
+    const el = $(id); if (!el) return;
+    const current = el.value; el.innerHTML = `<option value="">${empty}</option>` + all.map(x => `<option value="${esc(x.value)}">${esc(x.label)}</option>`).join('');
+    if (all.some(x => x.value === current)) el.value = current;
+  };
+  make('hubModel1', 'Select verified model'); make('hubModel2', 'Optional reviewer model');
+  const top = $('aiSelect');
+  if (top) { const selected = hub?.preferredModels?.[0] || ''; top.innerHTML = '<option value="">AI model</option>' + all.map(x => `<option value="${esc(x.value)}">${esc(x.label)}</option>`).join(''); top.value = all.some(x => x.value === selected) ? selected : ''; }
+}
+async function loadHub() {
+  try {
+    const hub = await api('/api/ai/hub');
+    renderHubList(hub); renderModelSelectors(hub);
+    if ($('hubModel1')) $('hubModel1').value = hub.preferredModels?.[0] || '';
+    if ($('hubModel2')) $('hubModel2').value = hub.preferredModels?.[1] || '';
+    return hub;
+  } catch (e) { if ($('settingsState')) $('settingsState').textContent = e.message; return null; }
 }
 function rememberProject(id) {
   try {
@@ -587,18 +606,17 @@ function renderHubList(hub) {
     return `<div class="hubRow"><span>${c.status === 'VERIFIED' && verified ? '✓' : '•'} ${esc(c.name)} · ${esc(c.masked || 'key')} · ${verified} verified</span>${buttons}</div>`;
   }).join('');
 }
-async function testHubConnection() {
+async function addHubProvider() {
   const provider = $('hubProvider')?.value;
   const apiKey = $('hubKey')?.value?.trim();
   const baseUrl = $('hubBase')?.value?.trim();
-  const model = $('hubModel')?.value?.trim() || undefined;
   if (!apiKey) { $('settingsState').textContent = 'Paste an API key first.'; return; }
-  $('settingsState').textContent = 'Verifying credential + model…';
+  $('settingsState').textContent = 'Checking token and discovering usable models…';
   try {
-    const r = await api('/api/ai/hub/connect', { method: 'POST', body: JSON.stringify({ provider, apiKey, baseUrl, model }) });
-    $('hubKey').value = ''; $('hubModel').value = '';
-    renderHubList(r.hub);
-    $('settingsState').textContent = `Verified. ${r.verifiedModel || 'Model'} is usable. AUTO is ready.`;
+    const r = await api('/api/ai/hub/connect', { method: 'POST', body: JSON.stringify({ provider, apiKey, baseUrl }) });
+    $('hubKey').value = ''; $('hubBase').value = '';
+    renderHubList(r.hub); renderModelSelectors(r.hub);
+    $('settingsState').textContent = `${r.hub.connections.find(c => c.id === r.hub.connections[r.hub.connections.length - 1]?.id)?.name || provider} connected. Choose models, then Save.`;
     await loadStatus();
   } catch (e) { $('settingsState').textContent = e.message; }
 }
@@ -617,21 +635,21 @@ async function removeHub(id) {
 async function loadSettings() {
   try {
     state.settings = await api('/api/settings');
-    const routing = await api('/api/ai/hub');
-    const mode = routing.mode || 'AUTO';
-    if ($('setProvider')) $('setProvider').value = mode.toLowerCase();
     $('setGhOwner').value = state.settings.github?.owner || '';
     $('settingsState').textContent = '';
-    renderHubList(routing);
+    await loadHub();
   } catch {}
 }
 async function saveSettings() {
   try {
-    const raw = String($('setProvider').value || 'auto').toUpperCase();
-    await api('/api/ai/hub/routing', { method: 'POST', body: JSON.stringify({ mode: raw === 'PROVIDER' ? 'PROVIDER' : raw === 'MANUAL' ? 'MANUAL' : 'AUTO', preferredProvider: raw === 'PROVIDER' ? ($('hubProvider')?.value || 'AUTO') : 'AUTO', preferredModel: raw === 'MANUAL' ? ($('hubModel')?.value.trim() || 'AUTO') : 'AUTO' }) });
+    const model1 = $('hubModel1')?.value || '';
+    const model2 = $('hubModel2')?.value || '';
+    const preferredModels = [model1, model2].filter(Boolean).slice(0, 2);
+    const preferredProvider = model1 ? model1.split(':')[0] : '';
+    await api('/api/ai/hub/routing', { method: 'POST', body: JSON.stringify({ preferredProvider, preferredModels }) });
     await api('/api/settings', { method: 'POST', body: JSON.stringify({ GITHUB_TOKEN: $('setGhToken').value, GITHUB_OWNER: $('setGhOwner').value, setupComplete: true }) });
     $('setGhToken').value = '';
-    $('settingsState').textContent = 'Saved.';
+    $('settingsState').textContent = preferredModels.length === 2 ? 'Saved. Builder + reviewer models are selected.' : 'Saved.';
     await loadStatus(); await loadHub();
   } catch (e) { $('settingsState').textContent = e.message; }
 }
@@ -647,16 +665,6 @@ function renderGuide(guide) {
   }
   $('chat').appendChild(box); maybeJump();
 }
-async function applyAiNow(value) {
-  if (state.busy) { await loadStatus(); return; }
-  const mode = value === 'provider' ? 'PROVIDER' : value === 'manual' ? 'MANUAL' : 'AUTO';
-  try {
-    await api('/api/ai/hub/routing', { method: 'POST', body: JSON.stringify({ mode }) });
-    add('system', `AI mode: ${mode}. The Provider Hub will use verified models only.`);
-    await loadStatus();
-  } catch (e) { add('system', e.message); await loadSettings(); }
-}
-
 function renderWelcome() {
   $('chat').innerHTML = '';
   add('ai', 'I will take you to a published SoloHost app in three taps:\n1) Tell me the idea\n2) I Build + Run and give you a test link\n3) You tap Publish');
@@ -672,14 +680,13 @@ $('attachments').onclick = (e) => { const b = e.target.closest('[data-remove]');
 $('settingsBtn').onclick = () => { loadSettings(); $('settings').hidden = false; };
 $('closeSettings').onclick = () => $('settings').hidden = true;
 $('saveSettings').onclick = saveSettings;
-if ($('hubTest')) $('hubTest').onclick = testHubConnection;
+if ($('hubAdd')) $('hubAdd').onclick = addHubProvider;
 if ($('hubRefresh')) $('hubRefresh').onclick = async () => { const rows = await api('/api/ai/hub'); for (const c of (rows.connections || [])) await refreshHub(c.id); };
 $('hubList').addEventListener('click', (e) => { const r=e.target.closest('[data-hub-refresh]'); const x=e.target.closest('[data-hub-remove]'); if(r) refreshHub(r.dataset.hubRefresh); if(x) removeHub(x.dataset.hubRemove); });
 if ($('hubProvider')) $('hubProvider').onchange = () => {
   if ($('hubBaseWrap')) $('hubBaseWrap').hidden = $('hubProvider').value !== 'custom';
 };
-if ($('aiSelect')) $('aiSelect').onchange = () => applyAiNow($('aiSelect').value);
-if ($('setProvider')) $('setProvider').onchange = () => applyAiNow($('setProvider').value);
+if ($('aiSelect')) $('aiSelect').onchange = async () => { const value = $('aiSelect').value; if (!value) return; await api('/api/ai/hub/routing', { method: 'POST', body: JSON.stringify({ preferredProvider: value.split(':')[0], preferredModels: [value] }) }); await loadHub(); };
 $('projectSelect').onchange = async () => { if (state.busy) return; state.projectId = $('projectSelect').value || null; if (state.projectId) await openProject(state.projectId); else { rememberProject(null); renderWelcome(); } };
 $('jumpDown').onclick = () => { $('chat').scrollTop = $('chat').scrollHeight; $('jumpDown').hidden = true; };
 $('chat').addEventListener('scroll', maybeJump);
