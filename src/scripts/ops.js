@@ -77,6 +77,7 @@ export function formatLayerDiagnosis({ layer, message = '', crash = null, next =
 export function inferAction(message) {
   const m = String(message || '').toLowerCase();
   if (extractGhcrImage(m) && /(solohost|cài đặt|cai dat|install kit|docker-compose|config_options|file cài|tạo file|tao file|generate)/i.test(m)) return 'export';
+  if (/release blocked|latest saved verification|failed runtime test|tests failed\. tap improve/i.test(m)) return 'run';
   // Explicit targeted change / create must not be trapped in diagnosis.
   if (/\b(implement this|add this feature|modify this behavior|change the code|update the application|thêm tính năng|sửa hàm|đổi hành vi)\b/.test(m)
       && !/\b(github actions|ghcr|solohost|preview|sandbox)\b/.test(m)) return 'improve';

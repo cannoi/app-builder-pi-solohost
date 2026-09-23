@@ -5,6 +5,7 @@ import { inferAction, classifyLogs, classifyFailureLayer, describeFailure, isHos
 
 test('user language maps to controller scripts', () => {
   assert.equal(inferAction('chạy app và cho tôi link'), 'run');
+  assert.equal(inferAction('Release blocked: the latest saved verification still has a failed runtime test'), 'run');
   assert.equal(inferAction('app bị lỗi hãy sửa'), 'analyze');
   assert.equal(inferAction('quét bảo mật'), 'analyze');
 });

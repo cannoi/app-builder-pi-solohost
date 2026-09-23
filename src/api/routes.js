@@ -178,7 +178,8 @@ export function registerRoutes(r, app) {
       preferredModel: req.body?.preferredModel,
       preferredModels: req.body?.preferredModels,
     });
-    res.json({ ok: true, hub: ai.hub.publicState() });
+    ai.refresh();
+    res.json({ ok: true, hub: ai.hub.publicState(), applied: true });
   });
 
   r.get('/api/ai/gemini/discover', async (req, res) => {
@@ -225,6 +226,17 @@ export function registerRoutes(r, app) {
 
   r.get('/api/projects', (_req, res) => {
     res.json(projects.list().map(brief));
+  });
+
+  r.post('/api/projects/:id/remember', async (req, res) => {
+    const p = projects.get(req.params.id);
+    if (!p) return res.status(404).json({ error: 'Project not found' });
+    const message = String(req.body?.message || '').trim();
+    const role = ['user', 'assistant', 'system', 'ai'].includes(req.body?.role) ? req.body.role : 'system';
+    if (!message) return res.json({ ok: true, skipped: true });
+    const mapped = role === 'ai' ? 'assistant' : role;
+    await projects.chat(p, message.slice(0, 4000), mapped);
+    res.json({ ok: true });
   });
 
   r.get('/api/projects/:id', async (req, res) => {

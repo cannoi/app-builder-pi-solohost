@@ -8,7 +8,9 @@ export async function writeSoloHostPackage({ project, sourceDir, image, hostPort
   containerPort = detectedPort || 8080;
   await ensureDir(out);
   const yamlSafe = (value) => JSON.stringify(String(value || '').replace(/\r?\n/g, ' ').slice(0, 220));
-  const compose = `services:\n  app:\n    image: ${image}\n    restart: unless-stopped\n    labels:\n      pi.ui.primary: "true"\n    ports:\n      - "127.0.0.1:${hostPort}:${containerPort}"\n`;
+  const rawImage = String(image || '').trim();
+  const safeImage = rawImage.startsWith('ghcr.io/') ? rawImage : `ghcr.io/OWNER/${project.slug}:latest`;
+  const compose = `services:\n  app:\n    image: ${safeImage}\n    restart: unless-stopped\n    labels:\n      pi.ui.primary: "true"\n    ports:\n      - "127.0.0.1:${hostPort}:${containerPort}"\n    environment:\n      - PORT=${containerPort}\n`;
   const config = `title: ${yamlSafe(project.name)}\neyebrow: SoloHost App\ndescription: ${yamlSafe(project.idea)}\nfooter_hint: Ready to run on Pi Desktop SoloHost.\noutput_file: .env\nafter_save: Saved. Start the app from SoloHost.\nfields: []\n`;
   const blurb = normalizeDescription(description) || professionalBlurb(project);
   const appInfo = `# ${project.name}\n\nSuggested app name: ${project.name}\nSuggested description: ${blurb}\n\nDocker image:\n${image}\n\nDo not install until this image address exists on GHCR.\n`;
@@ -45,12 +47,12 @@ async function detectContainerPort(sourceDir) {
   await add('package.json');
   for (const name of ['server.js', 'src/server.js', 'app.js', 'index.js']) await add(name);
   const blob = files.join('\n');
+  const exposed = [...blob.matchAll(/EXPOSE\s+(\d{2,5})/gi)].map((m) => Number(m[1])).filter(Boolean);
+  if (exposed.length) return exposed[0];
   const envPort = blob.match(/process\.env\.PORT\s*\|\|\s*(\d{2,5})/i)?.[1];
   if (envPort) return Number(envPort);
   const listen = blob.match(/(?:listen|PORT)\s*\(?\s*(\d{2,5})/i)?.[1];
-  if (listen) return Number(listen);
-  const exposed = [...blob.matchAll(/EXPOSE\s+(\d{2,5})/gi)].map((m) => Number(m[1])).filter(Boolean);
-  if (exposed.length) return exposed[0];
+  if (listen && Number(listen) !== 3000) return Number(listen);
   const compose = blob.match(/127\.0\.0\.1:\d{2,5}:(\d{2,5})/);
   if (compose) return Number(compose[1]);
   return null;

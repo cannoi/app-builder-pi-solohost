@@ -19,6 +19,13 @@ function add(role, text, meta = {}) {
   if (meta.small) { const s = document.createElement('span'); s.className = 'small'; s.textContent = meta.small; el.appendChild(s); }
   if (role === 'ai' && !meta.noTools) attachReplyTools(el);
   $('chat').appendChild(el); if (stick) $('chat').scrollTop = $('chat').scrollHeight; else maybeJump();
+  if (state.projectId && !meta.ephemeral) {
+    fetch(`/api/projects/${state.projectId}/remember`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ role, message: String(text).slice(0, 4000) }),
+    }).catch(() => {});
+  }
 }
 function attachReplyTools(box) {
   if (!state.projectId || !box) return;
@@ -136,9 +143,11 @@ function modelRef(c, m) { return `${c.provider}:${m.id}`; }
 function renderProviderSelector(hub) {
   const top = $('aiSelect');
   if (!top) return;
-  const rows = (hub?.connections || []).filter((c) => c.status !== 'INVALID' && (c.models || []).some((m) => m.verified));
+  const rows = (hub?.connections || []).filter((c) => c.status !== 'INVALID');
   top.innerHTML = '<option value="">AI provider</option>' + rows.map((c) => `<option value="${esc(c.provider)}">${esc(c.name || c.provider)}</option>`).join('');
-  top.value = hub?.preferredProvider || '';
+  const preferred = hub?.preferredProvider || '';
+  if (preferred && rows.some((c) => c.provider === preferred)) top.value = preferred;
+  else if (rows[0]) top.value = rows[0].provider;
 }
 function renderModelSelectors(hub) {
   const all = [];
@@ -188,7 +197,7 @@ async function openProject(id, announce = true) {
   if (running) add('system', `↻ ${running.type} is still running · ${running.stage || 'working'}`);
   const last = activity.items?.find((x) => !x.running);
   if (last?.status === 'failed' && last.error) add('system', `⚠ Last issue: ${String(last.error).split('\n')[0].slice(0, 220)}`);
-  if (p.chat?.length) p.chat.forEach((m) => add(m.role === 'user' ? 'user' : m.role === 'assistant' ? 'ai' : 'system', m.message));
+  if (p.chat?.length) p.chat.forEach((m) => add(m.role === 'user' ? 'user' : m.role === 'assistant' ? 'ai' : 'system', m.message, { ephemeral: true, noTools: m.role !== 'assistant' && m.role !== 'ai' }));
   else add('ai', `I’m ready to build ${p.name}. Tell me what you want next.`);
   if (p.workPlan?.steps?.length) renderWorkPlan(p.workPlan);
   if (Array.isArray(p.workHistory) && p.workHistory.length) renderWorkHistory(p.workHistory);
@@ -703,8 +712,13 @@ if ($('aiSelect')) $('aiSelect').onchange = async () => {
   const hub = await api('/api/ai/hub');
   const conn = (hub.connections || []).find((c) => c.provider === provider);
   const models = (conn?.models || []).filter((m) => m.verified).slice(0, 2).map((m) => `${provider}:${m.id}`);
-  await api('/api/ai/hub/routing', { method: 'POST', body: JSON.stringify({ preferredProvider: provider, preferredModels: models }) });
+  const fallback = (conn?.models || []).slice(0, 2).map((m) => `${provider}:${m.id}`);
+  const preferredModels = models.length ? models : fallback;
+  const applied = await api('/api/ai/hub/routing', { method: 'POST', body: JSON.stringify({ preferredProvider: provider, preferredModels }) });
   await loadHub();
+  const name = conn?.name || provider;
+  add('system', `AI provider is now ${name}${preferredModels[0] ? ` · ${preferredModels[0].split(':').slice(1).join(':')}` : ''}.`);
+  $('aiSelect').value = applied?.hub?.preferredProvider || provider;
 };
 if ($('hubModel1')) $('hubModel1').onchange = async () => {
   const first = $('hubModel1').value; const second = $('hubModel2')?.value || '';

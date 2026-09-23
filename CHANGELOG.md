@@ -1,3 +1,11 @@
+## 1.4.36
+- Publish no longer loops on a stale npm-test failure after a passing live preview.
+- Successful Run refreshes the saved verification report so Release can continue.
+- "Release blocked / tests failed" chat is routed to Run, not another Improve loop.
+- Chat lines persist across Preview → Back so work history is not lost.
+- Provider selector applies immediately (`ai.refresh`) and lists every connected provider.
+- SoloHost compose prefers Dockerfile EXPOSE, sets PORT, and never writes a local-only image name.
+
 ## 1.4.35
 
 - Prevent repeated identical repair loops with a short-window action guard.

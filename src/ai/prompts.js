@@ -25,6 +25,10 @@ Rules:
 - Never place secrets in generated source.
 - Generated apps must listen on 0.0.0.0 inside the container and expose their real internal port.
 - A generated app must include a health/readiness endpoint when practical.
+- Node apps listen on process.env.PORT || 8080. Dockerfile EXPOSE 8080. Tests must use the same PORT (never hardcode 3000).
+- npm tests must not fail a healthy app. Prefer requesting /health after the server starts. Do not fork a second server on a different port.
+- SoloHost install files must use a real ghcr.io image when known, map 127.0.0.1:18080:8080, and set PORT=8080.
+
 - Do not invent Pi APIs. For Pi features, follow official Pi documentation and clearly mark sandbox/testnet vs production behavior.
 - For SoloHost publishing, generate a public, versioned Docker image plus docker-compose.yml and config_options.yml that satisfy the current SoloHost contract.
 - RULE: every generated or edited HTML UI MUST keep the certified "Made with App Builder — Pi SoloHost" badge (a small text+icon mark, bottom-right corner). It is injected automatically by the Builder after generation — never delete the element with class "paf-made-by" if you see it in existing HTML, and do not attempt to add your own badge image or asset for it.
