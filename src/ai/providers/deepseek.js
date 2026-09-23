@@ -16,6 +16,22 @@ export class DeepSeekProvider {
 
   configured() { return Boolean(this.apiKey); }
 
+  async listModels() {
+    if (!this.apiKey) throw new Error('DeepSeek API key is not configured');
+    const res = await fetch('https://api.deepseek.com/models', {
+      headers: { Authorization: `Bearer ${this.apiKey}` },
+      signal: AbortSignal.timeout(20000),
+    });
+    const raw = await res.text();
+    if (!res.ok) {
+      const error = new Error(`DeepSeek HTTP ${res.status}: ${raw.slice(0, 300)}`);
+      error.status = res.status;
+      throw error;
+    }
+    const data = JSON.parse(raw);
+    return Array.isArray(data.data) ? data.data.map((m) => ({ id: m.id, contextWindow: m.context_length || null })) : [];
+  }
+
   async complete({ prompt, system, json = false, images = [] }) {
     if (!this.apiKey) throw new Error('DeepSeek API key is not configured');
     const models = [this.model, 'deepseek-v4-flash', 'deepseek-v4-pro'].filter((value, index, list) => value && list.indexOf(value) === index);

@@ -119,14 +119,15 @@ export class GeminiProvider {
     }
   }
 
-  async complete({ prompt, system, json = false }) {
+  async complete({ prompt, system, json = false, model = null, images = [] }) {
     if (!this.apiKey) throw new Error('Gemini API key is not configured');
     await this.ensureModel();
-    const candidates = [this.model, ...GEMINI_MODEL_CANDIDATES].filter(Boolean).filter((v, i, a) => a.indexOf(v) === i);
+    const requested = model || this.model;
+    const candidates = [requested, ...GEMINI_MODEL_CANDIDATES].filter(Boolean).filter((v, i, a) => a.indexOf(v) === i);
     let lastError = null;
     for (const model of candidates) {
       try {
-        const result = await this.request(model, { prompt, system, json });
+        const result = await this.request(model, { prompt, system, json, images });
         this.setStickyModel(model);
         return result;
       } catch (err) {
@@ -143,10 +144,10 @@ export class GeminiProvider {
     throw lastError || new Error('No usable Gemini model found');
   }
 
-  async request(model, { prompt, system, json }) {
+  async request(model, { prompt, system, json, images = [] }) {
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`;
     const body = {
-      contents: [{ role: 'user', parts: [{ text: prompt }] }],
+      contents: [{ role: 'user', parts: [{ text: prompt }, ...images.map((i) => ({ inlineData: { mimeType: i.mimeType || i.type || 'image/png', data: String(i.dataUrl || '').replace(/^data:[^;]+;base64,/, '') } }))] }],
       ...(system ? { systemInstruction: { parts: [{ text: system }] } } : {}),
       generationConfig: json
         ? { responseMimeType: 'application/json', temperature: 0.3 }

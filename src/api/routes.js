@@ -127,7 +127,9 @@ export function registerRoutes(r, app) {
     if (!apiKey) return res.status(400).json({ error: 'Paste an API key.' });
     try {
       const models = await ai.hub.testConnection({ provider, apiKey, baseUrl, model: body.model });
+      const id = `${provider}-${Date.now().toString(36)}`;
       ai.hub.upsertConnection({
+        id,
         provider,
         apiKey,
         baseUrl,
@@ -136,17 +138,27 @@ export function registerRoutes(r, app) {
         lastVerified: new Date().toISOString(),
         lastError: null,
       });
-      if (provider === 'deepseek') { cfg.ai.deepseekKey = apiKey; process.env.DEEPSEEK_API_KEY = apiKey; }
-      if (provider === 'gemini') { cfg.ai.geminiKey = apiKey; process.env.GEMINI_API_KEY = apiKey; }
-      const stored = db.setting('runtimeSecrets', {}) || {};
-      if (provider === 'deepseek') stored.DEEPSEEK_API_KEY = apiKey;
-      if (provider === 'gemini') stored.GEMINI_API_KEY = apiKey;
-      db.setSetting('runtimeSecrets', stored);
       ai.refresh();
-      res.json({ ok: true, models, hub: ai.hub.publicState() });
+      res.json({ ok: true, models, verifiedModel: models.find((m) => m.verified)?.id || null, hub: ai.hub.publicState() });
     } catch (err) {
       const cls = err.classify || { user: err.message };
       res.status(400).json({ error: cls.user || err.message, code: cls.code || 'UNKNOWN_PROVIDER_ERROR' });
+    }
+  });
+
+  r.post('/api/ai/hub/refresh', async (req, res) => {
+    const id = String(req.body?.id || '');
+    const row = ai.hub.state().connections.find((c) => c.id === id);
+    if (!row) return res.status(404).json({ error: 'Connection not found.' });
+    try {
+      const models = await ai.hub.discover(row, { force: true, allowFallback: false });
+      const verified = (row.models || []).filter((m) => m.verified === true);
+      const next = models.map((m) => ({ ...m, verified: verified.some((v) => (v.id || v) === m.id) }));
+      ai.hub.upsertConnection({ id: row.id, provider: row.provider, baseUrl: row.baseUrl, credentialRef: row.credentialRef, status: row.status, models: next, lastVerified: row.lastVerified, lastError: null });
+      res.json({ ok: true, models: next, hub: ai.hub.publicState() });
+    } catch (err) {
+      const cls = err.classify || { user: err.message, code: 'UNKNOWN_PROVIDER_ERROR' };
+      res.status(400).json({ error: cls.user || err.message, code: cls.code });
     }
   });
 

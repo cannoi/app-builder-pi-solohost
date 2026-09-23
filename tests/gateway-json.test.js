@@ -11,9 +11,11 @@ test('invalid JSON from primary AI recovers through the other configured provide
   const log = { warn() {} };
   const cfg = { ai: { provider: 'deepseek', mode: 'single', deepseekKey: 'x', geminiKey: 'y', deepseekModel: 'deepseek-chat', geminiModel: 'gemini-2.5-flash' } };
   const ai = new AIGateway({ cfg, db, log });
-  ai.complete = async () => ({ provider: 'deepseek', model: 'deepseek-chat', text: '{bad', durationMs: 1, tokens: 1 });
-  ai.gemini.complete = async () => ({ provider: 'gemini', model: 'gemini-2.5-flash', text: '{"ok":true}', durationMs: 1, tokens: 1 });
+  let calls = 0;
+  ai.hub.execute = async () => { calls += 1; return calls === 1 ? { provider: 'deepseek', model: 'deepseek-chat', text: '{bad', durationMs: 1, tokens: 1 } : { provider: 'gemini', model: 'gemini-2.5-flash', text: '{\"ok\":true}', durationMs: 1, tokens: 1 }; };
+
   const result = await ai.completeJson({ task: 'DEBUGGING', prompt: 'test', system: 'Return JSON', projectId: 'p' });
   assert.equal(result.json.ok, true);
   assert.equal(result.fallbackFrom, 'deepseek');
+  assert.equal(calls, 2);
 });

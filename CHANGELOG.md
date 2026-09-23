@@ -1,3 +1,11 @@
+## 1.4.31 — AI Provider Hub
+
+- Standardized AI Provider Hub is now the single Builder AI access layer.
+- Added encrypted-at-rest credential vault and removed new AI keys from Builder state/runtime secret persistence.
+- Added credential-first discovery, verified-model probing, AUTO/PROVIDER/MANUAL routing and bounded fallback.
+- Added adapters for OpenAI, Gemini, DeepSeek, Anthropic, OpenRouter, Groq, Mistral, xAI and custom OpenAI-compatible endpoints.
+- Kept existing Builder UI/workflows intact outside the AI connection layer.
+
 ## 1.4.30
 
 - AI Provider Hub: shared adapters, credential validation, model discovery, AUTO routing and fallback.

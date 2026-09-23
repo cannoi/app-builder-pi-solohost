@@ -15,7 +15,7 @@ test('gateway sends the rule to provider requests', async () => {
   const cfg = { ai:{ provider:'deepseek', mode:'single', deepseekKey:'x', geminiKey:'', deepseekModel:'deepseek-chat', geminiModel:'gemini-2.5-flash' } };
   const ai = new AIGateway({cfg, db, log:{warn(){}}});
   let seen = null;
-  ai.deepseek.complete = async (o) => { seen=o; return {provider:'deepseek',model:'deepseek-chat',text:'ok',durationMs:1,tokens:1}; };
+  ai.hub.execute = async (o) => { seen=o; return {provider:'deepseek',model:'deepseek-chat',text:'ok',durationMs:1,tokens:1}; };
   await ai.complete({task:'DEBUGGING', prompt:'repair bug', system:'system'});
   assert.match(seen.prompt, /\[ACTION: SAFE REPAIR — MANDATORY\]/);
   assert.match(seen.system, /\[ACTION: SAFE REPAIR — MANDATORY\]/);
@@ -34,7 +34,7 @@ test('chat is not forced into a code-change safety mode', async () => {
   const cfg = { ai:{ provider:'deepseek', mode:'single', deepseekKey:'x', geminiKey:'', deepseekModel:'deepseek-chat', geminiModel:'gemini-2.5-flash' } };
   const ai = new AIGateway({cfg, db, log:{warn(){}}});
   let seen = null;
-  ai.deepseek.complete = async (o) => { seen=o; return {provider:'deepseek',model:'deepseek-chat',text:'ok',durationMs:1,tokens:1}; };
+  ai.hub.execute = async (o) => { seen=o; return {provider:'deepseek',model:'deepseek-chat',text:'ok',durationMs:1,tokens:1}; };
   await ai.complete({task:'USER_CHAT', prompt:'hello', system:'system'});
   assert.doesNotMatch(seen.prompt, /SAFE REPAIR|SAFE BUILD|SAFE SECURITY CHANGE|INSPECT ONLY/);
 });
