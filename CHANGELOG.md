@@ -1,3 +1,9 @@
+## 1.4.38
+- DARE (Deterministic Auto Repair Engine) runs before AI on preview crash and GitHub Actions failure.
+- Safe rules: missing npm package, unique start script, localhost bind, sqlite data dirs, workflow packages:write.
+- Loop cap: one auto-repair per fingerprint per cycle. AI quota errors no longer block those fixes.
+- App-logic TypeErrors are not auto-patched.
+
 ## 1.4.37
 - Deterministic GitHub Actions repair: if the image crashes with a missing Node package (example: sqlite3 used but not in package.json), Builder adds the dependency and republishes without waiting for AI quota.
 - New apps are scanned for require()/import vs package.json before the first GitHub push.

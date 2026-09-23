@@ -18,6 +18,7 @@ import { gcDocker } from '../docker/cleanup.js';
 import { detectUserLanguage, languageInstruction, languageInstructionFor } from '../ai/language.js';
 import { publishToGitHub } from '../github/publish.js';
 import { ensureMissingDependencies } from '../projects/deps-fix.js';
+import { runDare, formatDareReport } from '../dare/engine.js';
 import { shouldBlockRepeatedAction, nextRepeatState } from './loop-guard.js';
 import { mergeVerificationState } from './verification.js';
 
@@ -593,18 +594,23 @@ export function registerPipeline(app) {
     if (!diagnostics?.logTail) return { ok: false, reason: 'No readable GitHub Actions log.' };
     const classified = classifyLogs(diagnostics.logTail);
     try {
-      const depFix = await ensureMissingDependencies(source);
-      if (depFix.changed) {
-        emit('repair', 'running', `Adding missing packages so the image can start: ${depFix.added.join(', ')}.`);
+      const history = await projects.readMetadata(project, 'dare-history.json', []);
+      const dare = await runDare({ sourceDir: source, logs: diagnostics.logTail, extra: classified, history: Array.isArray(history) ? history : [] });
+      await projects.saveMetadata(project, 'dare-history.json', (dare.history || []).slice(-20));
+      emit('repair', dare.ok ? 'running' : 'done', formatDareReport(dare));
+      if (dare.ok) {
         await writeGithubWorkflow(source, { ...project, version });
         const republish = await publishToGitHub({
           github, project, sourceDir: source, version, emit,
           runtimeOk: true, repoName: repo, existingAction: 'overwrite', refreshWorkflow: false,
         });
         if (republish.ok && republish.verified) {
-          emit('repair', 'done', `✓ Added ${depFix.added.join(', ')} and pushed a new build. Wait for GitHub Actions, then tap Re-check build.`);
-          return { ok: true, attempts: 1, githubPublish: republish, rootCause: classified?.title || 'Missing Node package in the image.', explanation: 'The container crashed because a required package was not listed in package.json.', files: ['package.json', ...(depFix.dockerfile ? ['Dockerfile'] : [])] };
+          emit('repair', 'done', formatDareReport(dare));
+          return { ok: true, attempts: 1, githubPublish: republish, rootCause: dare.reason, explanation: dare.reason, files: dare.files, dare };
         }
+      }
+      if (dare.userAction || dare.stopped) {
+        return { ok: false, reason: dare.reason, dare, userAction: dare.userAction };
       }
     } catch (err) {
       emit('repair', 'failed', String(err.message || err).slice(0, 240));
@@ -1412,6 +1418,25 @@ export function registerPipeline(app) {
       return runtime;
     }
     emit('repair', 'running', crash ? `Crash found: ${crash.title}` : 'Preview failed. Applying one automatic fix…');
+    try {
+      const history = await projects.readMetadata(project, 'dare-history.json', []);
+      const dare = await runDare({
+        sourceDir: projects.sourceDir(project.slug),
+        logs: `${runtime.error || ''}\n${runtime.logs || ''}`,
+        extra: crash || {},
+        history: Array.isArray(history) ? history : [],
+      });
+      await projects.saveMetadata(project, 'dare-history.json', (dare.history || []).slice(-20));
+      if (dare.ok) {
+        emit('repair', 'done', formatDareReport(dare));
+        emit('run', 'running', 'Retrying the preview after deterministic repair…');
+        runtime = await runProject(project, emit);
+        if (runtime.status === 'passed') return { ...runtime, dare };
+      } else if (dare.userAction) {
+        runtime.brief = formatDareReport(dare);
+        return runtime;
+      }
+    } catch {}
     const feedback = [
       userMessage,
       crash ? `${crash.title} ${crash.hint}` : 'Health check failed because the process died before listen or the UI files are missing.',
