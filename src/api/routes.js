@@ -126,20 +126,22 @@ export function registerRoutes(r, app) {
     if (!provider) return res.status(400).json({ error: 'Choose a provider.' });
     if (!apiKey) return res.status(400).json({ error: 'Paste an API key.' });
     try {
-      const models = await ai.hub.testConnection({ provider, apiKey, baseUrl, model: body.model });
+      const probed = await ai.hub.testConnection({ provider, apiKey, baseUrl, model: body.model });
+      const models = Array.isArray(probed?.models) ? probed.models : [];
       const id = `${provider}-${Date.now().toString(36)}`;
       ai.hub.upsertConnection({
         id,
         provider,
         apiKey,
         baseUrl,
-        status: 'VERIFIED',
+        status: models.length ? 'VERIFIED' : 'READY',
         models,
         lastVerified: new Date().toISOString(),
         lastError: null,
       });
       ai.refresh();
-      res.json({ ok: true, models, verifiedModel: models.find((m) => m.verified)?.id || null, hub: ai.hub.publicState() });
+      const verifiedModel = models.find((m) => m && m.verified)?.id || models[0]?.id || probed?.verifiedModel || null;
+      res.json({ ok: true, models, verifiedModel, hub: ai.hub.publicState() });
     } catch (err) {
       const cls = err.classify || { user: err.message };
       res.status(400).json({ error: cls.user || err.message, code: cls.code || 'UNKNOWN_PROVIDER_ERROR' });

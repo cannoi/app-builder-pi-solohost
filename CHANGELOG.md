@@ -1,4 +1,9 @@
-# v1.4.32 — AI Provider Hub Simplified
+## 1.4.33
+
+- Fix Provider Hub crash models.find.
+- Add token is enough; first key wins. Settings: token list + GitHub + Save.
+
+# v1.4.33 — AI Provider Hub Simplified
 
 - Fixed malformed Provider Hub model state that caused `models.find is not a function`.
 - Added canonical `loadHub()` UI loading path and removed stale mode controls.

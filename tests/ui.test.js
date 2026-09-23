@@ -9,8 +9,8 @@ test('settings modal can be hidden and all setup buttons exist', () => {
   assert.match(css, /\.modal\[hidden\]\{display:none!important\}/);
   assert.match(html, /id="settings"[^>]*hidden/);
   assert.match(html, /id="saveSettings"/);
-  assert.match(html, /app\.js\?v=1\.4\.32/);
-  assert.match(html, /styles\.css\?v=1\.4\.32/);
+  assert.match(html, /app\.js\?v=1\.4\.33/);
+  assert.match(html, /styles\.css\?v=1\.4\.33/);
   assert.match(html, /No docker\.sock/);
   assert.match(html, /GitHub token/);
   assert.match(html, /App Builder/);
@@ -133,8 +133,8 @@ test('AI Provider UI uses Add/Save flow and selected model pair without legacy m
   const js = fs.readFileSync(new URL('../public/app.js', import.meta.url), 'utf8');
   assert.match(html, /id="hubAdd"/);
   assert.match(html, /id="saveSettings"/);
-  assert.match(html, /id="hubModel1"/);
-  assert.match(html, /id="hubModel2"/);
+  assert.match(html, /id="hubList"/);
+  assert.match(html, /id="hubKey"/);
   assert.doesNotMatch(html, /id="setProvider"/);
   assert.doesNotMatch(html, />AUTO<\/option>/);
   assert.match(js, /function loadHub/);

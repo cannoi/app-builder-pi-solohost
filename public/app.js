@@ -616,7 +616,7 @@ async function addHubProvider() {
     const r = await api('/api/ai/hub/connect', { method: 'POST', body: JSON.stringify({ provider, apiKey, baseUrl }) });
     $('hubKey').value = ''; $('hubBase').value = '';
     renderHubList(r.hub); renderModelSelectors(r.hub);
-    $('settingsState').textContent = `${r.hub.connections.find(c => c.id === r.hub.connections[r.hub.connections.length - 1]?.id)?.name || provider} connected. Choose models, then Save.`;
+    $('settingsState').textContent = `${provider} added. First key is used first. Tap Save if you also set GitHub.`;
     await loadStatus();
   } catch (e) { $('settingsState').textContent = e.message; }
 }
@@ -642,14 +642,9 @@ async function loadSettings() {
 }
 async function saveSettings() {
   try {
-    const model1 = $('hubModel1')?.value || '';
-    const model2 = $('hubModel2')?.value || '';
-    const preferredModels = [model1, model2].filter(Boolean).slice(0, 2);
-    const preferredProvider = model1 ? model1.split(':')[0] : '';
-    await api('/api/ai/hub/routing', { method: 'POST', body: JSON.stringify({ preferredProvider, preferredModels }) });
     await api('/api/settings', { method: 'POST', body: JSON.stringify({ GITHUB_TOKEN: $('setGhToken').value, GITHUB_OWNER: $('setGhOwner').value, setupComplete: true }) });
     $('setGhToken').value = '';
-    $('settingsState').textContent = preferredModels.length === 2 ? 'Saved. Builder + reviewer models are selected.' : 'Saved.';
+    $('settingsState').textContent = 'Saved.';
     await loadStatus(); await loadHub();
   } catch (e) { $('settingsState').textContent = e.message; }
 }

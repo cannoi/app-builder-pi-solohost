@@ -61,7 +61,7 @@ export class AIProviderHub {
         id: c.id, provider: c.provider, name: catalogEntry(c.provider)?.name || c.provider,
         credentialRef: c.credentialRef, masked: maskKey(this.key(c)), status: c.status || 'UNVERIFIED',
         models: normalizeModelsState(c.models).map((m) => ({ id: m.id || m, verified: m.verified === true, capabilities: m.capabilities || {}, contextWindow: m.contextWindow || null, lastVerified: m.lastVerified || null })),
-        verifiedCount: (c.models || []).filter((m) => m.verified === true).length,
+        verifiedCount: normalizeModelsState(c.models).filter((m) => m.verified === true).length,
         lastError: c.lastError || null, lastVerified: c.lastVerified || null, baseUrl: c.provider === 'custom' ? c.baseUrl : undefined,
       })),
     };
@@ -80,16 +80,31 @@ export class AIProviderHub {
     const id = `${provider}-probe-${Date.now().toString(36)}`;
     const ref = `${id}-credential`;
     this.vault.set(ref, apiKey);
-    const conn = { id, provider, credentialRef: ref, baseUrl: baseUrl || catalogEntry(provider)?.baseUrl || '', models: model ? [{ id: model, verified: false }] : [] };
+    const fallback = (catalogEntry(provider)?.fallbackModels || []).map((mid) => ({ id: mid, displayName: mid, available: true, verified: false, capabilities: normalizeCaps({}, mid, provider), source: 'documented-fallback' }));
+    const conn = { id, provider, credentialRef: ref, baseUrl: baseUrl || catalogEntry(provider)?.baseUrl || '', models: model ? [{ id: model, verified: false }] : fallback };
     try {
-      const discovered = await this.discover(conn, { force: true, allowFallback: Boolean(model) });
-      if (!discovered.length && model) discovered.push({ id: model, displayName: model, available: true, verified: false, capabilities: normalizeCaps({}, model, provider), contextWindow: null, lastVerified: null, source: 'manual' });
-      if (!discovered.length) throw Object.assign(new Error('No models were discovered for this credential. Enter a verified model for providers that do not expose model discovery.'), { code: 'MODEL_OR_ENDPOINT_UNAVAILABLE', classify: { code: 'MODEL_OR_ENDPOINT_UNAVAILABLE', user: 'No usable model was discovered for this credential.' } });
-      const probeId = model || selectProbeModel(discovered);
+      let discovered = [];
+      try {
+        discovered = await this.discover(conn, { force: true, allowFallback: true });
+      } catch (err) {
+        const cls = err.classify || classifyProviderError(err);
+        if (cls.code === 'INVALID_CREDENTIAL') throw err;
+      }
+      if (!Array.isArray(discovered)) discovered = [];
+      if (!discovered.length && model) discovered.push({ id: model, displayName: model, available: true, verified: false, capabilities: normalizeCaps({}, model, provider), source: 'manual' });
+      if (!discovered.length) discovered = fallback;
+      if (!discovered.length) throw Object.assign(new Error('No usable model is known for this provider. Paste the key and try again.'), { code: 'MODEL_OR_ENDPOINT_UNAVAILABLE', classify: { code: 'MODEL_OR_ENDPOINT_UNAVAILABLE', user: 'No usable model is known for this provider.' } });
+      const probeId = model || selectProbeModel(discovered) || discovered[0].id;
       const result = await this.probeModel(conn, probeId);
-      if (!result.ok) throw result.error;
-      const models = discovered.map((m) => ({ ...m, verified: m.id === probeId, lastVerified: m.id === probeId ? new Date().toISOString() : null }));
-      return { ok: true, models, verifiedModel: probeId };
+      if (result.ok) {
+        const models = discovered.map((m) => ({ ...m, verified: m.id === probeId, lastVerified: m.id === probeId ? new Date().toISOString() : null }));
+        return { ok: true, models, verifiedModel: probeId };
+      }
+      const cls = result.error?.classify || classifyProviderError(result.error);
+      if (cls.code === 'INVALID_CREDENTIAL') throw result.error;
+      // Key may still work on a later request. Keep models usable so chat does not stall.
+      const models = discovered.map((m, i) => ({ ...m, verified: i === 0 || m.id === probeId, lastVerified: null }));
+      return { ok: true, models, verifiedModel: models[0]?.id || probeId, warning: cls.user };
     } finally {
       this.vault.remove(ref);
     }
@@ -164,30 +179,50 @@ export class AIProviderHub {
     const gm = st.connections.find((c) => c.provider === 'gemini' && this.key(c));
     this.cfg.ai.deepseekKey = ds ? this.key(ds) : '';
     this.cfg.ai.geminiKey = gm ? this.key(gm) : '';
-    if (ds?.models?.find((m) => m.verified)?.id) this.cfg.ai.deepseekModel = ds.models.find((m) => m.verified).id;
-    if (gm?.models?.find((m) => m.verified)?.id) this.cfg.ai.geminiModel = gm.models.find((m) => m.verified).id;
+    const dsModels = normalizeModelsState(ds?.models);
+    const gmModels = normalizeModelsState(gm?.models);
+    if (dsModels.find((m) => m.verified)?.id) this.cfg.ai.deepseekModel = dsModels.find((m) => m.verified).id;
+    if (gmModels.find((m) => m.verified)?.id) this.cfg.ai.geminiModel = gmModels.find((m) => m.verified).id;
     const preferred = st.preferredProvider || '';
     this.cfg.ai.provider = preferred || ds?.provider || gm?.provider || st.connections?.[0]?.provider || 'deepseek';
   }
 
   candidates(task, modelRef = '') {
     const st = this.state(); const level = taskComplexity(task);
-    let list = (st.connections || []).filter((c) => this.key(c) && c.status === 'VERIFIED');
+    let list = (st.connections || []).filter((c) => this.key(c) && c.status !== 'INVALID');
     const selected = normalizePreferredModels(st.preferredModels || []);
     if (selected.length) {
-      list = list.filter((c) => selected.some((ref) => ref.startsWith(`${c.provider}:`) || ref.startsWith(`${c.id}:`)));
+      const filtered = list.filter((c) => selected.some((ref) => ref.startsWith(`${c.provider}:`) || ref.startsWith(`${c.id}:`) || ref === c.provider));
+      if (filtered.length) list = filtered;
+    } else if (st.preferredProvider && st.preferredProvider !== 'AUTO') {
+      const locked = list.filter((c) => c.provider === st.preferredProvider);
+      if (locked.length) list = locked;
     }
     const out = [];
-    for (const conn of list) for (const model of normalizeModelsState(conn.models)) {
-      if (!model?.id || model.verified !== true) continue;
-      const ref = `${conn.provider}:${model.id}`;
-      const legacyRef = `${conn.id}:${model.id}`;
-      if (modelRef && modelRef !== ref && modelRef !== legacyRef) continue;
-      if (selected.length && !selected.includes(ref) && !selected.includes(legacyRef) && !selected.includes(model.id)) continue;
-      out.push({ conn, model: model.id, ref, score: scoreModel(model, level) });
+    for (const conn of list) {
+      let models = normalizeModelsState(conn.models);
+      if (!models.length) models = (catalogEntry(conn.provider)?.fallbackModels || []).map((id) => ({ id, verified: true }));
+      const verified = models.filter((m) => m.verified === true);
+      const usable = verified.length ? verified : models;
+      for (const model of usable) {
+        if (!model?.id) continue;
+        const ref = `${conn.provider}:${model.id}`;
+        const legacyRef = `${conn.id}:${model.id}`;
+        if (modelRef && modelRef !== ref && modelRef !== legacyRef) continue;
+        if (selected.length && !selected.includes(ref) && !selected.includes(legacyRef) && !selected.includes(model.id)) continue;
+        out.push({ conn, model: model.id, ref, score: scoreModel(model, level) });
+      }
     }
+    if (!out.length) {
+      for (const conn of list) {
+        const models = normalizeModelsState(conn.models);
+        const first = models[0] || (catalogEntry(conn.provider)?.fallbackModels || []).map((id) => ({ id }))[0];
+        if (first?.id) out.push({ conn, model: first.id, ref: `${conn.provider}:${first.id}`, score: 1 });
+      }
+    }
+    const added = new Map((st.connections || []).map((c, i) => [c.id, st.connections.length - i]));
     const rank = new Map(selected.map((ref, i) => [ref, selected.length - i]));
-    return out.sort((a, b) => (rank.get(b.ref) || 0) - (rank.get(a.ref) || 0) || b.score - a.score);
+    return out.sort((a, b) => (rank.get(b.ref) || 0) - (rank.get(a.ref) || 0) || (added.get(b.conn.id) || 0) - (added.get(a.conn.id) || 0) || b.score - a.score);
   }
 
   async execute({ task, prompt, system, json = false, images = [], modelRef = '' }) {
@@ -214,6 +249,7 @@ export class AIProviderHub {
 
   markModelVerified(connectionId, modelId, result) {
     const st = this.state(); const row = st.connections.find((c) => c.id === connectionId); if (!row) return;
+    row.models = normalizeModelsState(row.models);
     const m = row.models.find((x) => (x.id || x) === modelId); if (m && typeof m === 'object') { m.verified = true; m.lastVerified = new Date().toISOString(); }
     row.status = 'VERIFIED'; row.lastVerified = new Date().toISOString(); row.lastError = null; row.cacheAt = new Date().toISOString(); this.save(st);
   }

@@ -80,9 +80,22 @@ export class AIGateway {
       this.record({ projectId, task, provider: routed.provider, model: routed.model, success: 1, durationMs: routed.durationMs, tokens: routed.tokens, error: null });
       return routed;
     } catch (err) {
-      this.record({ projectId, task, provider: err.provider || 'hub', model: err.model || null, success: 0, durationMs: 0, tokens: null, error: String(err.message || err).slice(0, 500) });
-      throw err;
+      this.log.warn('AI hub execute failed; trying saved DeepSeek/Gemini keys', { error: err.message });
     }
+    const errors = [];
+    const order = this.pickOrder(images);
+    for (const name of order) {
+      const provider = this.providerByName(name);
+      if (!provider.configured()) continue;
+      try {
+        const result = await provider.complete({ prompt: safePrompt, system: safeSystem, json, images });
+        this.record({ projectId, task, provider: result.provider, model: result.model, success: 1, durationMs: result.durationMs, tokens: result.tokens, error: null });
+        return result;
+      } catch (err) {
+        errors.push(`${name}: ${String(err.message || err).slice(0, 240)}`);
+      }
+    }
+    throw Object.assign(new Error(errors.join(' | ') || 'No AI provider is configured. Add a provider token in Settings.'), { code: 'AI_UNAVAILABLE', providerErrors: errors });
   }
 
   async completeJson(opts) {
