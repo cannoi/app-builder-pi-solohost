@@ -23,6 +23,20 @@ import { shouldBlockRepeatedAction, nextRepeatState } from './loop-guard.js';
 import { mergeVerificationState } from './verification.js';
 import { inspectUpgrade, diagnoseUpgradeRequest, applyUpgrade } from '../upgrade/engine.js';
 
+// Safety net only — does not change what inspectUpgrade does on the happy path.
+// Without this, a slow/unusual imported repo (e.g. a hung install/test step)
+// could leave the Upgrade job stuck in "running" forever: the busy bar never
+// clears and no message is ever shown, which looks exactly like a broken
+// button. This guarantees the job always settles within a bounded time.
+const UPGRADE_INSPECT_TIMEOUT_MS = 5 * 60 * 1000;
+function withTimeout(promise, ms, message) {
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(message)), ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+
 export function registerPipeline(app) {
   const { jobs, ai, projects, snapshots, runner, sandbox, github, releases, cfg, log } = app;
 
@@ -44,7 +58,11 @@ export function registerPipeline(app) {
     await projects.saveMetadata(project, 'upgrade-source.json', { type: 'github-public', url, owner, repo, importedAt: new Date().toISOString() });
     projects.setStatus(project, 'UPGRADE_INSPECTING');
     emit('import', 'done', 'GitHub source imported. Starting the independent Upgrade Workshop.');
-    const result = await inspectUpgrade({ project: projects.get(project.id), projects, snapshots, log });
+    const result = await withTimeout(
+      inspectUpgrade({ project: projects.get(project.id), projects, snapshots, log }),
+      UPGRADE_INSPECT_TIMEOUT_MS,
+      'Upgrade inspection took too long and was stopped. This can happen with large or unusual repositories — try again, or use Import ZIP with just the app source instead.',
+    );
     projects.setStatus(projects.get(project.id), result.ready ? 'UPGRADE_READY' : 'FAILED');
     return { projectId: project.id, source: { type: 'github-public', owner, repo, url }, ...result };
   });
@@ -53,7 +71,11 @@ export function registerPipeline(app) {
     const project = mustProject(job.payload.projectId);
     projects.setStatus(project, 'UPGRADE_INSPECTING');
     emit('inspect', 'running', 'Inspecting the existing app before any upgrade request…');
-    const result = await inspectUpgrade({ project: projects.get(project.id), projects, snapshots, log });
+    const result = await withTimeout(
+      inspectUpgrade({ project: projects.get(project.id), projects, snapshots, log }),
+      UPGRADE_INSPECT_TIMEOUT_MS,
+      'Upgrade inspection took too long and was stopped. This can happen with large or unusual repositories — try again, or use Import ZIP with just the app source instead.',
+    );
     projects.setStatus(projects.get(project.id), result.ready ? 'UPGRADE_READY' : 'FAILED');
     emit('baseline', 'done', `Baseline ready. ${result.safeRepairs.length} safe repair(s) applied; ${result.issues.length} finding(s) recorded.`);
     return result;
