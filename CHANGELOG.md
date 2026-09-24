@@ -1,3 +1,12 @@
+## 1.4.39
+- Hardened DARE to run before AI for local test/preview failures and GitHub Actions repair.
+- Added deterministic source pre/post manifest checks so unexpected file changes are rejected.
+- Expanded dependency detection to JS/TS/JSX/TSX, dynamic imports, exports, scoped packages, and Node built-ins.
+- Made lockfile repair real (package-manager lockfile refresh) instead of reporting a no-op patch.
+- Limited SQLite auto-repair to a single proven data directory; no unrelated uploads directory or permission changes.
+- GitHub smoke test now requires the exact release image tag and no longer substitutes an arbitrary local image.
+- DARE repairs now checkpoint and roll back when verification/re-publish does not pass.
+
 ## 1.4.38
 - DARE (Deterministic Auto Repair Engine) runs before AI on preview crash and GitHub Actions failure.
 - Safe rules: missing npm package, unique start script, localhost bind, sqlite data dirs, workflow packages:write.

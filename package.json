@@ -1,9 +1,9 @@
 {
   "name": "pi-app-factory",
-  "version": "1.4.38",
+  "version": "1.4.39",
   "private": true,
   "type": "module",
-  "description": "App Builder — Pi SoloHost. Idea in, working SoloHost app out.",
+  "description": "App Builder \u2014 Pi SoloHost. Idea in, working SoloHost app out.",
   "scripts": {
     "start": "node src/server.js",
     "test": "node --test tests/*.test.js"

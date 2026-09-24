@@ -593,26 +593,32 @@ export function registerPipeline(app) {
   async function repairGithubActionsFailure({ project, source, owner, repo, version, githubUrl, workflowRun, diagnostics, emit, notes, projectPayload }) {
     if (!diagnostics?.logTail) return { ok: false, reason: 'No readable GitHub Actions log.' };
     const classified = classifyLogs(diagnostics.logTail);
+    let dareCheckpoint = null;
     try {
       const history = await projects.readMetadata(project, 'dare-history.json', []);
+      dareCheckpoint = await snapshots.create(project, 'before-dare-github-actions').catch(() => null);
       const dare = await runDare({ sourceDir: source, logs: diagnostics.logTail, extra: classified, history: Array.isArray(history) ? history : [] });
       await projects.saveMetadata(project, 'dare-history.json', (dare.history || []).slice(-20));
       emit('repair', dare.ok ? 'running' : 'done', formatDareReport(dare));
       if (dare.ok) {
-        await writeGithubWorkflow(source, { ...project, version });
         const republish = await publishToGitHub({
           github, project, sourceDir: source, version, emit,
           runtimeOk: true, repoName: repo, existingAction: 'overwrite', refreshWorkflow: false,
         });
         if (republish.ok && republish.verified) {
-          emit('repair', 'done', formatDareReport(dare));
+          emit('repair', 'done', `${formatDareReport(dare)}\n✓ Re-publish and GitHub verification passed.`);
           return { ok: true, attempts: 1, githubPublish: republish, rootCause: dare.reason, explanation: dare.reason, files: dare.files, dare };
+        }
+        if (dareCheckpoint?.id) {
+          await snapshots.restore(project, dareCheckpoint.id).catch(() => {});
+          emit('rollback', 'done', 'The deterministic repair did not produce a verified GitHub result, so the previous checkpoint was restored.');
         }
       }
       if (dare.userAction || dare.stopped) {
         return { ok: false, reason: dare.reason, dare, userAction: dare.userAction };
       }
     } catch (err) {
+      if (dareCheckpoint?.id) await snapshots.restore(project, dareCheckpoint.id).catch(() => {});
       emit('repair', 'failed', String(err.message || err).slice(0, 240));
     }
     const portHit = String(diagnostics.logTail).match(/running on port\s+(\d+)/i);
@@ -1115,21 +1121,65 @@ export function registerPipeline(app) {
     let staticResult = await runStaticTests(source);
     let nodeResult = await runNodeTests(source, 45000);
     let attempts = 0;
-    while (
-      (staticResult.status === 'failed' || nodeResult.status === 'failed')
-      && attempts < cfg.limits.maxAutoFixes
-    ) {
-      attempts += 1;
-      emit('repair', 'running', `Trying a safe fix (${attempts}/${cfg.limits.maxAutoFixes})…`);
-      projects.setStatus(project, 'REPAIRING');
+    let dareAttempts = 0;
+    const dareHistory = await projects.readMetadata(project, 'dare-history.json', []);
+    let savedDareHistory = Array.isArray(dareHistory) ? dareHistory : [];
+
+    // Deterministic-first: exhaust a provable repair before spending an AI repair attempt.
+    // The checkpoint is created before DARE touches source so a regression can be restored.
+    while (staticResult.status === 'failed' || nodeResult.status === 'failed') {
       const errText = [failSummary(staticResult), nodeResult.error].filter(Boolean).join('\n');
+      if (dareAttempts < 2) {
+        dareAttempts += 1;
+        emit('repair', 'running', `Checking deterministic fixes first (${dareAttempts}/2)…`);
+        const beforeFailureScore = failureScore(staticResult, nodeResult);
+        const checkpoint = await snapshots.create(project, `before-dare-${dareAttempts}`).catch(() => null);
+        try {
+          const dare = await runDare({
+            sourceDir: source,
+            logs: errText,
+            extra: { message: nodeResult.error || '' },
+            history: savedDareHistory,
+          });
+          savedDareHistory = (dare.history || []).slice(-20);
+          await projects.saveMetadata(project, 'dare-history.json', savedDareHistory);
+          if (dare.ok) {
+            const afterStatic = await runStaticTests(source);
+            const afterNode = await runNodeTests(source, 45000);
+            const afterFailureScore = failureScore(afterStatic, afterNode);
+            if (afterFailureScore <= beforeFailureScore) {
+              staticResult = afterStatic;
+              nodeResult = afterNode;
+              emit('repair', 'done', `${formatDareReport(dare)}\n✓ Post-repair checks completed.`);
+              if (staticResult.status !== 'failed' && nodeResult.status !== 'failed') break;
+              continue;
+            }
+            if (checkpoint?.id) await snapshots.restore(project, checkpoint.id).catch(() => {});
+            emit('rollback', 'done', 'The deterministic repair did not improve verification, so the previous checkpoint was restored.');
+            staticResult = await runStaticTests(source);
+            nodeResult = await runNodeTests(source, 45000);
+          } else if (dare.userAction) {
+            emit('repair', 'done', formatDareReport(dare));
+            break;
+          }
+        } catch (err) {
+          if (checkpoint?.id) await snapshots.restore(project, checkpoint.id).catch(() => {});
+          emit('repair', 'failed', `Deterministic repair check stopped safely: ${String(err.message || err).slice(0, 240)}`);
+        }
+      }
+
+      if ((staticResult.status !== 'failed' && nodeResult.status !== 'failed') || attempts >= cfg.limits.maxAutoFixes) break;
+
+      attempts += 1;
+      emit('repair', 'running', `Trying a safe AI fix (${attempts}/${cfg.limits.maxAutoFixes})…`);
+      projects.setStatus(project, 'REPAIRING');
       const relevant = await collectRelevant(source);
       let checkpoint = null;
       try {
         const r = await ai.completeJson({
           task: 'DEBUGGING',
           system: SYSTEM,
-          prompt: patchPrompt(project, errText, relevant),
+          prompt: `${patchPrompt(project, errText, relevant)}\nDETERMINISTIC REPAIR NOTE: DARE has already been attempted for this evidence. Do not repeat the same deterministic patch; change only the minimum files required for a new root cause.`,
           projectId: project.id,
         });
         if (r.json?.files?.length) checkpoint = await applySafeAiPatch({ sourceDir: source, files: r.json.files, project, snapshots, reason: `before-fix-${attempts}` });
@@ -1143,10 +1193,11 @@ export function registerPipeline(app) {
       const afterFailureScore = failureScore(staticResult, nodeResult);
       if (checkpoint?.snapshot?.id && afterFailureScore > beforeFailureScore) {
         await snapshots.restore(project, checkpoint.snapshot.id).catch(() => {});
-        emit('rollback', 'done', 'The repair made the checks worse, so I restored the previous working state.');
+        emit('rollback', 'done', 'The AI repair made the checks worse, so I restored the previous working state.');
         staticResult = await runStaticTests(source);
         nodeResult = await runNodeTests(source, 45000);
       }
+      if (staticResult.status !== 'failed' && nodeResult.status !== 'failed') break;
     }
     emit('security', 'running', 'Looking for secrets and unsafe settings…');
     let scan = await scanProject(source);

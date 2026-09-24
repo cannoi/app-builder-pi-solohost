@@ -1,59 +1,105 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { builtinModules, isBuiltin } from 'node:module';
 import { listFiles } from '../utils/fsx.js';
 
-const BUILTIN = new Set([
-  'assert', 'buffer', 'child_process', 'cluster', 'crypto', 'dgram', 'dns', 'events',
-  'fs', 'http', 'https', 'inspector', 'module', 'net', 'os', 'path', 'perf_hooks',
-  'process', 'punycode', 'querystring', 'readline', 'stream', 'string_decoder',
-  'timers', 'tls', 'tty', 'url', 'util', 'v8', 'vm', 'worker_threads', 'zlib',
-]);
-
+const BUILTIN = new Set(builtinModules.map((name) => name.replace(/^node:/, '').split('/')[0]));
 const NATIVE = new Set(['sqlite3', 'better-sqlite3', 'bcrypt', 'sharp', 'canvas']);
+
+function packageRoot(specifier = '') {
+  const value = String(specifier).trim();
+  if (!value || value.startsWith('.') || value.startsWith('#') || value.startsWith('node:')) return '';
+  if (value.startsWith('@')) {
+    const parts = value.split('/');
+    return parts.length >= 2 ? `${parts[0]}/${parts[1]}` : value;
+  }
+  return value.split('/')[0];
+}
+
+function declaredPackages(pkg = {}) {
+  return new Set([
+    ...Object.keys(pkg.dependencies || {}),
+    ...Object.keys(pkg.devDependencies || {}),
+    ...Object.keys(pkg.optionalDependencies || {}),
+    ...Object.keys(pkg.peerDependencies || {}),
+  ]);
+}
+
+function importedPackages(text = '') {
+  const used = new Set();
+  const patterns = [
+    /\brequire\s*\(\s*['"]([^'"]+)['"]\s*\)/g,
+    /\bimport\s+(?:[^'"]+?\s+from\s+)?['"]([^'"]+)['"]/g,
+    /\bimport\s*\(\s*['"]([^'"]+)['"]\s*\)/g,
+    /\bexport\s+(?:[^'"]+?\s+from\s+)?['"]([^'"]+)['"]/g,
+  ];
+  for (const re of patterns) {
+    for (const match of text.matchAll(re)) {
+      const root = packageRoot(match[1]);
+      if (root && !isBuiltin(match[1]) && !BUILTIN.has(root)) used.add(root);
+    }
+  }
+  return used;
+}
 
 export async function findMissingNodeModules(sourceDir) {
   const pkg = JSON.parse(await fs.readFile(path.join(sourceDir, 'package.json'), 'utf8').catch(() => '{}'));
-  const declared = new Set([
-    ...Object.keys(pkg.dependencies || {}),
-    ...Object.keys(pkg.devDependencies || {}),
-  ]);
+  const declared = declaredPackages(pkg);
   const files = await listFiles(sourceDir);
   const used = new Set();
+
   for (const rel of files) {
-    if (!/\.(js|mjs|cjs)$/.test(rel)) continue;
+    if (!/\.(js|mjs|cjs|jsx|ts|tsx)$/.test(rel)) continue;
     if (rel.startsWith('node_modules/') || rel.startsWith('solohost/')) continue;
     const text = await fs.readFile(path.join(sourceDir, rel), 'utf8').catch(() => '');
-    for (const m of text.matchAll(/require\(\s*['"]([^'"./][^'"]*)['"]\s*\)/g)) used.add(m[1].split('/')[0]);
-    for (const m of text.matchAll(/from\s+['"]([^'"./][^'"]*)['"]/g)) used.add(m[1].split('/')[0]);
+    for (const name of importedPackages(text)) used.add(name);
   }
-  const missing = [...used].filter((name) => name && !name.startsWith('node:') && !BUILTIN.has(name) && !declared.has(name));
+
+  const missing = [...used].filter((name) => !declared.has(name));
   return { missing, used: [...used], declared: [...declared] };
 }
 
-export async function ensureMissingDependencies(sourceDir) {
+function detectPackageManager(sourceDir) {
+  // Deterministic priority: the lockfile is the project's package-manager contract.
+  return fs.access(path.join(sourceDir, 'pnpm-lock.yaml')).then(() => 'pnpm').catch(() =>
+    fs.access(path.join(sourceDir, 'yarn.lock')).then(() => 'yarn').catch(() =>
+      fs.access(path.join(sourceDir, 'bun.lock')).then(() => 'bun').catch(() =>
+        fs.access(path.join(sourceDir, 'bun.lockb')).then(() => 'bun').catch(() => 'npm')
+      )
+    )
+  );
+}
+
+export function nativePackages(names = []) {
+  return names.filter((name) => NATIVE.has(name));
+}
+
+export async function ensureMissingDependencies(sourceDir, onlyPackage = '') {
   const { missing } = await findMissingNodeModules(sourceDir);
-  if (!missing.length) return { changed: false, added: [], dockerfile: false };
+  const target = String(onlyPackage || '').trim();
+  const selected = target && missing.includes(target) ? [target] : missing;
+  if (!selected.length) return { changed: false, added: [], dockerfile: false, packageManager: await detectPackageManager(sourceDir) };
+
   const pkgPath = path.join(sourceDir, 'package.json');
   const pkg = JSON.parse(await fs.readFile(pkgPath, 'utf8'));
-  pkg.dependencies = pkg.dependencies || {};
-  for (const name of missing) {
-    if (!pkg.dependencies[name] && !pkg.devDependencies?.[name]) pkg.dependencies[name] = '*';
-  }
-  await fs.writeFile(pkgPath, `${JSON.stringify(pkg, null, 2)}\n`);
-  const native = missing.some((name) => NATIVE.has(name));
-  let dockerfile = false;
-  if (native) {
-    const dfPath = path.join(sourceDir, 'Dockerfile');
-    let df = await fs.readFile(dfPath, 'utf8').catch(() => '');
-    if (df && !/python3 make g\+\+/.test(df)) {
-      if (/^FROM .+$/m.test(df)) {
-        df = df.replace(/^(FROM .+)$/m, `$1\nRUN apk add --no-cache python3 make g++ || apt-get update && apt-get install -y python3 make g++ || true`);
-      } else {
-        df = `FROM node:20-alpine\nRUN apk add --no-cache python3 make g++\n${df}`;
-      }
-      await fs.writeFile(dfPath, df);
-      dockerfile = true;
+  pkg.dependencies = { ...(pkg.dependencies || {}) };
+
+  for (const name of selected) {
+    if (!pkg.dependencies[name] && !pkg.devDependencies?.[name] && !pkg.optionalDependencies?.[name] && !pkg.peerDependencies?.[name]) {
+      // Keep the source patch deterministic. The existing package manager resolves
+      // the concrete version during the next install/build and refreshes its lockfile.
+      pkg.dependencies[name] = '*';
     }
   }
-  return { changed: true, added: missing, dockerfile, native };
+
+  await fs.writeFile(pkgPath, `${JSON.stringify(pkg, null, 2)}\n`);
+  return {
+    changed: true,
+    added: selected,
+    dockerfile: false,
+    native: nativePackages(selected).length > 0,
+    packageManager: await detectPackageManager(sourceDir),
+  };
 }
+
+export { packageRoot };
