@@ -240,9 +240,10 @@ export class GitHubManager {
     const jobs = Array.isArray(jobsResult.jobs) ? jobsResult.jobs : [];
     const failedJobs = jobs.filter((job) => job.conclusion && job.conclusion !== 'success');
     const details = [];
-    for (const job of failedJobs.slice(0, 5)) {
+    for (const job of (failedJobs.length ? failedJobs : jobs).slice(0, 5)) {
       let logs = '';
-      try { logs = await this.actionJobLogs(owner, repoName, job.id); } catch (err) { logs = `Unable to read job log: ${String(err.message || err).slice(0, 220)}`; }
+      try { logs = readableActionLog(await this.actionJobLogs(owner, repoName, job.id)); } catch (err) { logs = `Unable to read job log: ${String(err?.message || err).slice(0, 220)}`; }
+      const failedSteps = (job.steps || []).filter((step) => step.conclusion && step.conclusion !== 'success').map((step) => ({ name: step.name, status: step.status, conclusion: step.conclusion }));
       details.push({
         id: job.id,
         name: job.name || null,
@@ -251,15 +252,15 @@ export class GitHubManager {
         started_at: job.started_at || null,
         completed_at: job.completed_at || null,
         html_url: job.html_url || null,
-        failed_steps: (job.steps || []).filter((step) => step.conclusion && step.conclusion !== 'success').map((step) => ({ name: step.name, status: step.status, conclusion: step.conclusion })),
-        log: String(logs).slice(-9000),
+        failed_steps: failedSteps,
+        log: extractActionFailure(logs, failedSteps),
       });
     }
-    const combined = details.map((d) => `JOB: ${d.name || d.id}\nFAILED STEPS: ${JSON.stringify(d.failed_steps)}\nLOG:\n${d.log}`).join('\n\n');
+    const combined = details.map((d) => `JOB: ${d.name || d.id} (${d.conclusion || d.status})\nFAILED STEPS: ${(d.failed_steps || []).map((s) => s.name).join(', ') || 'none listed'}\nLOG:\n${d.log}`).join('\n\n');
     return {
-      run: { id: run.id, status: run.status, conclusion: run.conclusion, html_url: run.html_url, head_sha: run.head_sha, head_branch: run.head_branch },
+      run: run ? { id: run.id, status: run.status, conclusion: run.conclusion, html_url: run.html_url, head_sha: run.head_sha, head_branch: run.head_branch } : { id: runId },
       jobs: details,
-      summary: `GitHub Actions ${run.conclusion || run.status || 'unknown'}; ${failedJobs.length} failed job(s).`,
+      summary: `GitHub Actions ${run?.conclusion || run?.status || 'unknown'}; ${failedJobs.length} failed job(s).`,
       logTail: combined.slice(-14000),
     };
   }
@@ -333,4 +334,20 @@ function redactActionLog(value) {
     .replace(/sk-[0-9A-Za-z_\-]{20,}/g, 'sk-***')
     .replace(/Bearer\s+[A-Za-z0-9._\-]+/gi, 'Bearer ***')
     .replace(/(GEMINI_API_KEY|DEEPSEEK_API_KEY|GITHUB_TOKEN)=([^\s]+)/gi, '$1=***');
+}
+
+function readableActionLog(raw) {
+  const text = String(raw || '');
+  if (!text || text.startsWith('PK') || text.includes('\u0000')) {
+    return 'Job log was not readable as text (GitHub returned a binary archive). Failed step names above are the evidence.';
+  }
+  return redactActionLog(text);
+}
+
+function extractActionFailure(log, failedSteps = []) {
+  const lines = String(log || '').split(/\r?\n/).map((l) => l.replace(/^\d{4}-\d{2}-\d{2}T[^\s]+\s/, '').trim()).filter(Boolean);
+  const hits = lines.filter((l) => /error|failed|fatal|cannot|unable|exit code|not found|denied|unauthorized|timeout|did not become reachable/i.test(l));
+  const picked = (hits.length ? hits.slice(-20) : lines.slice(-20)).join('\n');
+  const steps = failedSteps.map((s) => s.name).filter(Boolean).join(', ');
+  return [steps ? `Failed step(s): ${steps}` : '', picked].filter(Boolean).join('\n').slice(-4000);
 }

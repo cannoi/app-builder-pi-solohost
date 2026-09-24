@@ -103,6 +103,14 @@ test('DARE loop protection stops the second identical repair', async () => {
   await fs.rm(dir, { recursive: true, force: true });
 });
 
+test('DARE accepts a null extra payload from classifyLogs', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'paf-dare-null-extra-'));
+  await fs.writeFile(path.join(dir, 'package.json'), JSON.stringify({ name: 'x' }));
+  const r = await runDare({ sourceDir: dir, logs: 'GitHub Actions finished with failure', extra: null });
+  assert.equal(typeof r.ok, 'boolean');
+  await fs.rm(dir, { recursive: true, force: true });
+});
+
 test('DARE does not invent a start script when two entry files exist', async () => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'paf-dare-2entry-'));
   await fs.writeFile(path.join(dir, 'package.json'), JSON.stringify({ name: 'x' }));

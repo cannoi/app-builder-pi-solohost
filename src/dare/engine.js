@@ -12,7 +12,8 @@ const MAX_ATTEMPTS_PER_FINGERPRINT = 1;
 
 export async function runDare({ sourceDir, logs = '', extra = {}, history = [] } = {}) {
   const before = await fileManifest(sourceDir);
-  const fp = fingerprintError(`${logs}\n${extra.message || ''}`);
+  const extraText = extra && typeof extra === 'object' ? (extra.message || extra.title || extra.hint || extra.code || '') : '';
+  const fp = fingerprintError(`${logs}\n${extraText}`);
   const layer = classifyLayer(fp);
   const previous = Array.isArray(history) ? history : [];
   const sourceHash = manifestHash(before);
@@ -34,7 +35,7 @@ export async function runDare({ sourceDir, logs = '', extra = {}, history = [] }
   let action = await matchRule(sourceDir, fp, logs);
 
   // A generic/unknown runtime error still gets one deterministic preflight scan.
-  if (!action && fp === 'UNKNOWN' && /module|import|require|missing script|localhost|ghcr|compose/i.test(`${logs}\n${extra.message || ''}`)) {
+  if (!action && fp === 'UNKNOWN' && /module|import|require|missing script|localhost|ghcr|compose/i.test(`${logs}\n${extraText}`)) {
     action = await preflightScan(sourceDir);
   }
 

@@ -503,7 +503,7 @@ export function registerPipeline(app) {
     let autoRepair = null;
 
     const pending = await projects.readMetadata(project, 'release-pending.json', null);
-    const verifyOnly = payload.verifyImage === true && pending?.githubUrl;
+    const verifyOnly = Boolean(pending?.githubUrl) && (payload.verifyImage === true || payload.recheck === true || String(payload.guideLabel || '').toLowerCase().includes('re-check'));
     if (verifyOnly) {
       githubUrl = pending.githubUrl;
       githubPublish = { ok: true, verified: true, owner: pending.owner, repo: pending.repo, url: pending.githubUrl, sha: pending.sha };
@@ -584,7 +584,7 @@ export function registerPipeline(app) {
 
         if (!wait.failed) break;
         const attempts = Number((pending?.autoRepairAttempts || autoRepair?.attempts || 0));
-        if (attempts >= 1 || cycle >= 1) break;
+        if (attempts >= 1 || cycle >= 1 || payload.verifyImage === true) break;
         autoRepair = await repairGithubActionsFailure({ project, source, owner, repo, version: notes.version, githubUrl, workflowRun, diagnostics: workflowDiagnostics, emit, notes, projectPayload: payload });
         if (!autoRepair?.ok) break;
         pending.autoRepairAttempts = 1;
@@ -597,21 +597,28 @@ export function registerPipeline(app) {
     const imageOk = Boolean(imageVerification.ok);
     if (!imageOk) {
       await savePending({ status: workflowDiagnostics ? 'workflow_failed' : 'waiting_image', workflowRun, diagnostics: workflowDiagnostics, autoRepairAttempts: autoRepair?.attempts || pending?.autoRepairAttempts || 0, lastCheckedAt: new Date().toISOString() });
-      const classified = classifyLogs(workflowDiagnostics?.logTail || imageVerification?.error || '');
+      const classified = classifyLogs(workflowDiagnostics?.logTail || imageVerification?.error || '') || {};
+      const logExcerpt = String(workflowDiagnostics?.logTail || imageVerification?.error || '').split(/\n/).slice(-18).join('\n').slice(-1800);
       const diagnosisText = workflowDiagnostics
-        ? `${workflowDiagnostics.summary}\n${classified?.title || ''}\n${classified?.hint || ''}\n${String(workflowDiagnostics.logTail || '').slice(-5000)}`
+        ? [
+            workflowDiagnostics.summary,
+            classified.title,
+            classified.hint,
+            workflowDiagnostics.run?.html_url ? `Run: ${workflowDiagnostics.run.html_url}` : '',
+            logExcerpt,
+          ].filter(Boolean).join('\n')
         : (imageVerification?.error || 'The image is not visible in GHCR yet.');
       const detail = workflowDiagnostics
-        ? `GitHub Actions failed. I read the failed job log and separated the workflow/build error from the app source. ${classified?.hint || 'The Builder is waiting for a safe fix.'}`
+        ? `GitHub Actions failed.\n${classified.title || workflowDiagnostics.summary}\n${classified.hint || ''}\n${logExcerpt || 'No readable log lines were returned.'}`
         : 'GitHub Actions is still building or GHCR has not finished indexing the image.';
       emit('release', 'done', detail);
       return {
         status: workflowDiagnostics ? 'github_actions_failed' : 'waiting_github_actions', release: null, quality, githubUrl, githubPublish,
         installReady: false, checklist: ['✓ Build', '✓ Test', '✓ GitHub', '✗ GHCR', '• SoloHost'], image: registryImage,
         imageVerification, workflowRun, workflowDiagnostics, autoRepair, diagnosis: diagnosisText,
-        guide: { step: 4, title: workflowDiagnostics ? 'Fix the GitHub Actions build' : 'Waiting for the GHCR image', action: 'publish', label: workflowDiagnostics ? '🚀 Re-check build' : '🔄 Check image', detail: workflowDiagnostics ? `${detail} Tap Re-check build after the safe repair completes.` : detail },
-        next: workflowDiagnostics ? 'Review the detected Actions error above. A safe auto-fix was attempted once; tap Re-check build to verify the image.' : 'Wait for GitHub Actions, then tap Check image.',
-        brief: `RESULT: GitHub source is verified.\nWHY: ${detail}\nMISSING: ${registryImage}\nNEXT: ${workflowDiagnostics ? 'Tap Re-check build after the repair.' : 'Tap Check image when the build finishes.'}`,
+        guide: { step: 4, title: workflowDiagnostics ? 'Fix the GitHub Actions build' : 'Waiting for the GHCR image', action: 'publish', label: workflowDiagnostics ? '🚀 Re-check build' : '🔄 Check image', payload: { approved: true, confirm: true, push: true, verifyImage: true }, detail: workflowDiagnostics ? `${String(detail).slice(0, 500)}\nRe-check reads the latest Actions result and does not upload source again.` : detail },
+        next: workflowDiagnostics ? 'Read the Actions error above. Fix that cause, then tap Re-check build.' : 'Wait for GitHub Actions, then tap Check image.',
+        brief: `RESULT: GitHub source is verified.\nWHY: ${String(detail).slice(0, 900)}\nMISSING: ${registryImage}\nNEXT: ${workflowDiagnostics ? 'Do not republish until the Actions error above is fixed. Tap Re-check build to read the latest run.' : 'Tap Check image when the build finishes.'}`,
       };
     }
 
@@ -672,10 +679,10 @@ export function registerPipeline(app) {
         if (workflowRun.id && typeof github.workflowDiagnostics === 'function') {
           diagnostics = await github.workflowDiagnostics(repo, workflowRun.id).catch((err) => ({ summary: 'Unable to read GitHub Actions logs.', logTail: String(err.message || err) }));
         }
-        imageVerification = await github.verifyContainerImage(`${owner}/${repo}`, version).catch((err) => ({ ok: false, error: err.message }));
+        imageVerification = await github.verifyContainerImage(`${owner}/${repo}`, version).catch((err) => ({ ok: false, error: String(err?.message || err) }));
         return { failed: true, imageVerification: { ...imageVerification, workflow: workflowRun, error: `GitHub Actions finished with ${workflowRun.conclusion}.` }, workflowRun, diagnostics };
       }
-      imageVerification = await github.verifyContainerImage(`${owner}/${repo}`, version).catch((err) => ({ ok: false, error: err.message }));
+      imageVerification = await github.verifyContainerImage(`${owner}/${repo}`, version).catch((err) => ({ ok: false, error: String(err?.message || err) }));
       if (workflowRun?.status === 'completed' && workflowRun.conclusion === 'success' && imageVerification.ok) {
         return { ok: true, imageVerification, workflowRun, diagnostics };
       }
@@ -687,7 +694,7 @@ export function registerPipeline(app) {
 
   async function repairGithubActionsFailure({ project, source, owner, repo, version, githubUrl, workflowRun, diagnostics, emit, notes, projectPayload }) {
     if (!diagnostics?.logTail) return { ok: false, reason: 'No readable GitHub Actions log.' };
-    const classified = classifyLogs(diagnostics.logTail);
+    const classified = classifyLogs(diagnostics.logTail) || {};
     let dareCheckpoint = null;
     try {
       const history = await projects.readMetadata(project, 'dare-history.json', []);
