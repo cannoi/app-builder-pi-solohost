@@ -12,7 +12,7 @@ import { saveAttachment, attachmentList } from '../projects/attachments.js';
 import { powerWarning } from '../docker/modes.js';
 import { preflightPrompt } from '../ai/prompts.js';
 import { normalizeDeepSeekModel } from '../ai/providers/deepseek.js';
-import { inferAction } from '../scripts/ops.js';
+import { inferAction, parseGithubRepoUrl } from '../scripts/ops.js';
 import { createProjectZip } from '../projects/exporter.js';
 import { gcDocker } from '../docker/cleanup.js';
 
@@ -262,6 +262,12 @@ export function registerRoutes(r, app) {
     const message = String(req.body?.message || req.body?.idea || '').trim();
     if (!message) return res.status(400).json({ error: 'Tell me what you want to build or ask.' });
     if (!ensureFree(null, res)) return;
+    const githubRepo = parseGithubRepoUrl(message);
+    if (githubRepo) {
+      const job = jobs.enqueue({ type: 'upgrade_github_import', payload: { url: githubRepo.url } });
+      setImmediate(() => jobs.kick(job));
+      return res.status(202).json({ jobId: job.id, message: 'GitHub Upgrade Workshop started.', route: 'upgrade' });
+    }
     const files = Array.isArray(req.body?.files) ? req.body.files : [];
     try {
       const routed = await ai.completeJson({ task: 'USER_CHAT', system: 'You route first messages. Return only JSON. Do not build unless the user clearly asks to build.', prompt: preflightPrompt(message), images: [] });
@@ -354,8 +360,9 @@ export function registerRoutes(r, app) {
   });
 
   r.post('/api/projects/upgrade/github', (req, res) => {
-    const url = String(req.body?.url || '').trim();
-    if (!/^https?:\/\/github\.com\/[^/]+\/[^/]+/i.test(url)) return res.status(400).json({ error: 'Use a public GitHub repository URL.' });
+    const parsed = parseGithubRepoUrl(req.body?.url);
+    if (!parsed) return res.status(400).json({ error: 'Use a public GitHub repository URL.' });
+    const url = parsed.url;
     if (!ensureFree(null, res)) return;
     const job = jobs.enqueue({ type: 'upgrade_github_import', payload: { url } });
     setImmediate(() => jobs.kick(job));
@@ -410,6 +417,17 @@ export function registerRoutes(r, app) {
     if (!ensureFree(p.id, res)) return;
     const message = String(req.body?.message || '').trim();
     if (!message) return res.status(400).json({ error: 'Write a message first.' });
+    const githubRepo = parseGithubRepoUrl(message);
+    if (githubRepo && String(p.status || '').startsWith('UPGRADE')) {
+      const job = jobs.enqueue({ type: 'upgrade_github_import', payload: { url: githubRepo.url } });
+      setImmediate(() => jobs.kick(job));
+      return res.status(202).json({ jobId: job.id, message: 'GitHub Upgrade Workshop started.', route: 'upgrade' });
+    }
+    if (String(p.status || '').startsWith('UPGRADE')) {
+      const job = jobs.enqueue({ type: 'upgrade_request', projectId: p.id, payload: { projectId: p.id, request: message } });
+      setImmediate(() => jobs.kick(job));
+      return res.status(202).json({ jobId: job.id, message: 'Upgrade diagnosis started.', route: 'upgrade' });
+    }
     const job = jobs.enqueue({ type: 'builder_chat', projectId: p.id, payload: { projectId: p.id, message } });
     job._files = Array.isArray(req.body?.files) ? req.body.files : [];
     setImmediate(() => jobs.kick(job));

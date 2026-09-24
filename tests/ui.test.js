@@ -24,9 +24,9 @@ test('single chat builder UI and attachment controls are present', () => {
   const js = fs.readFileSync(new URL('../public/app.js', import.meta.url), 'utf8');
   assert.match(html, /id="chat"/);
   assert.match(html, /id="attachBtn"/);
-  assert.match(html, /data-action="build"/);
+  assert.match(html, /data-action="improve"/);
   assert.match(html, /data-action="run"/);
-  assert.match(html, /data-action="run"/);
+  assert.match(html, /data-action="upgrade"/);
   assert.match(js, /FormData/);
   assert.match(js, /builder_chat|\/api\/chat/);
   assert.match(js, /state\.busy/);
@@ -79,13 +79,22 @@ test('HTTP server recognizes uploaded image assets as image content', async () =
   assert.match(source, /['"]\.webp['"]\s*:\s*['"]image\/webp/);
 });
 
-test('Check action posts to analyze', () => {
+test('quick actions stay grouped without merging workflows', () => {
   const html = fs.readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
   const js = fs.readFileSync(new URL('../public/app.js', import.meta.url), 'utf8');
-  const routes = fs.readFileSync(new URL('../src/api/routes.js', import.meta.url), 'utf8');
-  assert.match(html, /data-action="analyze"/);
-  assert.match(js, /action === 'analyze'|\/analyze/);
-  assert.match(routes, /analyze/);
+  assert.match(html, /Create App/);
+  assert.match(html, /data-action="improve"/);
+  assert.match(html, /data-action="edit"/);
+  assert.match(html, /data-action="run"/);
+  assert.match(html, /Upgrade App/);
+  assert.match(html, /data-action="upgrade"/);
+  assert.match(html, /data-action="publish"/);
+  assert.match(html, /data-action="export"/);
+  assert.match(html, /data-action="import"/);
+  assert.match(html, /data-action="sandbox"/);
+  assert.match(html, /data-action="script-github"/);
+  assert.match(js, /action === 'upgrade'/);
+  assert.match(js, /parseGithubInput|upgrade\/github/);
 });
 
 test('support button and Pi QR asset exist', () => {

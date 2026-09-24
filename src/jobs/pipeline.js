@@ -11,7 +11,7 @@ import dns from 'node:dns/promises';
 import https from 'node:https';
 import { saveAttachment, attachmentContext, attachmentList, imageInputsFromAttachments } from '../projects/attachments.js';
 import { writeSoloHostPackage } from '../release/solohost.js';
-import { inferAction, extractGhcrImage, guessSoloHostPorts, classifyLogs, classifyFailureLayer, formatLayerDiagnosis, describeFailure, diagnoseSource, nextStep, guideCard, isHostDockerCommand, isNpmOnEmptyRisk, splitUserSteps } from '../scripts/ops.js';
+import { inferAction, extractGhcrImage, guessSoloHostPorts, classifyLogs, classifyFailureLayer, formatLayerDiagnosis, describeFailure, diagnoseSource, nextStep, guideCard, isHostDockerCommand, isNpmOnEmptyRisk, splitUserSteps, parseGithubRepoUrl } from '../scripts/ops.js';
 import { stampMadeBy } from '../projects/badge.js';
 import { createProjectZip } from '../projects/exporter.js';
 import { gcDocker } from '../docker/cleanup.js';
@@ -42,11 +42,11 @@ export function registerPipeline(app) {
 
   // Upgrade Workshop is deliberately isolated from create_app/improve flows.
   jobs.on('upgrade_github_import', async (job, { emit }) => {
-    const url = String(job.payload.url || '').trim();
-    const match = url.match(/^https?:\/\/github\.com\/([^/]+)\/([^/#?]+)(?:[#?].*)?$/i);
-    if (!match) throw new Error('Use a public GitHub repository URL such as https://github.com/owner/repository');
-    const owner = match[1];
-    const repo = match[2].replace(/\.git$/i, '');
+    const parsed = parseGithubRepoUrl(job.payload.url);
+    if (!parsed) throw new Error('Use a public GitHub repository URL such as https://github.com/owner/repository');
+    const owner = parsed.owner;
+    const repo = parsed.repo;
+    const url = parsed.url;
     const archiveUrl = `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/zipball/HEAD`;
     emit('import', 'running', `Fetching public GitHub source: ${owner}/${repo}…`);
     const response = await fetch(archiveUrl, { headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'pi-app-factory-upgrade' } });
@@ -58,11 +58,26 @@ export function registerPipeline(app) {
     await projects.saveMetadata(project, 'upgrade-source.json', { type: 'github-public', url, owner, repo, importedAt: new Date().toISOString() });
     projects.setStatus(project, 'UPGRADE_INSPECTING');
     emit('import', 'done', 'GitHub source imported. Starting the independent Upgrade Workshop.');
-    const result = await withTimeout(
-      inspectUpgrade({ project: projects.get(project.id), projects, snapshots, log }),
-      UPGRADE_INSPECT_TIMEOUT_MS,
-      'Upgrade inspection took too long and was stopped. This can happen with large or unusual repositories — try again, or use Import ZIP with just the app source instead.',
-    );
+    emit('inspect', 'running', 'Inspecting the imported app and creating an upgrade baseline…');
+    let result;
+    try {
+      result = await withTimeout(
+        inspectUpgrade({ project: projects.get(project.id), projects, snapshots, log }),
+        UPGRADE_INSPECT_TIMEOUT_MS,
+        'Upgrade inspection took too long and was stopped. This can happen with large or unusual repositories — try again, or use Import ZIP with just the app source instead.',
+      );
+    } catch (err) {
+      projects.setStatus(projects.get(project.id), 'UPGRADE_READY');
+      emit('inspect', 'failed', String(err.message || err).slice(0, 280));
+      return {
+        projectId: project.id,
+        ready: true,
+        source: { type: 'github-public', owner, repo, url },
+        issues: [{ id: 'inspect-partial', detail: String(err.message || err) }],
+        safeRepairs: [],
+        brief: `Project ${repo} is open in the Upgrade Workshop. Inspection was incomplete: ${String(err.message || err).slice(0, 180)}\nTell me what you want to improve.`,
+      };
+    }
     projects.setStatus(projects.get(project.id), result.ready ? 'UPGRADE_READY' : 'FAILED');
     return { projectId: project.id, source: { type: 'github-public', owner, repo, url }, ...result };
   });

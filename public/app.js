@@ -190,15 +190,19 @@ async function loadProjects() {
 async function openProject(id, announce = true) {
   state.projectId = id; rememberProject(id); await loadProjects();
   const p = await api(`/api/projects/${id}`);
-  $('chat').innerHTML = '';
+  if (announce) $('chat').innerHTML = '';
   const recent = Array.isArray(p.releases) ? p.releases : [];
   const activity = await api(`/api/activity?projectId=${encodeURIComponent(id)}`).catch(() => ({items:[]}));
   const running = activity.items?.find((x) => x.running);
   if (running) add('system', `↻ ${running.type} is still running · ${running.stage || 'working'}`);
   const last = activity.items?.find((x) => !x.running);
   if (last?.status === 'failed' && last.error) add('system', `⚠ Last issue: ${String(last.error).split('\n')[0].slice(0, 220)}`);
-  if (p.chat?.length) p.chat.forEach((m) => add(m.role === 'user' ? 'user' : m.role === 'assistant' ? 'ai' : 'system', m.message, { ephemeral: true, noTools: m.role !== 'assistant' && m.role !== 'ai' }));
-  else add('ai', `I’m ready to build ${p.name}. Tell me what you want next.`);
+  if (announce) {
+    if (p.chat?.length) p.chat.forEach((m) => add(m.role === 'user' ? 'user' : m.role === 'assistant' ? 'ai' : 'system', m.message, { ephemeral: true, noTools: m.role !== 'assistant' && m.role !== 'ai' }));
+    else add('ai', String(p.status || '').startsWith('UPGRADE')
+      ? `Upgrade Workshop is open for ${p.name}. Tell me what you want to improve.`
+      : `I’m ready to build ${p.name}. Tell me what you want next.`);
+  }
   if (p.workPlan?.steps?.length) renderWorkPlan(p.workPlan);
   if (Array.isArray(p.workHistory) && p.workHistory.length) renderWorkHistory(p.workHistory);
   if (announce) add('system', `Project: ${p.name}`);
@@ -221,6 +225,16 @@ async function sendMessage() {
   }
   const files = state.files.slice(); state.files = []; renderFiles();
   if (message) { add('user', message); $('message').value = ''; }
+  const githubUrl = parseGithubInput(message);
+  if (githubUrl && !files.length) {
+    setBusy(true, 'Importing public GitHub source…');
+    try {
+      const r = await api('/api/projects/upgrade/github', { method: 'POST', body: JSON.stringify({ url: githubUrl }) });
+      add('ai', '🔧 GitHub source imported into the independent Upgrade Workshop.');
+      watch(r.jobId);
+    } catch (e) { setBusy(false); add('ai', e.message); }
+    return;
+  }
   setBusy(true, state.projectId ? 'AI is working on your app…' : 'AI is creating your app…');
   try {
     const url = state.projectId ? `/api/projects/${state.projectId}/chat` : '/api/chat';
@@ -276,11 +290,19 @@ function pickImportZip() {
   };
   input.click();
 }
+function parseGithubInput(text) {
+  const raw = String(text || '').trim();
+  const full = raw.match(/https?:\/\/(?:www\.)?github\.com\/([^/\s#?]+)\/([^/\s#?]+)/i);
+  if (full) return `https://github.com/${full[1]}/${full[2].replace(/\.git$/i, '')}`;
+  const short = raw.match(/^([^/\s#?]+)\/([^/\s#?]+)$/);
+  if (short && !short[1].includes('.')) return `https://github.com/${short[1]}/${short[2].replace(/\.git$/i, '')}`;
+  return '';
+}
 async function startUpgrade() {
   if (!state.projectId) {
     const request = await askSafeAction('UPGRADE FROM GITHUB', 'Paste a public GitHub repository URL.');
     if (!request) return;
-    const url = request.text.trim();
+    const url = parseGithubInput(request.text) || request.text.trim();
     setBusy(true, 'Importing public GitHub source…');
     try { const r = await api('/api/projects/upgrade/github', { method: 'POST', body: JSON.stringify({ url }) }); add('ai', '🔧 GitHub source imported into the independent Upgrade Workshop.'); watch(r.jobId); }
     catch (e) { setBusy(false); add('ai', e.message); }
@@ -428,9 +450,14 @@ async function watch(jobId) {
           await loadProjects();
           await openProject(result.projectId, false);
         }
-        if (job.status === 'done' && (job.type === 'upgrade_inspect' || job.type === 'upgrade_github_import') && result.ready) {
+        if (job.status === 'done' && (job.type === 'upgrade_inspect' || job.type === 'upgrade_github_import')) {
+          if (result.projectId && result.projectId !== state.projectId) {
+            state.projectId = result.projectId;
+            await loadProjects();
+            await openProject(result.projectId, false);
+          }
           renderUpgradeBaseline(result);
-          await askUpgradeRequest();
+          if (state.projectId) await askUpgradeRequest();
         }
         if (job.status === 'done' && job.type === 'upgrade_request' && result.plan) {
           renderUpgradePlan(result.plan, result.plan.request || '');

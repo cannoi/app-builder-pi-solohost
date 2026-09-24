@@ -2,6 +2,19 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { listFiles } from '../utils/fsx.js';
 
+export function parseGithubRepoUrl(input) {
+  const raw = String(input || '').trim();
+  if (!raw) return null;
+  const compact = raw.replace(/\.git$/i, '');
+  const full = compact.match(/^https?:\/\/(?:www\.)?github\.com\/([^/\s#?]+)\/([^/\s#?]+)\/?$/i);
+  if (full) return { owner: full[1], repo: full[2], url: `https://github.com/${full[1]}/${full[2]}` };
+  const short = compact.match(/^([^/\s#?]+)\/([^/\s#?]+)$/);
+  if (short && !short[1].includes('.') && short[1] !== 'http' && short[1] !== 'https') {
+    return { owner: short[1], repo: short[2], url: `https://github.com/${short[1]}/${short[2]}` };
+  }
+  return null;
+}
+
 export function isQuestion(message) {
   const m = String(message || '').toLowerCase();
   return /[?]|(làm sao|như thế nào|how (do|to|can|does)|what is|where (is|do)|why |token|hướng dẫn|cách (lấy|tạo|đăng|cài)|giải thích|explain|help me understand)/i.test(m)

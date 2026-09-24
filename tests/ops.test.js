@@ -1,7 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import { inferAction, classifyLogs, classifyFailureLayer, describeFailure, isHostDockerCommand, isNpmOnEmptyRisk } from '../src/scripts/ops.js';
+import { inferAction, classifyLogs, classifyFailureLayer, describeFailure, isHostDockerCommand, isNpmOnEmptyRisk, parseGithubRepoUrl } from '../src/scripts/ops.js';
+
+test('parseGithubRepoUrl accepts full and short public repo forms', () => {
+  assert.deepEqual(parseGithubRepoUrl('https://github.com/cannoi/social-connect'), { owner: 'cannoi', repo: 'social-connect', url: 'https://github.com/cannoi/social-connect' });
+  assert.deepEqual(parseGithubRepoUrl('cannoi/social-connect'), { owner: 'cannoi', repo: 'social-connect', url: 'https://github.com/cannoi/social-connect' });
+  assert.equal(parseGithubRepoUrl('not a repo'), null);
+});
 
 test('user language maps to controller scripts', () => {
   assert.equal(inferAction('chạy app và cho tôi link'), 'run');
