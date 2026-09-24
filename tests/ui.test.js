@@ -9,7 +9,7 @@ test('settings modal can be hidden and all setup buttons exist', () => {
   assert.match(css, /\.modal\[hidden\]\{display:none!important\}/);
   assert.match(html, /id="settings"[^>]*hidden/);
   assert.match(html, /id="saveSettings"/);
-  assert.match(html, /app\.js\?v=1\.4\.35/);
+  assert.match(html, /app\.js\?v=1\.4\.40/);
   assert.match(html, /styles\.css\?v=1\.4\.35/);
   assert.match(html, /No docker\.sock/);
   assert.match(html, /GitHub token/);

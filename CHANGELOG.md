@@ -1,3 +1,20 @@
+## 1.4.41
+- Upgrade Workshop: GitHub import now opens the inspected project and asks for the upgrade request.
+- Upgrade history is an append-only array.
+- Static HTML apps are not marked broken just because they lack package.json/Dockerfile.
+- Medium-risk plans can be applied after explicit user confirmation.
+- Baseline findings card is shown before the request prompt.
+
+# 1.4.40 — Upgrade Workshop + deterministic install hardening
+
+- Added an independent Upgrade Workshop flow: inspect → safe repair → baseline → diagnose → approve → minimal patch → verify/rollback.
+- Added public GitHub repository import into the Upgrade Workshop.
+- Added App Knowledge Map, baseline and upgrade history metadata with source evidence.
+- Added pre/post SHA-256 manifest checks so Upgrade can detect unexpected file changes and roll back.
+- Reused DARE for deterministic safe repairs before AI upgrade diagnosis.
+- Kept Create App, Preview, Provider Hub, GitHub Publisher and SoloHost release contracts unchanged.
+- Slimmed the Builder runtime image by removing unused `git-lfs`, `poppler-utils` and `zip` packages; `unzip`, Git, Chromium and existing runtime dependencies remain. This is specifically to reduce SoloHost image pull size without changing app behavior.
+
 ## 1.4.39
 - Hardened DARE to run before AI for local test/preview failures and GitHub Actions repair.
 - Added deterministic source pre/post manifest checks so unexpected file changes are rejected.

@@ -353,6 +353,57 @@ export function registerRoutes(r, app) {
     res.status(202).json({ jobId: job.id, message: 'Sandbox command started.' });
   });
 
+  r.post('/api/projects/upgrade/github', (req, res) => {
+    const url = String(req.body?.url || '').trim();
+    if (!/^https?:\/\/github\.com\/[^/]+\/[^/]+/i.test(url)) return res.status(400).json({ error: 'Use a public GitHub repository URL.' });
+    if (!ensureFree(null, res)) return;
+    const job = jobs.enqueue({ type: 'upgrade_github_import', payload: { url } });
+    setImmediate(() => jobs.kick(job));
+    res.status(202).json({ jobId: job.id, message: 'GitHub Upgrade Workshop started.' });
+  });
+
+  r.post('/api/projects/:id/upgrade/inspect', (req, res) => {
+    const p = projects.get(req.params.id);
+    if (!p) return res.status(404).json({ error: 'Project not found' });
+    if (!ensureFree(p.id, res)) return;
+    const job = jobs.enqueue({ type: 'upgrade_inspect', projectId: p.id, payload: { projectId: p.id } });
+    setImmediate(() => jobs.kick(job));
+    res.status(202).json({ jobId: job.id, message: 'Upgrade inspection started.' });
+  });
+
+  r.post('/api/projects/:id/upgrade/request', (req, res) => {
+    const p = projects.get(req.params.id);
+    if (!p) return res.status(404).json({ error: 'Project not found' });
+    if (!ensureFree(p.id, res)) return;
+    const request = String(req.body?.request || '').trim();
+    if (!request) return res.status(400).json({ error: 'Tell me what you want to improve.' });
+    const job = jobs.enqueue({ type: 'upgrade_request', projectId: p.id, payload: { projectId: p.id, request } });
+    setImmediate(() => jobs.kick(job));
+    res.status(202).json({ jobId: job.id, message: 'Upgrade diagnosis started.' });
+  });
+
+  r.post('/api/projects/:id/upgrade/apply', (req, res) => {
+    const p = projects.get(req.params.id);
+    if (!p) return res.status(404).json({ error: 'Project not found' });
+    if (req.body?.approved !== true) return res.status(400).json({ error: 'Upgrade approval is required.' });
+    if (!ensureFree(p.id, res)) return;
+    const job = jobs.enqueue({ type: 'upgrade_apply', projectId: p.id, payload: { projectId: p.id, request: req.body?.request || '', plan: req.body?.plan || null } });
+    setImmediate(() => jobs.kick(job));
+    res.status(202).json({ jobId: job.id, message: 'Approved upgrade started.' });
+  });
+
+  r.get('/api/projects/:id/upgrade', async (req, res) => {
+    const p = projects.get(req.params.id);
+    if (!p) return res.status(404).json({ error: 'Project not found' });
+    res.json({
+      baseline: await projects.readMetadata(p, 'upgrade-baseline.json', null),
+      knowledge: await projects.readMetadata(p, 'upgrade-knowledge.json', null),
+      plan: await projects.readMetadata(p, 'upgrade-plan.json', null),
+      history: await projects.readMetadata(p, 'upgrade-history.json', []),
+      repairs: await projects.readMetadata(p, 'upgrade-repair-history.json', []),
+    });
+  });
+
   r.post('/api/projects/:id/chat', (req, res) => {
     const p = projects.get(req.params.id);
     if (!p) return res.status(404).json({ error: 'Project not found' });

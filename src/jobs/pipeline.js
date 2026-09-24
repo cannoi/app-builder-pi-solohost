@@ -21,9 +21,67 @@ import { ensureMissingDependencies } from '../projects/deps-fix.js';
 import { runDare, formatDareReport } from '../dare/engine.js';
 import { shouldBlockRepeatedAction, nextRepeatState } from './loop-guard.js';
 import { mergeVerificationState } from './verification.js';
+import { inspectUpgrade, diagnoseUpgradeRequest, applyUpgrade } from '../upgrade/engine.js';
 
 export function registerPipeline(app) {
   const { jobs, ai, projects, snapshots, runner, sandbox, github, releases, cfg, log } = app;
+
+  // Upgrade Workshop is deliberately isolated from create_app/improve flows.
+  jobs.on('upgrade_github_import', async (job, { emit }) => {
+    const url = String(job.payload.url || '').trim();
+    const match = url.match(/^https?:\/\/github\.com\/([^/]+)\/([^/#?]+)(?:[#?].*)?$/i);
+    if (!match) throw new Error('Use a public GitHub repository URL such as https://github.com/owner/repository');
+    const owner = match[1];
+    const repo = match[2].replace(/\.git$/i, '');
+    const archiveUrl = `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/zipball/HEAD`;
+    emit('import', 'running', `Fetching public GitHub source: ${owner}/${repo}…`);
+    const response = await fetch(archiveUrl, { headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'pi-app-factory-upgrade' } });
+    if (!response.ok) throw new Error(`GitHub public repository could not be downloaded (HTTP ${response.status}).`);
+    const buffer = Buffer.from(await response.arrayBuffer());
+    const project = await projects.create({ idea: `Upgrade existing GitHub app: ${owner}/${repo}`, name: repo, analysis: { name: repo, slug: repo, recommended_stack: {} }, plan: { mode: 'upgrade-existing' } });
+    jobs.attachProject(job.id, project.id);
+    await importZipBuffer(buffer, projects.sourceDir(project.slug), { replace: true });
+    await projects.saveMetadata(project, 'upgrade-source.json', { type: 'github-public', url, owner, repo, importedAt: new Date().toISOString() });
+    projects.setStatus(project, 'UPGRADE_INSPECTING');
+    emit('import', 'done', 'GitHub source imported. Starting the independent Upgrade Workshop.');
+    const result = await inspectUpgrade({ project: projects.get(project.id), projects, snapshots, log });
+    projects.setStatus(projects.get(project.id), result.ready ? 'UPGRADE_READY' : 'FAILED');
+    return { projectId: project.id, source: { type: 'github-public', owner, repo, url }, ...result };
+  });
+
+  jobs.on('upgrade_inspect', async (job, { emit }) => {
+    const project = mustProject(job.payload.projectId);
+    projects.setStatus(project, 'UPGRADE_INSPECTING');
+    emit('inspect', 'running', 'Inspecting the existing app before any upgrade request…');
+    const result = await inspectUpgrade({ project: projects.get(project.id), projects, snapshots, log });
+    projects.setStatus(projects.get(project.id), result.ready ? 'UPGRADE_READY' : 'FAILED');
+    emit('baseline', 'done', `Baseline ready. ${result.safeRepairs.length} safe repair(s) applied; ${result.issues.length} finding(s) recorded.`);
+    return result;
+  });
+
+  jobs.on('upgrade_request', async (job, { emit }) => {
+    const project = mustProject(job.payload.projectId);
+    const baseline = await projects.readMetadata(project, 'upgrade-baseline.json', null);
+    if (!baseline) throw new Error('Upgrade baseline is missing. Inspect the app first.');
+    projects.setStatus(project, 'UPGRADE_DIAGNOSING');
+    emit('diagnose', 'running', 'Diagnosing the request against the real app baseline…');
+    const plan = await diagnoseUpgradeRequest({ project, projects, ai, request: job.payload.request });
+    await projects.saveMetadata(project, 'upgrade-plan.json', { ...plan, request: job.payload.request, createdAt: new Date().toISOString() });
+    projects.setStatus(projects.get(project.id), 'UPGRADE_WAITING_APPROVAL');
+    emit('recommend', 'done', plan.recommendation || 'Upgrade plan is ready for review.');
+    return { projectId: project.id, plan: { ...plan, request: job.payload.request }, needsApproval: true };
+  });
+
+  jobs.on('upgrade_apply', async (job, { emit }) => {
+    const project = mustProject(job.payload.projectId);
+    projects.setStatus(project, 'UPGRADING');
+    emit('patch', 'running', 'Applying only the approved upgrade files…');
+    const plan = job.payload.plan || await projects.readMetadata(project, 'upgrade-plan.json', {});
+    const result = await applyUpgrade({ project: projects.get(project.id), projects, snapshots, plan, request: job.payload.request || plan.request || '', approved: job.payload.approved === true });
+    projects.setStatus(projects.get(project.id), 'UPGRADE_READY');
+    emit('verify', 'done', `Upgrade verified. ${result.files.length} file(s) changed. Ready for release or rollback.`);
+    return result;
+  });
 
   jobs.on('create_app', async (job, { emit }) => {
     const idea = String(job.payload.idea || '').trim();

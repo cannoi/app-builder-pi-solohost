@@ -132,7 +132,7 @@ function maybeJump() {
   $('jumpDown').hidden = chatNearBottom() || el.scrollHeight <= el.clientHeight + 20;
 }
 function project() { return state.projects.find((p) => p.id === state.projectId) || null; }
-function actionText(action) { return ({ build:'Build the app', run:'Run the app', improve:'Improve the app', edit:'Edit the app', analyze:'Check the app', publish:'Prepare the release', sandbox:'Test the sandbox' })[action] || action; }
+function actionText(action) { return ({ build:'Build the app', run:'Run the app', improve:'Improve the app', edit:'Edit the app', analyze:'Check the app', upgrade:'Inspect & upgrade', publish:'Prepare the release', sandbox:'Test the sandbox' })[action] || action; }
 
 async function loadStatus() {
   try {
@@ -276,6 +276,70 @@ function pickImportZip() {
   };
   input.click();
 }
+async function startUpgrade() {
+  if (!state.projectId) {
+    const request = await askSafeAction('UPGRADE FROM GITHUB', 'Paste a public GitHub repository URL.');
+    if (!request) return;
+    const url = request.text.trim();
+    setBusy(true, 'Importing public GitHub source…');
+    try { const r = await api('/api/projects/upgrade/github', { method: 'POST', body: JSON.stringify({ url }) }); add('ai', '🔧 GitHub source imported into the independent Upgrade Workshop.'); watch(r.jobId); }
+    catch (e) { setBusy(false); add('ai', e.message); }
+    return;
+  }
+  setBusy(true, 'Inspecting the existing app…');
+  try {
+    const r = await api(`/api/projects/${state.projectId}/upgrade/inspect`, { method: 'POST', body: '{}' });
+    add('ai', '🔧 Upgrade Workshop started. I will inspect the existing app, repair only safe deterministic issues, and create a baseline before asking what you want to change.');
+    watch(r.jobId);
+  } catch (e) { setBusy(false); add('ai', e.message); }
+}
+async function askUpgradeRequest() {
+  const request = await askSafeAction('UPGRADE WORKSHOP', 'What would you like to improve in this existing app?');
+  if (!request) return;
+  setBusy(true, 'Diagnosing the upgrade request…');
+  try {
+    const r = await api(`/api/projects/${state.projectId}/upgrade/request`, { method: 'POST', body: JSON.stringify({ request: request.text }) });
+    watch(r.jobId);
+  } catch (e) { setBusy(false); add('ai', e.message); }
+}
+function renderUpgradeBaseline(result) {
+  const health = result.baseline?.health?.status || result.knowledge?.runtime?.status || 'HEALTHY';
+  const issues = result.issues || result.baseline?.knownIssues || [];
+  const findings = issues.filter((i) => i.id !== 'healthy');
+  add('ai', [
+    '✓ App inspected',
+    '✓ Security checked',
+    '✓ Runtime checked',
+    '✓ Existing features mapped',
+    '✓ Baseline created',
+    '',
+    `APP CONDITION: ${health === 'HEALTHY' ? 'Healthy' : 'Needs Attention'}`,
+    findings.length ? `Findings: ${findings.length}` : 'Findings: none blocking',
+    `${result.safeRepairs?.length || 0} safe repair(s) applied.`,
+    '',
+    'Your app is ready for upgrade.',
+  ].join('\n'));
+}
+function renderUpgradePlan(plan, request) {
+  if (!plan) return;
+  const risk = String(plan.risk || 'unknown').toLowerCase();
+  const box = document.createElement('div'); box.className = 'msg ai';
+  const title = document.createElement('div'); title.textContent = '🔧 Upgrade Plan'; title.style.fontWeight = '700'; box.appendChild(title);
+  const body = document.createElement('div'); body.className = 'small';
+  body.textContent = `Problem: ${plan.root_cause || '—'}\n\nRecommended: ${plan.recommendation || '—'}\n\nRisk: ${plan.risk || 'unknown'}\n\nFiles: ${(plan.files || []).map(f => typeof f === 'string' ? f : f.path).join(', ') || 'none'}\n\nExpected: ${plan.expected_result || '—'}`;
+  body.style.whiteSpace = 'pre-wrap'; box.appendChild(body);
+  const row = document.createElement('div'); row.className = 'actionCard';
+  const apply = document.createElement('button'); apply.className = 'primary';
+  apply.textContent = risk === 'high' ? 'Apply high-risk upgrade' : 'Apply Upgrade';
+  apply.onclick = async () => {
+    if (state.busy) return;
+    setBusy(true, 'Applying the minimal upgrade…');
+    try { const r = await api(`/api/projects/${state.projectId}/upgrade/apply`, { method: 'POST', body: JSON.stringify({ approved: true, request, plan }) }); watch(r.jobId); }
+    catch (e) { setBusy(false); add('ai', e.message); }
+  };
+  row.appendChild(apply); box.appendChild(row); $('chat').appendChild(box); if (chatNearBottom()) $('chat').scrollTop = $('chat').scrollHeight;
+}
+
 async function startSandboxDemo() {
   setBusy(true, 'Testing sandbox…');
   try {
@@ -291,6 +355,7 @@ async function quick(action, extraPayload = {}) {
   if (action === 'script-github') return downloadScript('github');
   if (action === 'docker') return inspectDocker();
   if (action === 'sandbox') return startSandboxDemo();
+  if (action === 'upgrade') return startUpgrade();
   if (action === 'import') return pickImportZip();
   if (action === 'run') {
     try {
@@ -358,6 +423,18 @@ async function watch(jobId) {
       if (job.status === 'done' || job.status === 'failed' || job.status === 'cancelled') {
         clearInterval(state.poll); state.poll = null; setBusy(false);
         const result = job.result || {};
+        if (result.projectId && result.projectId !== state.projectId) {
+          state.projectId = result.projectId;
+          await loadProjects();
+          await openProject(result.projectId, false);
+        }
+        if (job.status === 'done' && (job.type === 'upgrade_inspect' || job.type === 'upgrade_github_import') && result.ready) {
+          renderUpgradeBaseline(result);
+          await askUpgradeRequest();
+        }
+        if (job.status === 'done' && job.type === 'upgrade_request' && result.plan) {
+          renderUpgradePlan(result.plan, result.plan.request || '');
+        }
         if (job.status === 'failed') {
           const failure = String(job.error || 'The action failed.');
           add('ai', failure);
@@ -374,7 +451,6 @@ async function watch(jobId) {
         }
         if (result.brief) add('ai', result.brief);
         else if (result.reply) add('ai', result.reply);
-        if (result.projectId && result.projectId !== state.projectId) { state.projectId = result.projectId; await loadProjects(); await openProject(result.projectId, false); }
         else if (state.projectId) { await loadProjects(); }
         summarizeResult(result, job.status);
         if (result.guide) renderGuide(result.guide);

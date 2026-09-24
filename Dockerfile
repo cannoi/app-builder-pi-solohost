@@ -4,7 +4,7 @@ WORKDIR /app
 ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
 ENV PLAYWRIGHT_CHROMIUM_EXECUTABLE=/usr/bin/chromium-browser
 
-RUN apk add --no-cache tini unzip zip git git-lfs poppler-utils chromium \
+RUN apk add --no-cache tini unzip git chromium \
   && mkdir -p /app/data /app/workspace /app/projects \
   && chown -R node:node /app
 
