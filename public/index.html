@@ -1,4 +1,5 @@
 <!doctype html>
+
 <html lang="en">
 <head>
   <meta charset="utf-8">
@@ -6,91 +7,343 @@
   <title>App Builder — Pi SoloHost</title>
   <meta name="theme-color" content="#0e1116">
   <link rel="stylesheet" href="/styles.css?v=1.4.35">
-<style>.paf-made-by{position:fixed;right:8px;bottom:8px;width:min(72px,12vw);max-width:12vw;height:auto;object-fit:contain;opacity:.5;background:transparent;padding:0;border:0;box-shadow:none;filter:none;pointer-events:none;z-index:30}</style></head>
-<body>
-  <div id="app">
-    <header class="hero">
-      <img src="/banner.png" alt="App Builder — Pi SoloHost">
-    </header>
-    <header class="top">
-      <div class="brand"><img class="logoMark" src="/app-logo.jpg" alt="App Builder logo"><div><h1>App Builder</h1><p>Pi SoloHost · idea in, app out</p></div></div>
-      <div class="topRight">
-        <span id="workPill" class="pill ready">Ready</span>
-        <button id="liveBtn" class="pill live" hidden type="button" title="Stop the test app and delete its container">Live · Stop</button>
-        <select id="aiSelect" aria-label="AI provider"><option value="">AI provider</option></select>
-        <select id="projectSelect" aria-label="Project"><option value="">New app</option></select>
-        <button id="settingsBtn" class="iconBtn" title="Settings">⚙</button>
-      </div>
-    </header>
+<style>.paf-made-by{position:fixed;right:8px;bottom:8px;width:min(72px,12vw);max-width:12vw;height:auto;object-fit:contain;opacity:.5;background:transparent;padding:0;border:0;box-shadow:none;filter:none;pointer-events:none;z-index:30}</style>
+</head><body>
+  <div id="app"><header class="hero">
+  <img src="/banner.png" alt="App Builder — Pi SoloHost">
+</header>
 
-    <main class="chatShell">
-      <section id="chat" class="chat" aria-live="polite"></section>
-      <button id="jumpDown" class="jump" hidden title="Jump to new messages">↓</button>
-      <div id="busyBar" class="busy" hidden><span class="spinner"></span><span id="busyText">Working…</span></div>
-
-      <section class="composer">
-        <div class="quickGroups">
-          <div class="group"><span class="groupLabel">Build</span><button data-action="build">✨ Build</button><button data-action="run">▶ Run</button><button data-action="sandbox">🧪 Sandbox</button></div>
-          <div class="group"><span class="groupLabel">Refine</span><button data-action="improve">✦ Improve</button><button data-action="edit">✎ Edit</button><button data-action="analyze">🔎 Check</button><button data-action="upgrade">🔧 Upgrade</button></div>
-          <div class="group"><span class="groupLabel">Ship</span><button data-action="publish">🚀 Publish</button><button data-action="export">⬇ Zip</button><button type="button" id="importZipBtn" data-action="import">⬆ Import</button></div>
-        <input id="importZipInput" type="file" accept=".zip,application/zip" hidden>
-          <div class="group"><span class="groupLabel">Help</span><button type="button" id="supportBtn" data-action="support">💛 Support</button><button type="button" id="scriptRunBtn" data-action="script-run">📦 Run ZIP</button><button type="button" id="scriptGhBtn" data-action="script-github">⬆ GitHub</button></div>
-        </div>
-        <div class="inputRow">
-          <button id="attachBtn" class="attach" title="Attach files">📎</button>
-          <input id="fileInput" type="file" multiple hidden accept=".zip,.pdf,.txt,.md,.json,.yaml,.yml,.js,.ts,.jsx,.tsx,.html,.css,.py,.go,.rs,.java,.php,.sql,.csv,.png,.jpg,.jpeg,.gif,.webp">
-          <textarea id="message" rows="2" placeholder="Tell me the app you want. I will lead the rest."></textarea>
-          <button id="sendBtn" class="send">➤</button>
-        </div>
-        <div id="attachments" class="attachments"></div>
-        <p class="hint">1 Idea → 2 Run → 3 Publish. I keep the next step visible.</p>
-      </section>
-    </main>
-  </div>
-
-  <div id="supportModal" class="modal" hidden>
-    <div class="sheet">
-      <div class="sheetHead"><h2>💛 Support this project</h2><button id="closeSupport" class="iconBtn" type="button">✕</button></div>
-      <p class="info">Thank you for supporting App Builder — Pi SoloHost. Your gift keeps the tool free for Pioneers.</p>
-      <div class="supportTabs">
-        <button type="button" class="supportTab on" data-support="pi">Pi Wallet</button>
-        <button type="button" class="supportTab" data-support="mb">MB Bank</button>
-      </div>
-      <div id="supportPi" class="supportPane">
-        <img src="/support-pi-qr.jpg" alt="Pi Wallet QR" class="supportQr">
-        <p class="muted">Pi Wallet address</p>
-        <p class="mono" id="piAddr">GAQAZ5XLWREKQYMMN247A44PNPLAKRORZOPZNVG3CDPCSSFMEVFIYJJL</p>
-        <button type="button" class="primary wide" data-copy="GAQAZ5XLWREKQYMMN247A44PNPLAKRORZOPZNVG3CDPCSSFMEVFIYJJL">Copy address</button>
-      </div>
-      <div id="supportMb" class="supportPane" hidden>
-        <img src="https://img.vietqr.io/image/MB-0905428801-compact2.png" alt="MB Bank VietQR" class="supportQr">
-        <p class="muted">MB Bank · 0905428801</p>
-        <p class="mono" id="mbAddr">0905428801</p>
-        <button type="button" class="primary wide" data-copy="0905428801">Copy account</button>
-      </div>
+<header class="top">
+  <div class="brand">
+    <img class="logoMark" src="/app-logo.jpg" alt="App Builder logo">
+    <div>
+      <h1>App Builder</h1>
+      <p>Pi SoloHost · idea in, app out</p>
     </div>
   </div>
 
-  <div id="settings" class="modal" hidden>
-    <div class="sheet">
-      <div class="sheetHead"><h2>Settings</h2><button id="closeSettings" class="iconBtn">✕</button></div>
-      <div class="settingsGrid">
-        <label>AI Provider<select id="hubProvider"><option value="deepseek">DeepSeek</option><option value="gemini">Gemini</option><option value="openai">OpenAI</option><option value="anthropic">Anthropic</option><option value="openrouter">OpenRouter</option><option value="groq">Groq</option><option value="mistral">Mistral</option><option value="xai">xAI</option><option value="custom">Custom</option></select></label>
-        <label>API key<input id="hubKey" type="password" autocomplete="off" placeholder="Paste token"></label>
-        <label id="hubBaseWrap" hidden>Base URL<input id="hubBase" type="text" placeholder="https://api.example.com/v1"></label>
-        <button id="hubAdd" class="wide" type="button">＋ Add</button>
-        <div class="settingsGrid compactModels"><label>Model 1<select id="hubModel1"><option value="">Select verified model</option></select></label><label>Model 2<select id="hubModel2"><option value="">Optional reviewer model</option></select></label></div>
-        <label>GitHub owner<input id="setGhOwner" type="text" placeholder="username or org"></label>
-        <label>GitHub token<input id="setGhToken" type="password" autocomplete="off" placeholder="Classic token"></label>
-        <div class="settingNote"><span>First added key is used first</span><span>🛡 No docker.sock</span></div>
-      </div>
-      <div id="hubList" class="info compactInfo">No AI provider connected yet.</div>
-      <div class="info compactInfo">Add a provider token, then Save GitHub if you publish.</div>
-      <button id="saveSettings" class="primary wide">Save</button>
-      <p id="settingsState" class="muted"></p>
-    </div>
+  <div class="topRight">
+    <span id="workPill" class="pill ready">Ready</span>
+
+    <button
+      id="liveBtn"
+      class="pill live"
+      hidden
+      type="button"
+      title="Stop the test app and delete its container">
+      Live · Stop
+    </button>
+
+    <select id="aiSelect" aria-label="AI provider">
+      <option value="">AI provider</option>
+    </select>
+
+    <select id="projectSelect" aria-label="Project">
+      <option value="">New app</option>
+    </select>
+
+    <button id="settingsBtn" class="iconBtn" title="Settings">⚙</button>
+  </div>
+</header>
+
+<main class="chatShell">
+
+  <section id="chat" class="chat" aria-live="polite"></section>
+
+  <button
+    id="jumpDown"
+    class="jump"
+    hidden
+    title="Jump to new messages">
+    ↓
+  </button>
+
+  <div id="busyBar" class="busy" hidden>
+    <span class="spinner"></span>
+    <span id="busyText">Working…</span>
   </div>
 
-  <script src="/app.js?v=1.4.40"></script>
-<img class="paf-made-by" src="/made-by.png" alt="Made with App Builder — Pi SoloHost"></body>
-</html>
+  <section class="composer">
+
+    <div class="quickGroups">
+
+      <!-- CREATE APP -->
+      <div class="group">
+        <span class="groupLabel">🏗️ Create App</span>
+
+        <button data-action="improve">✦ Improve</button>
+        <button data-action="edit">✎ Edit</button>
+        <button data-action="run">▶ Run</button>
+      </div>
+
+      <!-- UPGRADE APP -->
+      <div class="group">
+        <span class="groupLabel">🔧 Upgrade App</span>
+
+        <button data-action="upgrade">🔧 Upgrade</button>
+      </div>
+
+      <!-- PUBLISH -->
+      <div class="group">
+        <span class="groupLabel">🚀 Publish</span>
+
+        <button data-action="publish">🚀 Publish</button>
+      </div>
+
+      <!-- TOOLS -->
+      <div class="group">
+        <span class="groupLabel">🧰 Tools</span>
+
+        <button
+          type="button"
+          id="importZipBtn"
+          data-action="import">
+          ⬆ Import
+        </button>
+
+        <button data-action="export">⬇ Zip</button>
+
+        <button
+          type="button"
+          id="scriptRunBtn"
+          data-action="script-run">
+          📦 Run ZIP
+        </button>
+
+        <button
+          type="button"
+          id="scriptGhBtn"
+          data-action="script-github">
+          ⬆ GitHub
+        </button>
+
+        <button data-action="sandbox">🧪 Sandbox</button>
+      </div>
+
+      <!-- SUPPORT -->
+      <div class="group">
+        <button
+          type="button"
+          id="supportBtn"
+          data-action="support">
+          💛 Support
+        </button>
+      </div>
+
+    </div>
+
+    <input
+      id="importZipInput"
+      type="file"
+      accept=".zip,application/zip"
+      hidden>
+
+    <div class="inputRow">
+
+      <button
+        id="attachBtn"
+        class="attach"
+        title="Attach files">
+        📎
+      </button>
+
+      <input
+        id="fileInput"
+        type="file"
+        multiple
+        hidden
+        accept=".zip,.pdf,.txt,.md,.json,.yaml,.yml,.js,.ts,.jsx,.tsx,.html,.css,.py,.go,.rs,.java,.php,.sql,.csv,.png,.jpg,.jpeg,.gif,.webp">
+
+      <textarea
+        id="message"
+        rows="2"
+        placeholder="Tell me the app you want. I will lead the rest."></textarea>
+
+      <button id="sendBtn" class="send">➤</button>
+
+    </div>
+
+    <div id="attachments" class="attachments"></div>
+
+    <p class="hint">
+      1 Idea → 2 Run → 3 Publish. I keep the next step visible.
+    </p>
+
+  </section>
+</main>
+
+  </div>  <!-- SUPPORT MODAL -->  <div id="supportModal" class="modal" hidden>
+    <div class="sheet">  <div class="sheetHead">
+    <h2>💛 Support this project</h2>
+    <button id="closeSupport" class="iconBtn" type="button">✕</button>
+  </div>
+
+  <p class="info">
+    Thank you for supporting App Builder — Pi SoloHost.
+    Your gift keeps the tool free for Pioneers.
+  </p>
+
+  <div class="supportTabs">
+    <button
+      type="button"
+      class="supportTab on"
+      data-support="pi">
+      Pi Wallet
+    </button>
+
+    <button
+      type="button"
+      class="supportTab"
+      data-support="mb">
+      MB Bank
+    </button>
+  </div>
+
+  <div id="supportPi" class="supportPane">
+    <img
+      src="/support-pi-qr.jpg"
+      alt="Pi Wallet QR"
+      class="supportQr">
+
+    <p class="muted">Pi Wallet address</p>
+
+    <p class="mono" id="piAddr">
+      GAQAZ5XLWREKQYMMN247A44PNPLAKRORZOPZNVG3CDPCSSFMEVFIYJJL
+    </p>
+
+    <button
+      type="button"
+      class="primary wide"
+      data-copy="GAQAZ5XLWREKQYMMN247A44PNPLAKRORZOPZNVG3CDPCSSFMEVFIYJJL">
+      Copy address
+    </button>
+  </div>
+
+  <div id="supportMb" class="supportPane" hidden>
+
+    <img
+      src="https://img.vietqr.io/image/MB-0905428801-compact2.png"
+      alt="MB Bank VietQR"
+      class="supportQr">
+
+    <p class="muted">MB Bank · 0905428801</p>
+
+    <p class="mono" id="mbAddr">0905428801</p>
+
+    <button
+      type="button"
+      class="primary wide"
+      data-copy="0905428801">
+      Copy account
+    </button>
+
+  </div>
+
+</div>
+
+  </div>  <!-- SETTINGS MODAL -->  <div id="settings" class="modal" hidden><div class="sheet">
+
+  <div class="sheetHead">
+    <h2>Settings</h2>
+    <button id="closeSettings" class="iconBtn">✕</button>
+  </div>
+
+  <div class="settingsGrid">
+
+    <label>
+      AI Provider
+      <select id="hubProvider">
+        <option value="deepseek">DeepSeek</option>
+        <option value="gemini">Gemini</option>
+        <option value="openai">OpenAI</option>
+        <option value="anthropic">Anthropic</option>
+        <option value="openrouter">OpenRouter</option>
+        <option value="groq">Groq</option>
+        <option value="mistral">Mistral</option>
+        <option value="xai">xAI</option>
+        <option value="custom">Custom</option>
+      </select>
+    </label>
+
+    <label>
+      API key
+      <input
+        id="hubKey"
+        type="password"
+        autocomplete="off"
+        placeholder="Paste token">
+    </label>
+
+    <label id="hubBaseWrap" hidden>
+      Base URL
+      <input
+        id="hubBase"
+        type="text"
+        placeholder="https://api.example.com/v1">
+    </label>
+
+    <button id="hubAdd" class="wide" type="button">＋ Add</button>
+
+    <div class="settingsGrid compactModels">
+
+      <label>
+        Model 1
+        <select id="hubModel1">
+          <option value="">Select verified model</option>
+        </select>
+      </label>
+
+      <label>
+        Model 2
+        <select id="hubModel2">
+          <option value="">Optional reviewer model</option>
+        </select>
+      </label>
+
+    </div>
+
+    <label>
+      GitHub owner
+      <input
+        id="setGhOwner"
+        type="text"
+        placeholder="username or org">
+    </label>
+
+    <label>
+      GitHub token
+      <input
+        id="setGhToken"
+        type="password"
+        autocomplete="off"
+        placeholder="Classic token">
+    </label>
+
+    <div class="settingNote">
+      <span>First added key is used first</span>
+      <span>🛡 No docker.sock</span>
+    </div>
+
+  </div>
+
+  <div id="hubList" class="info compactInfo">
+    No AI provider connected yet.
+  </div>
+
+  <div class="info compactInfo">
+    Add a provider token, then Save GitHub if you publish.
+  </div>
+
+  <button id="saveSettings" class="primary wide">Save</button>
+
+  <p id="settingsState" class="muted"></p>
+
+</div>
+
+  </div>  <script src="/app.js?v=1.4.40"></script><img
+class="paf-made-by"
+src="/made-by.png"
+alt="Made with App Builder — Pi SoloHost">
+
+</body>
+    </html>
