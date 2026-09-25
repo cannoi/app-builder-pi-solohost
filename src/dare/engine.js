@@ -108,6 +108,11 @@ async function matchRule(sourceDir, fp, logs) {
   if (fp === 'DOCKER_CONTAINER_CRASH' && /cannot find module|module not found/i.test(logs)) {
     return { ruleId: 'NODE_MODULE_MISSING', risk: 'SAFE', repair: 'deps', reason: 'Container crashed because a Node package is missing.' };
   }
+  if (fp === 'DOCKER_CONTAINER_CRASH' || fp === 'RUNTIME_FILESYSTEM_PERMISSION' || fp.startsWith('RUNTIME_FILESYSTEM_PERMISSION:')) {
+    const inferred = fp.startsWith('RUNTIME_FILESYSTEM_PERMISSION:') ? fp : `RUNTIME_FILESYSTEM_PERMISSION:${await inferWritableDirFromSource(sourceDir) || ''}`.replace(/:$/, '');
+    const fsRepair = await runtimeFilesystemPermissionRepair(sourceDir, inferred, logs);
+    if (fsRepair) return fsRepair;
+  }
   if (fp === 'NODE_ENGINE_MISMATCH') {
     return await nodeEngineRepair(sourceDir, logs);
   }
@@ -270,10 +275,27 @@ async function localhostBind(sourceDir) {
   return null;
 }
 
+async function inferWritableDirFromSource(sourceDir) {
+  const df = await fs.readFile(path.join(sourceDir, 'Dockerfile'), 'utf8').catch(() => '');
+  if (!df) return '';
+  const workdir = path.posix.normalize(df.match(/^WORKDIR\s+([^\s#]+)/mi)?.[1] || '/app');
+  const files = await listFiles(sourceDir);
+  for (const rel of files) {
+    if (!/\.(js|mjs|cjs|ts|tsx)$/.test(rel) || rel.startsWith('node_modules/')) continue;
+    const text = await fs.readFile(path.join(sourceDir, rel), 'utf8').catch(() => '');
+    const abs = text.match(/mkdir(?:Sync)?\s*\(\s*['"](\/[^'"]+)['"]/);
+    if (abs?.[1]) return path.posix.normalize(abs[1]);
+    const joinData = text.match(/mkdir(?:Sync)?\s*\([^)]*(?:['"]data['"]|['"]\.\/data['"]|['"]\/app\/data['"])/);
+    if (joinData) return path.posix.join(workdir, 'data');
+  }
+  return '';
+}
+
 async function runtimeFilesystemPermissionRepair(sourceDir, fp, logs = '') {
-  const rawPath = fp.startsWith('RUNTIME_FILESYSTEM_PERMISSION:')
+  let rawPath = fp.startsWith('RUNTIME_FILESYSTEM_PERMISSION:')
     ? fp.slice('RUNTIME_FILESYSTEM_PERMISSION:'.length).trim()
     : String(String(logs).match(/(?:mkdir|open|write|rename|unlink)[^'\"]*['\"]([^'\"]+)['\"]/i)?.[1] || '').trim();
+  if (!rawPath || !rawPath.startsWith('/')) rawPath = await inferWritableDirFromSource(sourceDir);
   if (!rawPath || !rawPath.startsWith('/')) return null;
 
   const dfPath = path.join(sourceDir, 'Dockerfile');

@@ -147,3 +147,15 @@ test('DARE does not auto-repair permission errors outside the Docker WORKDIR', a
   assert.equal((await fs.readFile(path.join(dir, 'Dockerfile'), 'utf8')).includes('mkdir -p'), false);
   await fs.rm(dir, { recursive: true, force: true });
 });
+
+test('DARE patches Dockerfile so USER can write mkdir data dir', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'paf-dare-eacces-'));
+  await fs.writeFile(path.join(dir, 'Dockerfile'), 'FROM node:18-alpine\nWORKDIR /app\nCOPY . .\nUSER node\nCMD ["node","server.js"]\n');
+  await fs.writeFile(path.join(dir, 'server.js'), "const fs=require('fs');\nfs.mkdirSync('/app/data',{recursive:true});\n");
+  const r = await runDare({ sourceDir: dir, logs: "Error: EACCES: permission denied, mkdir '/app/data'" });
+  assert.equal(r.ok, true);
+  const df = await fs.readFile(path.join(dir, 'Dockerfile'), 'utf8');
+  assert.match(df, /mkdir -p '\/app\/data'/);
+  assert.match(df, /chown 'node' '\/app\/data'/);
+  await fs.rm(dir, { recursive: true, force: true });
+});

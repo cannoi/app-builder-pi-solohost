@@ -1,3 +1,10 @@
+## 1.4.46 — Deterministic repair loop guard
+
+- Stop repeated repairs by concrete runtime error fingerprint instead of changing user wording.
+- Do not rewrite GitHub smoke workflow for generic container crashes.
+- Classify runtime EACCES filesystem failures before generic smoke timeout handling.
+- Stop deterministic repair flow immediately when DARE loop protection triggers.
+
 ## 1.4.45 — Runtime-parity smoke test + post-publish incident repair
 - GitHub Actions smoke tests now run the published image with its declared default runtime user; CI no longer masks SoloHost permission failures by forcing root.
 - DARE detects deterministic `EACCES: permission denied, mkdir '<path>'` runtime failures and can safely create/chown only the exact writable directory under the Docker WORKDIR for the declared non-root image user.

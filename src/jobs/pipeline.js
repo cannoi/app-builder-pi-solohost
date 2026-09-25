@@ -19,7 +19,7 @@ import { detectUserLanguage, languageInstruction, languageInstructionFor } from 
 import { publishToGitHub } from '../github/publish.js';
 import { ensureMissingDependencies } from '../projects/deps-fix.js';
 import { runDare, formatDareReport } from '../dare/engine.js';
-import { shouldBlockRepeatedAction, nextRepeatState } from './loop-guard.js';
+import { shouldBlockRepeatedAction, nextRepeatState, repairFingerprint } from './loop-guard.js';
 import { mergeVerificationState } from './verification.js';
 import { maskSecrets } from '../utils/mask.js';
 import { inspectUpgrade, diagnoseUpgradeRequest, applyUpgrade } from '../upgrade/engine.js';
@@ -389,15 +389,6 @@ export function registerPipeline(app) {
       });
     }
     const language = detectUserLanguage(feedback);
-    const fingerprint = repeatFingerprint(feedback);
-    const guard = await projects.readMetadata(project, 'action-guard.json', null);
-    if (shouldBlockRepeatedAction(guard, fingerprint)) {
-      const message = 'NEEDS_USER_ACTION: The same failure was already handled twice recently without a verified step forward. I stopped the repair loop. Tell me what changed or provide the latest error/log so I can inspect a new cause.';
-      emit('repair', 'failed', message);
-      await projects.chat(project, message, 'assistant', { action: 'loop-guard', fingerprint });
-      throw new Error(message);
-    }
-    await projects.saveMetadata(project, 'action-guard.json', nextRepeatState(guard, fingerprint));
     const plan = await projects.startWorkPlan(project, {
       jobId: job.id,
       message: feedback,
@@ -503,7 +494,7 @@ export function registerPipeline(app) {
     let workflowDiagnostics = null;
     let autoRepair = null;
 
-    const pending = await projects.readMetadata(project, 'release-pending.json', null);
+    let pending = await projects.readMetadata(project, 'release-pending.json', null);
     const verifyOnly = Boolean(pending?.githubUrl)
       && payload.existingAction !== 'overwrite'
       && payload.forcePublish !== true
@@ -735,8 +726,13 @@ export function registerPipeline(app) {
     }
     const logText = String(diagnostics.logTail || '');
     const portHit = logText.match(/running on port\s+(\d+)/i);
-    const smokeBroken = /expected release image tag was not found|did not become reachable|container exited before smoke/i.test(logText);
-    if (classified?.code === 'workflow_port_mismatch' || classified?.code === 'workflow_smoke_timeout' || smokeBroken) {
+    // A generic smoke failure is not enough evidence to edit the workflow.
+    // Container crashes (including EACCES) belong to runtime/source diagnosis;
+    // only an explicit workflow classification may trigger a workflow patch.
+    const workflowSmokeRepairEligible = classified?.code === 'workflow_port_mismatch'
+      || classified?.code === 'workflow_smoke_timeout'
+      || classified?.code === 'workflow_image_tag_mismatch';
+    if (workflowSmokeRepairEligible) {
       const listenPort = portHit ? Number(portHit[1]) : 0;
       emit('repair', 'running', listenPort
         ? `The smoke test missed port ${listenPort}. Updating the GitHub workflow without rewriting the app…`
@@ -897,6 +893,10 @@ export function registerPipeline(app) {
         history: Array.isArray(history) ? history : [],
       });
       await projects.saveMetadata(project, 'dare-history.json', (dare.history || []).slice(-20));
+      if (dare.stopped) {
+        runtime.brief = formatDareReport(dare);
+        return runtime;
+      }
       if (dare.ok) {
         emit('repair', 'done', formatDareReport(dare));
         return {
@@ -1569,6 +1569,30 @@ export function registerPipeline(app) {
 
   async function improveProject(project, feedback, emit) {
     const source = projects.sourceDir(project.slug);
+    try {
+      const history = await projects.readMetadata(project, 'dare-history.json', []);
+      const dare = await runDare({
+        sourceDir: source,
+        logs: feedback,
+        extra: { message: feedback },
+        history: Array.isArray(history) ? history : [],
+      });
+      await projects.saveMetadata(project, 'dare-history.json', (dare.history || []).slice(-20));
+      if (dare.ok) {
+        emit('repair', 'done', formatDareReport(dare));
+        await stampMadeBy(source, cfg);
+        const tested = { staticResult: await runStaticTests(source), nodeResult: await runNodeTests(source, 45000), scan: await scanProject(source) };
+        return {
+          files: dare.files || [],
+          explanation: dare.reason,
+          dare,
+          tested,
+          brief: `${formatDareReport(dare)}\nNEXT: Tap Run, then Publish once to rebuild the image.`,
+        };
+      }
+    } catch (err) {
+      emit('repair', 'failed', String(err?.message || err).slice(0, 240));
+    }
 
     const networkRequest = /\b(internet|offline|online|network|dns|proxy|gateway|browse|browsing|fetch|connection|kết nối|mạng|internet|truy cập web)\b/i.test(String(feedback || ''));
     let networkPreflight = null;
@@ -1582,6 +1606,17 @@ export function registerPipeline(app) {
       }
       emit('network', 'done', `Builder Internet OK (${networkPreflight.httpsOk}/${networkPreflight.targets.length}).`);
     }
+    const runtimeState = await projects.readMetadata(project, 'runtime.json', {});
+    const problemFingerprint = repairFingerprint({ feedback, runtime: runtimeState });
+    const guard = await projects.readMetadata(project, 'action-guard.json', null);
+    if (shouldBlockRepeatedAction(guard, problemFingerprint)) {
+      const message = 'NEEDS_USER_ACTION: The same runtime problem was already attempted twice without a verified step forward. I stopped the repair loop. Provide the latest runtime or Actions log, or change the failing condition before trying again.';
+      emit('repair', 'failed', message);
+      await projects.chat(project, message, 'assistant', { action: 'loop-guard', fingerprint: problemFingerprint });
+      throw new Error(message);
+    }
+    await projects.saveMetadata(project, 'action-guard.json', nextRepeatState(guard, problemFingerprint));
+
     const relevant = await collectProjectContext(source);
     const attachContext = await attachmentContext(projects.projectDir(project));
     const attachList = await attachmentList(projects.projectDir(project));

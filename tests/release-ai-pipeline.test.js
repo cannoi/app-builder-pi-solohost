@@ -48,6 +48,25 @@ test('GitHub Actions port smoke failures are classified before changing app sour
   assert.match(result.hint, /Do not change the app/i);
 });
 
+
+
+test('runtime EACCES is classified before generic GitHub smoke handling', () => {
+  const result = classifyLogs("container did not become reachable within 60 seconds\nError: EACCES: permission denied, mkdir '/app/data'");
+  assert.equal(result.code, 'runtime_filesystem_permission');
+  assert.match(result.title, /permission denied/i);
+  assert.match(result.hint, /Dockerfile USER\/WORKDIR/i);
+});
+test('generic smoke/container failures do not trigger an unrelated workflow rewrite', async () => {
+  const text = await fs.readFile(new URL('../src/jobs/pipeline.js', import.meta.url), 'utf8');
+  const marker = 'const workflowSmokeRepairEligible =';
+  const start = text.indexOf(marker);
+  assert.ok(start >= 0);
+  const block = text.slice(start, start + 420);
+  assert.match(block, /workflow_port_mismatch/);
+  assert.match(block, /workflow_smoke_timeout/);
+  assert.match(block, /workflow_image_tag_mismatch/);
+  assert.doesNotMatch(block, /smokeBroken/);
+});
 test('release flow never creates the SoloHost package before the GHCR image gate', async () => {
   const text = await fs.readFile(new URL('../src/jobs/pipeline.js', import.meta.url), 'utf8');
   const gate = text.indexOf('const imageOk = Boolean(imageVerification.ok);');

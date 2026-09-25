@@ -4,7 +4,8 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
-import { shouldBlockRepeatedAction } from '../src/jobs/loop-guard.js';
+import { shouldBlockRepeatedAction, repairFingerprint } from '../src/jobs/loop-guard.js';
+import { fingerprintError } from '../src/dare/fingerprint.js';
 import { mergeVerificationState } from '../src/jobs/verification.js';
 import { openDb } from '../src/storage/db.js';
 import { ProjectManager } from '../src/projects/manager.js';
@@ -17,6 +18,13 @@ test('repeat guard blocks the same failed action after two attempts in a short w
   assert.equal(shouldBlockRepeatedAction(history, 'release-tests-failed', now + 11 * 60_000, 10 * 60_000, 2), false);
 });
 
+
+test('repair fingerprint follows the concrete runtime error, not changing user wording', () => {
+  const runtime = { error: "Error: EACCES: permission denied, mkdir '/app/data'", logs: '' };
+  assert.equal(repairFingerprint({ feedback: 'app chạy bị lỗi -> chạy', runtime }), 'RUNTIME_FILESYSTEM_PERMISSION:/app/data');
+  assert.equal(repairFingerprint({ feedback: 'fix lỗi quyền thư mục', runtime }), 'RUNTIME_FILESYSTEM_PERMISSION:/app/data');
+  assert.equal(fingerprintError(runtime.error), 'RUNTIME_FILESYSTEM_PERMISSION:/app/data');
+});
 test('verification after Improve replaces stale test results used by Publish', () => {
   const old = { staticResult: { status: 'passed' }, nodeResult: { status: 'failed', error: 'old' }, preview: { status: 'passed' } };
   const fresh = { staticResult: { status: 'passed' }, nodeResult: { status: 'passed' }, scan: { critical: 0 }, dockerBuild: { status: 'passed' }, e2e: { status: 'passed' } };

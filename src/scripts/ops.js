@@ -130,6 +130,10 @@ export function classifyLogs(logs = '') {
   if (/enoent|no such file/i.test(t) && /package\.json/i.test(t)) {
     return { code: 'missing_package', title: 'package.json was not in the workspace.', hint: 'Do not run npm in an empty sandbox. Use Build, then Run.' };
   }
+  if (/EACCES|permission denied/i.test(t) && /(?:mkdir|open|write|rename|unlink)/i.test(t)) {
+    const target = t.match(/(?:mkdir|open|write|rename|unlink)[^'\"]*['\"]([^'\"]+)['\"]/i)?.[1] || '';
+    return { code: 'runtime_filesystem_permission', title: `Runtime filesystem permission denied${target ? ` at ${target}` : ''}.`, hint: 'The container user cannot write the required runtime path. Inspect the Dockerfile USER/WORKDIR and patch only the concrete writable directory; do not chmod the whole image.' };
+  }
   if (/container did not become reachable/i.test(t) && /running on port\s+(\d+)/i.test(t)) {
     const port = t.match(/running on port\s+(\d+)/i)?.[1] || 'the app port';
     return { code: 'workflow_port_mismatch', title: `The GitHub smoke test did not reach the app port (${port}).`, hint: `The app reports port ${port}. The old smoke test can miss valid ports; regenerate the Builder workflow and retry. Do not change the app just to satisfy a wrong CI port.` };
