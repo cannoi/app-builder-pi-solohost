@@ -1,3 +1,9 @@
+## 1.4.45 — Runtime-parity smoke test + post-publish incident repair
+- GitHub Actions smoke tests now run the published image with its declared default runtime user; CI no longer masks SoloHost permission failures by forcing root.
+- DARE detects deterministic `EACCES: permission denied, mkdir '<path>'` runtime failures and can safely create/chown only the exact writable directory under the Docker WORKDIR for the declared non-root image user.
+- Post-publish error messages can be triaged before AI; deterministic repairs are attempted first, and published projects can be routed through a verified re-publish instead of repeated blind retries.
+- Unknown published runtime failures can include matching GitHub Actions run/log evidence in the AI diagnosis context.
+
 ## 1.4.41
 - Upgrade Workshop: GitHub import now opens the inspected project and asks for the upgrade request.
 - Upgrade history is an append-only array.

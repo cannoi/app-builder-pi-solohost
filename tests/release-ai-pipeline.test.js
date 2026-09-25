@@ -15,6 +15,8 @@ test('GitHub workflow smoke test probes common web ports and pushes the tested i
   assert.match(yml, /docker image inspect/);
   assert.match(yml, /COMMON=\(3000 3001 4173 5000 5173 6080 8000 8080 8081 8501\)/);
   assert.match(yml, /Smoke test passed on container port/);
+  assert.match(yml, /Smoke-testing the image with its declared default runtime user/);
+  assert.doesNotMatch(yml, /docker run[^\n]*--user 0/);
   assert.match(yml, /docker image push/);
   assert.doesNotMatch(yml, /name: Push image[\s\S]*push:\s*true/);
   await fs.rm(dir, { recursive: true, force: true });
@@ -79,4 +81,26 @@ test('DeepSeek model normalization migrates old and invalid UI aliases safely', 
   assert.equal(normalizeDeepSeekModel('deepseek-reasoner'), 'deepseek-v4-flash');
   assert.equal(normalizeDeepSeekModel('deepseek-flash'), 'deepseek-v4-flash');
   assert.equal(normalizeDeepSeekModel('deepseek-v4-pro'), 'deepseek-v4-pro');
+});
+
+
+test('published runtime incidents are triaged before AI and can carry GitHub Actions evidence', async () => {
+  const text = await fs.readFile(new URL('../src/jobs/pipeline.js', import.meta.url), 'utf8');
+  assert.match(text, /async function collectPublishedIncidentEvidence/);
+  assert.match(text, /PUBLISHED RUNTIME INCIDENT EVIDENCE/);
+  assert.match(text, /const incident = await triagePublishedIncident\(project, message, runtimeNow, emit\)/);
+  assert.match(text, /Skipping AI: deterministic repair is being verified/);
+});
+
+test('published incident repair republish targets the verified existing repository without asking to create another repo', async () => {
+  const text = await fs.readFile(new URL('../src/jobs/pipeline.js', import.meta.url), 'utf8');
+  assert.match(text, /autoRepairRelease = Boolean\(incident\?\.handled && incident\?\.evidence\?\.published/);
+  assert.match(text, /existingAction: autoRepairRelease \? 'overwrite' : 'confirm'/);
+  assert.match(text, /repoName: autoRepairRelease \? incident\.evidence\.repoInfo\.repo : undefined/);
+});
+
+test('work-plan Publish is not marked done unless a verified release state is returned', async () => {
+  const text = await fs.readFile(new URL('../src/jobs/pipeline.js', import.meta.url), 'utf8');
+  assert.match(text, /publishStatus = String\(payload\.result\?\.status/);
+  assert.match(text, /!\['released', 'packaged'\]\.includes\(publishStatus\)/);
 });

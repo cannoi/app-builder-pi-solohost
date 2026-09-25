@@ -153,7 +153,8 @@ jobs:
             RUN_ARGS+=( -p "127.0.0.1:$((18080+i)):$p" )
             i=$((i+1))
           done
-          docker run -d --rm --name paf-smoke --user 0 -e NODE_ENV=production -e PORT="\${PORTS[0]}" "\${RUN_ARGS[@]}" "\${IMAGE}" >/dev/null
+          echo "Smoke-testing the image with its declared default runtime user."
+          docker run -d --rm --name paf-smoke -e NODE_ENV=production -e PORT="\${PORTS[0]}" "\${RUN_ARGS[@]}" "\${IMAGE}" >/dev/null
           trap 'docker logs paf-smoke 2>/dev/null || true; docker stop paf-smoke >/dev/null 2>&1 || true' EXIT
 
           for i in {1..45}; do

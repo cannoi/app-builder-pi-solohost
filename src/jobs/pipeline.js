@@ -21,6 +21,7 @@ import { ensureMissingDependencies } from '../projects/deps-fix.js';
 import { runDare, formatDareReport } from '../dare/engine.js';
 import { shouldBlockRepeatedAction, nextRepeatState } from './loop-guard.js';
 import { mergeVerificationState } from './verification.js';
+import { maskSecrets } from '../utils/mask.js';
 import { inspectUpgrade, diagnoseUpgradeRequest, applyUpgrade } from '../upgrade/engine.js';
 
 // Safety net only — does not change what inspectUpgrade does on the happy path.
@@ -834,6 +835,90 @@ export function registerPipeline(app) {
     return result;
   });
 
+  async function collectPublishedIncidentEvidence(project, message, runtimeNow) {
+    const raw = `${message}\n${runtimeNow?.error || ''}\n${runtimeNow?.logs || ''}`;
+    if (!/(EACCES|permission denied|cannot find module|ERR_MODULE_NOT_FOUND|process died|container (?:exited|crashed)|did not become reachable|health check.*(?:fail|error)|connection refused|GHCR.*(?:fail|error|denied)|GitHub Actions.*(?:fail|error)|không chạy|lỗi)/i.test(raw)) return null;
+
+    const release = await projects.readMetadata(project, 'release.json', {});
+    const pending = await projects.readMetadata(project, 'release-pending.json', {});
+    const released = release?.github || {};
+    const fromMessage = parseGithubRepoUrl(message);
+    const parsedRelease = parseGithubRepoUrl(released?.url || pending?.githubUrl || '');
+    const repoInfo = fromMessage || parsedRelease || ((released?.owner && released?.repo) ? { owner: released.owner, repo: released.repo, url: released.url || `https://github.com/${released.owner}/${released.repo}` } : null);
+
+    let workflowRun = null;
+    let workflowDiagnostics = null;
+    if (repoInfo?.repo && github?.latestWorkflowRun) {
+      const headSha = released?.sha || pending?.sha || null;
+      workflowRun = await github.latestWorkflowRun(repoInfo.repo, 'docker.yml', { headSha }).catch(() => null);
+      if (workflowRun?.status === 'completed' && workflowRun.conclusion && workflowRun.conclusion !== 'success' && workflowRun.id && typeof github.workflowDiagnostics === 'function') {
+        workflowDiagnostics = await github.workflowDiagnostics(repoInfo.repo, workflowRun.id).catch((err) => ({
+          summary: 'Unable to read GitHub Actions logs.',
+          logTail: String(err.message || err),
+        }));
+      }
+    }
+
+    const published = Boolean(released?.verified || released?.url || pending?.githubUrl || repoInfo?.repo);
+    const incident = maskSecrets(clampText(raw, 9000));
+    const githubEvidence = workflowDiagnostics
+      ? maskSecrets(clampText([
+        `Repository: ${repoInfo?.owner || ''}/${repoInfo?.repo || ''}`,
+        `Workflow: ${workflowRun?.html_url || workflowRun?.id || 'unknown'}`,
+        `Status: ${workflowRun?.status || 'unknown'} / ${workflowRun?.conclusion || 'unknown'}`,
+        workflowDiagnostics.summary,
+        workflowDiagnostics.logTail,
+      ].filter(Boolean).join('\n'), 10000))
+      : (workflowRun ? `Repository: ${repoInfo?.owner || ''}/${repoInfo?.repo || ''}\nWorkflow: ${workflowRun.html_url || workflowRun.id || 'unknown'}\nStatus: ${workflowRun.status || 'unknown'} / ${workflowRun.conclusion || 'unknown'}` : 'No matching GitHub Actions failure was available.');
+
+    return {
+      published,
+      repoInfo,
+      release,
+      pending,
+      workflowRun,
+      workflowDiagnostics,
+      context: `PUBLISHED RUNTIME INCIDENT EVIDENCE\nUser/runtime evidence:\n${incident}\n\nGitHub evidence:\n${githubEvidence}`,
+    };
+  }
+
+  async function triagePublishedIncident(project, message, runtimeNow, emit) {
+    const evidence = await collectPublishedIncidentEvidence(project, message, runtimeNow);
+    if (!evidence) return null;
+    const source = projects.sourceDir(project.slug);
+    const history = await projects.readMetadata(project, 'dare-history.json', []);
+    let checkpoint = null;
+    try {
+      checkpoint = await snapshots.create(project, 'before-published-incident-repair').catch(() => null);
+      const dare = await runDare({
+        sourceDir: source,
+        logs: `${message}\n${runtimeNow?.error || ''}\n${runtimeNow?.logs || ''}\n${evidence.workflowDiagnostics?.logTail || ''}`,
+        extra: evidence.workflowRun || {},
+        history: Array.isArray(history) ? history : [],
+      });
+      await projects.saveMetadata(project, 'dare-history.json', (dare.history || []).slice(-20));
+      if (dare.ok) {
+        emit('repair', 'done', formatDareReport(dare));
+        return {
+          handled: true,
+          action: evidence.published ? 'publish' : 'run',
+          reply: `I found a verified runtime error and applied the smallest deterministic repair (${dare.files.join(', ') || 'project files'}). I will verify it before reporting success.`,
+          goal: evidence.published ? 'Rebuild and verify the published app after the deterministic runtime repair.' : 'Run the repaired app and verify health before reporting success.',
+          dare,
+          evidence,
+        };
+      }
+      if (dare.userAction) {
+        return { handled: false, evidence, userAction: true, dare };
+      }
+      return { handled: false, evidence, dare };
+    } catch (err) {
+      if (checkpoint?.id) await snapshots.restore(project, checkpoint.id).catch(() => {});
+      emit('repair', 'failed', `Deterministic incident repair stopped safely: ${String(err.message || err).slice(0, 220)}`);
+      return { handled: false, evidence, error: String(err.message || err).slice(0, 500) };
+    }
+  }
+
   jobs.on('builder_chat', async (job, { emit }) => {
     const project = mustProject(job.payload.projectId);
     const message = String(job.payload.message || '').trim();
@@ -854,22 +939,36 @@ export function registerPipeline(app) {
     const attachContext = await attachmentContext(projects.projectDir(project));
     const requestedImage = extractGhcrImage(message);
     const installFromImage = Boolean(requestedImage && /(solohost|cài đặt|cai dat|install|docker-compose|config_options|file cài|tạo file|tao file|generate)/i.test(message));
-    emit('ai', 'running', installFromImage ? 'Preparing SoloHost install files from the GitHub image…' : 'AI is deciding the next best step…');
+    const incident = await triagePublishedIncident(project, message, runtimeNow, emit);
+    const incidentContext = incident?.evidence?.context ? `\n${incident.evidence.context}` : '';
+    emit('ai', 'running', installFromImage ? 'Preparing SoloHost install files from the GitHub image…' : (incident?.handled ? 'Skipping AI: deterministic repair is being verified…' : 'AI is deciding the next best step…'));
     let r = { json: { action: inferAction(message) || 'reply', reply: '', commands: [] } };
-    try {
-      if (!installFromImage) {
-        r = await ai.completeJson({
-          task: 'USER_CHAT',
-          system: SYSTEM,
-          prompt: builderChatPrompt(project, message, `${languageInstruction(message)}\nHANDOFF:\n${JSON.stringify(handoff)}\nCURRENT WORK PLAN:\n${JSON.stringify(previousPlan)}\nACTIVITY LOG:\n${activityText}\nHISTORY:\n${history}\nDIAGNOSIS:\n${JSON.stringify(diagnosis)}\nRUNTIME:\n${JSON.stringify({ status: runtimeNow.status, error: runtimeNow.error, previewPath: runtimeNow.previewPath })}\n${context}\n${attachContext}`, await attachmentList(projects.projectDir(project))),
-          projectId: project.id,
-          images: [...imageInputs(incomingFiles), ...(await imageInputsFromAttachments(projects.projectDir(project)))],
-        });
-      } else {
-        r = { json: { action: 'export', reply: `Creating SoloHost install files for ${requestedImage}.`, commands: [], steps: [{ action: 'export', goal: message }] } };
+    if (incident?.handled) {
+      const verifiedPublishedIncident = Boolean(incident.evidence?.published && incident.evidence?.repoInfo?.repo);
+      const needsFreshRun = runtimeNow?.status !== 'passed' || runtimeNow?.health !== true;
+      const steps = verifiedPublishedIncident && incident.action === 'publish' && needsFreshRun
+        ? [
+          { action: 'run', goal: 'Run the repaired app and verify health before republishing the existing release.' },
+          { action: 'publish', goal: incident.goal },
+        ]
+        : [{ action: incident.action, goal: incident.goal }];
+      r = { json: { action: incident.action, reply: incident.reply, commands: [], steps } };
+    } else {
+      try {
+        if (!installFromImage) {
+          r = await ai.completeJson({
+            task: 'USER_CHAT',
+            system: SYSTEM,
+            prompt: builderChatPrompt(project, message, `${languageInstruction(message)}\nHANDOFF:\n${JSON.stringify(handoff)}\nCURRENT WORK PLAN:\n${JSON.stringify(previousPlan)}\nACTIVITY LOG:\n${activityText}\nHISTORY:\n${history}\nDIAGNOSIS:\n${JSON.stringify(diagnosis)}\nRUNTIME:\n${JSON.stringify({ status: runtimeNow.status, error: runtimeNow.error, previewPath: runtimeNow.previewPath })}\n${incidentContext}\n${context}\n${attachContext}`, await attachmentList(projects.projectDir(project))),
+            projectId: project.id,
+            images: [...imageInputs(incomingFiles), ...(await imageInputsFromAttachments(projects.projectDir(project)))],
+          });
+        } else {
+          r = { json: { action: 'export', reply: `Creating SoloHost install files for ${requestedImage}.`, commands: [], steps: [{ action: 'export', goal: message }] } };
+        }
+      } catch (err) {
+        emit('ai', 'failed', friendlyAiError(err));
       }
-    } catch (err) {
-      emit('ai', 'failed', friendlyAiError(err));
     }
     let action = String(r.json?.action || inferAction(message) || 'reply');
     if (installFromImage) action = 'export';
@@ -987,20 +1086,48 @@ export function registerPipeline(app) {
             ];
           } else if (stepAction === 'publish') {
             emit('release', 'running', 'Publishing the app now…');
-            payload.result = await runRelease(project, { approved: true, confirm: true, push: true, existingAction: 'confirm' }, emit);
+            const autoRepairRelease = Boolean(incident?.handled && incident?.evidence?.published && incident?.evidence?.repoInfo?.repo);
+            payload.result = await runRelease(project, {
+              approved: true,
+              confirm: true,
+              push: true,
+              existingAction: autoRepairRelease ? 'overwrite' : 'confirm',
+              repoName: autoRepairRelease ? incident.evidence.repoInfo.repo : undefined,
+            }, emit);
             payload.publish_ready = payload.result?.status === 'released' || payload.result?.status === 'packaged';
           }
-          payload.reports.push({ action: stepAction, status: 'done', goal: step.goal });
+          let stepStatus = 'done';
+          let stepError = '';
+          if (stepAction === 'run' && payload.runtime?.status !== 'passed') {
+            stepStatus = 'failed';
+            stepError = payload.runtime?.error || 'Run did not produce a verified healthy runtime.';
+          }
+          if (stepAction === 'publish') {
+            const publishStatus = String(payload.result?.status || '');
+            if (publishStatus === 'waiting_github_actions' || publishStatus === 'needs_repository_choice') {
+              stepStatus = 'waiting';
+              stepError = payload.result?.next || 'Publish is waiting for the next required user/action step.';
+            } else if (!['released', 'packaged'].includes(publishStatus)) {
+              stepStatus = 'failed';
+              stepError = payload.result?.brief || payload.result?.next || 'Publish did not reach a verified release state.';
+            }
+          }
+          if (stepStatus === 'failed') prerequisiteFailed = true;
+          payload.reports.push({ action: stepAction, status: stepStatus === 'waiting' ? 'blocked' : stepStatus, goal: step.goal, error: stepError });
           await projects.updateWorkPlan(project, {
             stepId: planStep.id,
             step: {
-              status: 'done',
+              status: stepStatus,
               action: stepAction,
               files: payload.result?.files || payload.built?.files || [],
-              result: stepAction === 'improve' ? (payload.result?.explanation || 'Patch verified.') : `${stepAction} completed.`,
+              error: stepError || undefined,
+              result: stepAction === 'improve' ? (payload.result?.explanation || 'Patch verified.') : (stepStatus === 'done' ? `${stepAction} completed.` : stepError),
             },
             reports: payload.reports,
           });
+          if (stepStatus === 'done') emit(stepAction, 'done', `${stepAction} completed and verified.`);
+          else if (stepStatus === 'waiting') emit(stepAction, 'done', stepError);
+          else emit(stepAction, 'failed', stepError);
         } catch (err) {
           const error = String(err.message || err).slice(0, 240);
           payload.reports.push({ action: stepAction, status: 'failed', goal: step.goal, error });
@@ -1585,8 +1712,10 @@ export function registerPipeline(app) {
       return runtime;
     }
     emit('repair', 'running', crash ? `Crash found: ${crash.title}` : 'Preview failed. Applying one automatic fix…');
+    let dareCheckpoint = null;
     try {
       const history = await projects.readMetadata(project, 'dare-history.json', []);
+      dareCheckpoint = await snapshots.create(project, 'before-dare-run-repair').catch(() => null);
       const dare = await runDare({
         sourceDir: projects.sourceDir(project.slug),
         logs: `${runtime.error || ''}\n${runtime.logs || ''}`,
@@ -1599,6 +1728,8 @@ export function registerPipeline(app) {
         emit('run', 'running', 'Retrying the preview after deterministic repair…');
         runtime = await runProject(project, emit);
         if (runtime.status === 'passed') return { ...runtime, dare };
+        if (dareCheckpoint?.id) await snapshots.restore(project, dareCheckpoint.id).catch(() => {});
+        emit('rollback', 'done', 'The deterministic repair did not produce a passing preview, so the previous checkpoint was restored before AI diagnosis.');
       } else if (dare.userAction) {
         runtime.brief = formatDareReport(dare);
         return runtime;

@@ -100,6 +100,7 @@ async function matchRule(sourceDir, fp, logs) {
   if (fp === 'DOCKER_LOCALHOST_BIND') return localhostBind(sourceDir);
   if (fp === 'SQLITE_DIRECTORY_MISSING') return sqliteDirectoryRepair(sourceDir, logs);
   if (fp === 'SQLITE_WRITE_PERMISSION') return { ruleId: 'SQLITE_WRITE_PERMISSION', risk: 'UNSAFE', reason: 'SQLite is present but the database path is not writable. Builder will not change permissions automatically.', next: 'USER_ACTION' };
+  if (fp.startsWith('RUNTIME_FILESYSTEM_PERMISSION')) return await runtimeFilesystemPermissionRepair(sourceDir, fp, logs);
   if (fp === 'GHCR_PACKAGE_WRITE_PERMISSION') {
     const wf = await workflowPackagesWrite(sourceDir);
     return wf || { ruleId: 'GHCR_PACKAGE_WRITE_PERMISSION', risk: 'UNSAFE', reason: 'GitHub account/repository does not allow package publishing. Builder will not change account permissions.', next: 'USER_ACTION' };
@@ -173,6 +174,16 @@ async function applyAction(sourceDir, action, history) {
   if (action.repair === 'workflow-packages') {
     const file = await ensureWorkflowPackagesWrite(sourceDir);
     return report({ ok: true, fingerprint: 'GHCR_PACKAGE_WRITE_PERMISSION', layer: 'GHCR_ERROR', ruleId: 'GH_ACTIONS_PERMISSION_MISSING', files: [file], reason: 'Added only packages: write to the image workflow.', next: 'CONTINUE', history });
+  }
+
+  if (action.repair === 'filesystem-permission' && action.dockerfile && action.path && action.user) {
+    const file = await patchDockerfileRuntimeDirectory(sourceDir, action.dockerfile, action.path, action.user);
+    return report({
+      ok: true, fingerprint: action.fingerprint || `RUNTIME_FILESYSTEM_PERMISSION:${action.path}`, layer: 'RUNTIME_ERROR',
+      ruleId: 'RUNTIME_FILESYSTEM_PERMISSION', files: [file],
+      reason: `Made the runtime directory ${action.path} writable by the image user ${action.user} without changing application code.`,
+      next: 'CONTINUE', history,
+    });
   }
 
   return report({ ok: false, fingerprint: action.fingerprint || 'UNKNOWN', layer: action.layer || 'UNKNOWN', reason: 'Rule matched but produced no verified patch.', next: 'AI', history });
@@ -257,6 +268,59 @@ async function localhostBind(sourceDir) {
     }
   }
   return null;
+}
+
+async function runtimeFilesystemPermissionRepair(sourceDir, fp, logs = '') {
+  const rawPath = fp.startsWith('RUNTIME_FILESYSTEM_PERMISSION:')
+    ? fp.slice('RUNTIME_FILESYSTEM_PERMISSION:'.length).trim()
+    : String(String(logs).match(/(?:mkdir|open|write|rename|unlink)[^'\"]*['\"]([^'\"]+)['\"]/i)?.[1] || '').trim();
+  if (!rawPath || !rawPath.startsWith('/')) return null;
+
+  const dfPath = path.join(sourceDir, 'Dockerfile');
+  const df = await fs.readFile(dfPath, 'utf8').catch(() => '');
+  if (!df) return null;
+
+  const workdir = df.match(/^WORKDIR\s+([^\s#]+)/mi)?.[1] || '/app';
+  const userMatches = [...df.matchAll(/^USER\s+([^\s#]+)/gmi)];
+  const runtimeUser = userMatches.length ? userMatches[userMatches.length - 1][1] : '';
+  if (!runtimeUser || /^(0|root)$/i.test(runtimeUser)) return null;
+
+  const normalizedWorkdir = path.posix.normalize(workdir);
+  const normalizedTarget = path.posix.normalize(rawPath);
+  const underWorkdir = normalizedTarget === normalizedWorkdir || normalizedTarget.startsWith(`${normalizedWorkdir.replace(/\/$/, '')}/`);
+  if (!underWorkdir) return null;
+
+  // Only repair the concrete runtime directory implicated by mkdir/open/write.
+  // Do not chmod the whole app, and do not modify source code.
+  return {
+    ruleId: 'RUNTIME_FILESYSTEM_PERMISSION',
+    fingerprint: fp,
+    layer: 'RUNTIME_ERROR',
+    risk: 'SAFE',
+    repair: 'filesystem-permission',
+    dockerfile: 'Dockerfile',
+    path: normalizedTarget,
+    user: runtimeUser,
+    reason: `The image runs as ${runtimeUser}, but ${normalizedTarget} is not writable by that user.`,
+  };
+}
+
+async function patchDockerfileRuntimeDirectory(sourceDir, file, targetPath, user) {
+  const full = path.join(sourceDir, file);
+  const text = await fs.readFile(full, 'utf8');
+  const escapedPath = String(targetPath).replace(/'/g, "'\"'\"'");
+  const marker = new RegExp(`^USER\\s+${user.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*$`, 'mi');
+  if (!marker.test(text)) throw new Error('The expected runtime USER instruction was not found.');
+  const block = `RUN mkdir -p '${escapedPath}' && chown '${user}' '${escapedPath}'\n`;
+  const escapedTarget = String(targetPath).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const hasMkdir = new RegExp(`RUN\\s+mkdir\\s+-p\\s+['\"]?${escapedTarget}`, 'i').test(text);
+  const escapedUser = String(user).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const hasChown = new RegExp(`chown\\s+['\"]?${escapedUser}['\"]?\\s+['\"]?${escapedTarget}`, 'i').test(text);
+  if (hasMkdir && hasChown) return file;
+  const next = text.replace(marker, `${block}USER ${user}`);
+  if (next === text) throw new Error('Dockerfile runtime permission patch was not applied.');
+  await fs.writeFile(full, next);
+  return file;
 }
 
 async function sqliteDirectoryRepair(sourceDir, logs = '') {

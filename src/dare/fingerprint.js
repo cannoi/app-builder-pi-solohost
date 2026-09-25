@@ -42,6 +42,12 @@ export function fingerprintError(text = '') {
   if (/copy failed|dockerfile.*(?:no such file|not found)|no such file.*(?:dockerfile|context)/i.test(t)) {
     return 'DOCKER_COPY_FAILED';
   }
+  if (/EACCES[^\n]*(?:mkdir|permission denied)[^\n]*['\"]([^'\"]+)['\"]/i.test(t)
+      || /(?:permission denied|EACCES)[^\n]*mkdir/i.test(t)) {
+    const hit = t.match(/mkdir[^'\"]*['\"]([^'\"]+)['\"]/i);
+    const target = String(hit?.[1] || '').trim();
+    return target ? `RUNTIME_FILESYSTEM_PERMISSION:${target}` : 'RUNTIME_FILESYSTEM_PERMISSION';
+  }
   if (/container exited before smoke|container did not become reachable|process died before.*listen/i.test(t)) return 'DOCKER_CONTAINER_CRASH';
   if (/not listening|connection refused.*(?:port|localhost)|port.*(?:not reachable|unreachable)/i.test(t)) return 'DOCKER_PORT_NOT_LISTENING';
 
@@ -63,7 +69,7 @@ export function classifyLayer(fp = '') {
   if (fp.startsWith('NODE_MODULE_MISSING') || fp === 'NPM_LOCKFILE_OUT_OF_SYNC' || fp.startsWith('NPM_SCRIPT_MISSING')) return 'DEPENDENCY_ERROR';
   if (fp.startsWith('GHCR') || fp === 'GH_ACTIONS_PERMISSION_MISSING') return 'GHCR_ERROR';
   if (fp.startsWith('DOCKER') || fp.startsWith('COMPOSE') || fp.startsWith('HTTP')) return 'CONTAINER_ERROR';
-  if (fp.startsWith('SQLITE')) return 'RUNTIME_ERROR';
+  if (fp.startsWith('SQLITE') || fp.startsWith('RUNTIME_FILESYSTEM_PERMISSION')) return 'RUNTIME_ERROR';
   if (fp === 'APP_LOGIC_UNKNOWN') return 'SOURCE_ERROR';
   return 'UNKNOWN';
 }
