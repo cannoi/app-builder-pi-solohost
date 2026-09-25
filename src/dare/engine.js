@@ -133,6 +133,16 @@ async function preflightScan(sourceDir) {
 }
 
 async function matchRule(sourceDir, fp, logs) {
+  if (fp === 'NATIVE_DEPENDENCY_BUILD_FAILURE') {
+    return {
+      ruleId: 'NATIVE_DEPENDENCY_BUILD_FAILURE',
+      fingerprint: fp,
+      layer: 'DEPENDENCY_ERROR',
+      risk: 'UNSAFE',
+      reason: 'A native package failed to compile. Adding the same dependency again will not fix it.',
+      next: 'AI',
+    };
+  }
   if (fp.startsWith('NODE_MODULE_MISSING:')) {
     return { ruleId: 'NODE_MODULE_MISSING', risk: 'SAFE', repair: 'deps', reason: `Missing dependency: ${fp.slice('NODE_MODULE_MISSING:'.length)}` };
   }
@@ -144,6 +154,9 @@ async function matchRule(sourceDir, fp, logs) {
   if (fp === 'GHCR_PACKAGE_WRITE_PERMISSION') {
     const wf = await workflowPackagesWrite(sourceDir);
     return wf || { ruleId: 'GHCR_PACKAGE_WRITE_PERMISSION', risk: 'UNSAFE', reason: 'GitHub account/repository does not allow package publishing. Builder will not change account permissions.', next: 'USER_ACTION' };
+  }
+  if (fp === 'DOCKER_CONTAINER_CRASH' && /node-gyp|gyp ERR!|bindings file/i.test(logs)) {
+    return { ruleId: 'NATIVE_DEPENDENCY_BUILD_FAILURE', fingerprint: 'NATIVE_DEPENDENCY_BUILD_FAILURE', layer: 'DEPENDENCY_ERROR', risk: 'UNSAFE', reason: 'Container crash is a native compile failure, not a missing package.json entry.', next: 'AI' };
   }
   if (fp === 'DOCKER_CONTAINER_CRASH' && /cannot find module|module not found/i.test(logs)) {
     return { ruleId: 'NODE_MODULE_MISSING', risk: 'SAFE', repair: 'deps', reason: 'Container crashed because a Node package is missing.' };

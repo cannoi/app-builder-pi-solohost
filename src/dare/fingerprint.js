@@ -51,6 +51,10 @@ export function fingerprintError(text = '') {
   if (/container exited before smoke|container did not become reachable|process died before.*listen/i.test(t)) return 'DOCKER_CONTAINER_CRASH';
   if (/not listening|connection refused.*(?:port|localhost)|port.*(?:not reachable|unreachable)/i.test(t)) return 'DOCKER_PORT_NOT_LISTENING';
 
+  if (/(?:node-gyp|gyp ERR!|invalid ELF header|Could not locate the bindings file|was compiled against a different Node\.js version|native.*(?:compil|rebuild) fail)/i.test(t)
+      && /(?:sqlite3|better-sqlite3|bcrypt|sharp|canvas)/i.test(t)) {
+    return 'NATIVE_DEPENDENCY_BUILD_FAILURE';
+  }
   if (/sqlite|better-sqlite3/i.test(t) && /(?:enoent|no such file|cannot open|database.*not found|sqlite_cantopen.*unable to open database file)/i.test(t)) return 'SQLITE_DIRECTORY_MISSING';
   if (/sqlite|better-sqlite3/i.test(t) && /(?:readonly|read-only|eacces|permission denied)/i.test(t)) return 'SQLITE_WRITE_PERMISSION';
 
@@ -66,7 +70,7 @@ export function fingerprintError(text = '') {
 }
 
 export function classifyLayer(fp = '') {
-  if (fp.startsWith('NODE_MODULE_MISSING') || fp === 'NPM_LOCKFILE_OUT_OF_SYNC' || fp.startsWith('NPM_SCRIPT_MISSING')) return 'DEPENDENCY_ERROR';
+  if (fp.startsWith('NODE_MODULE_MISSING') || fp === 'NATIVE_DEPENDENCY_BUILD_FAILURE' || fp === 'NPM_LOCKFILE_OUT_OF_SYNC' || fp.startsWith('NPM_SCRIPT_MISSING')) return 'DEPENDENCY_ERROR';
   if (fp.startsWith('GHCR') || fp === 'GH_ACTIONS_PERMISSION_MISSING') return 'GHCR_ERROR';
   if (fp.startsWith('DOCKER') || fp.startsWith('COMPOSE') || fp.startsWith('HTTP')) return 'CONTAINER_ERROR';
   if (fp.startsWith('SQLITE') || fp.startsWith('RUNTIME_FILESYSTEM_PERMISSION')) return 'RUNTIME_ERROR';

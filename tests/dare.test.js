@@ -189,3 +189,16 @@ test('DARE treats an old EACCES log as a verified no-op after the Dockerfile per
   assert.deepEqual(r.changed, []);
   await fs.rm(dir, { recursive: true, force: true });
 });
+
+test('native compile logs are not treated as a missing package.json dependency', async () => {
+  const logs = "gyp ERR! build error\nnode-gyp rebuild\nbetter-sqlite3";
+  assert.equal(fingerprintError(logs), 'NATIVE_DEPENDENCY_BUILD_FAILURE');
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'paf-dare-native-'));
+  await fs.writeFile(path.join(dir, 'package.json'), JSON.stringify({ name: 'x', dependencies: { 'better-sqlite3': '11.0.0' } }));
+  const r = await runDare({ sourceDir: dir, logs });
+  assert.equal(r.ok, false);
+  assert.equal(r.fingerprint, 'NATIVE_DEPENDENCY_BUILD_FAILURE');
+  const pkg = JSON.parse(await fs.readFile(path.join(dir, 'package.json'), 'utf8'));
+  assert.equal(pkg.dependencies['better-sqlite3'], '11.0.0');
+  await fs.rm(dir, { recursive: true, force: true });
+});

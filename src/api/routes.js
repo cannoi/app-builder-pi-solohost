@@ -370,6 +370,30 @@ export function registerRoutes(r, app) {
     res.status(202).json({ jobId: job.id, message: 'GitHub Upgrade Workshop started.' });
   });
 
+  r.post('/api/projects/:id/diagnose', (req, res) => {
+    const p = projects.get(req.params.id);
+    if (!p) return res.status(404).json({ error: 'Project not found' });
+    if (!ensureFree(p.id, res)) return;
+    const job = jobs.enqueue({ type: 'project_diagnose', projectId: p.id, payload: { projectId: p.id } });
+    setImmediate(() => jobs.kick(job));
+    res.status(202).json({ jobId: job.id, message: 'Project diagnosis started.' });
+  });
+
+  r.post('/api/projects/:id/advisor', (req, res) => {
+    const p = projects.get(req.params.id);
+    if (!p) return res.status(404).json({ error: 'Project not found' });
+    if (!ensureFree(p.id, res)) return;
+    const job = jobs.enqueue({ type: 'builder_advisor', projectId: p.id, payload: { projectId: p.id } });
+    setImmediate(() => jobs.kick(job));
+    res.status(202).json({ jobId: job.id, message: 'Builder Advisor started.' });
+  });
+
+  r.get('/api/projects/:id/diagnosis', async (req, res) => {
+    const p = projects.get(req.params.id);
+    if (!p) return res.status(404).json({ error: 'Project not found' });
+    res.json({ diagnosis: await projects.readMetadata(p, 'project-diagnosis.json', null), history: await projects.readMetadata(p, 'diagnosis-history.json', []) });
+  });
+
   r.post('/api/projects/:id/upgrade/inspect', (req, res) => {
     const p = projects.get(req.params.id);
     if (!p) return res.status(404).json({ error: 'Project not found' });
@@ -409,6 +433,8 @@ export function registerRoutes(r, app) {
       plan: await projects.readMetadata(p, 'upgrade-plan.json', null),
       history: await projects.readMetadata(p, 'upgrade-history.json', []),
       repairs: await projects.readMetadata(p, 'upgrade-repair-history.json', []),
+      diagnosis: await projects.readMetadata(p, 'project-diagnosis.json', null),
+      advisor: await projects.readMetadata(p, 'builder-advisor.json', null),
     });
   });
 
@@ -675,14 +701,15 @@ export function registerRoutes(r, app) {
   // safely ask for the project's current owner without creating a new action.
   r.get('/api/jobs/current', (req, res) => {
     const projectId = String(req.query.projectId || '').trim() || null;
-    const current = jobs.runningJob(projectId);
+    const current = jobs.runningJob(projectId) || jobs.latestJob(projectId);
     res.json({
-      active: Boolean(current),
+      active: Boolean(current && ['queued', 'running'].includes(current.status)),
       recovered: Boolean(current),
       jobId: current?.id || null,
       projectId: current?.project_id || projectId,
       type: current?.type || null,
       stage: current?.stage || null,
+      status: current?.status || null,
     });
   });
 

@@ -55,11 +55,23 @@ export class JobQueue {
       'INSERT INTO job_events(job_id,stage,status,message,created_at) VALUES(?,?,?,?,?)',
       jobId, stage, status, message, new Date().toISOString(),
     );
-    this.db.run(
-      'UPDATE jobs SET stage=?, status=?, updated_at=? WHERE id=?',
-      stage, status === 'failed' ? 'failed' : status === 'done' ? 'done' : status === 'queued' ? 'queued' : 'running',
-      new Date().toISOString(), jobId,
-    );
+    // Event status "done" means a step finished. The job stays running until
+    // finish()/fail()/requestCancel(). Otherwise Publish disappears from chat
+    // as soon as the first validate step emits "done".
+    const current = this.db.get('SELECT status FROM jobs WHERE id = ?', jobId);
+    const terminal = current && ['done', 'failed', 'cancelled'].includes(current.status);
+    if (!terminal) {
+      this.db.run(
+        'UPDATE jobs SET stage=?, status=?, updated_at=? WHERE id=?',
+        stage, 'running', new Date().toISOString(), jobId,
+      );
+    }
+  }
+
+  latestJob(projectId = null) {
+    return projectId
+      ? this.db.get('SELECT id,project_id,type,status,stage,error,created_at,updated_at FROM jobs WHERE project_id = ? ORDER BY created_at DESC LIMIT 1', projectId)
+      : this.db.get('SELECT id,project_id,type,status,stage,error,created_at,updated_at FROM jobs ORDER BY created_at DESC LIMIT 1');
   }
 
   runningJob(projectId = null) {

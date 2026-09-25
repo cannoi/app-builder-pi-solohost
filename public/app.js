@@ -146,7 +146,7 @@ function maybeJump() {
   $('jumpDown').hidden = chatNearBottom() || el.scrollHeight <= el.clientHeight + 20;
 }
 function project() { return state.projects.find((p) => p.id === state.projectId) || null; }
-function actionText(action) { return ({ build:'Build the app', run:'Run the app', improve:'Improve the app', edit:'Edit the app', analyze:'Check the app', upgrade:'Inspect & upgrade', publish:'Prepare the release', sandbox:'Test the sandbox' })[action] || action; }
+function actionText(action) { return ({ build:'Build the app', run:'Run the app', improve:'Improve the app', edit:'Edit the app', analyze:'Check the app', diagnose:'Diagnose the app', advisor:'Review Builder advice', upgrade:'Inspect & upgrade', publish:'Prepare the release', sandbox:'Test the sandbox' })[action] || action; }
 
 async function loadStatus() {
   try {
@@ -376,6 +376,19 @@ function renderUpgradePlan(plan, request) {
   row.appendChild(apply); box.appendChild(row); $('chat').appendChild(box); if (chatNearBottom()) $('chat').scrollTop = $('chat').scrollHeight;
 }
 
+async function startDiagnose() {
+  if (!state.projectId) { add('ai', '🩺 Open or create an app first.'); return; }
+  setBusy(true, 'Diagnosing the real project…');
+  try { const r = await api(`/api/projects/${state.projectId}/diagnose`, { method: 'POST', body: '{}' }); add('ai', '🩺 I will inspect the project, evidence, runtime configuration, and recent repair history before suggesting any change.'); watch(r.jobId); }
+  catch (e) { handleJobActionError(e); }
+}
+async function startAdvisor() {
+  if (!state.projectId) { add('ai', '🧭 Open or create an app first.'); return; }
+  setBusy(true, 'Reviewing Builder history…');
+  try { const r = await api(`/api/projects/${state.projectId}/advisor`, { method: 'POST', body: '{}' }); watch(r.jobId); }
+  catch (e) { handleJobActionError(e); }
+}
+
 async function startSandboxDemo() {
   setBusy(true, 'Testing sandbox…');
   try {
@@ -387,6 +400,8 @@ async function startSandboxDemo() {
 async function quick(action, extraPayload = {}) {
   if (state.busy) return;
   if (action === 'support') return openSupport();
+  if (action === 'diagnose') return startDiagnose();
+  if (action === 'advisor') return startAdvisor();
   if (action === 'script-run') return downloadScript('run');
   if (action === 'script-github') return downloadScript('github');
   if (action === 'docker') return inspectDocker();
@@ -458,9 +473,16 @@ async function recoverMissingJob(jobId, seq) {
     const projectId = state.projectId ? encodeURIComponent(state.projectId) : '';
     const current = await api(`/api/jobs/current?projectId=${projectId}`);
     if (state.jobId !== jobId || state.watchSeq !== seq) return true;
-    if (current?.jobId && current.jobId !== jobId) {
-      add('system', '↻ The previous job reference expired. I reconnected to the active job.');
-      watch(current.jobId);
+    if (current?.jobId) {
+      if (current.jobId !== jobId) add('system', '↻ Reconnected to the latest project job. Chat stays on the result.');
+      watch(current.jobId, { preserveEvents: false, resetFailures: true });
+      return true;
+    }
+    // Keep waiting briefly instead of cancelling the visible work state.
+    state.pollFailures = (state.pollFailures || 0) + 1;
+    if (state.pollFailures < 8) {
+      setBusy(true, 'Still working…');
+      scheduleJobPoll(jobId, 1200);
       return true;
     }
     stopJobWatch();
@@ -575,9 +597,8 @@ async function watch(jobId, { preserveEvents = false, resetFailures = true } = {
     state.pollFailures += 1;
     const delay = Math.min(5000, 700 * (2 ** Math.min(state.pollFailures, 3)));
     setBusy(true, state.pollFailures === 1 ? 'Reconnecting…' : 'Still working…');
-    if (state.pollFailures === 1) add('system', '↻ Connection to the current job was interrupted. The job is still being watched; no new action was started.');
+    if (state.pollFailures === 1) add('system', '↻ Still waiting for the current job. Chat stays open until the result arrives.');
     scheduleJobPoll(jobId, delay);
-    if (state.pollFailures === 1) add('system', `Waiting for the current job result… (${e.message})`);
   } finally {
     if (state.pollInFlightJobId === jobId) {
       state.pollInFlight = false;

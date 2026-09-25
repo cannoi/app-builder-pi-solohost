@@ -41,3 +41,9 @@ test('reattaching to an in-flight job does not cancel its polling continuation',
   const stop = source.indexOf('stopJobWatch();', guard);
   assert.ok(guard >= 0 && stop > guard, 'poll guard must run before stopJobWatch');
 });
+
+test('step-level done events must not finish the whole job', () => {
+  const queue = fs.readFileSync(new URL('../src/jobs/queue.js', import.meta.url), 'utf8');
+  assert.match(queue, /Event status "done" means a step finished/);
+  assert.match(queue, /const terminal = current && /);
+});

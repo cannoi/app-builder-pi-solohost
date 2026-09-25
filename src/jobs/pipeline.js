@@ -23,6 +23,8 @@ import { shouldBlockRepeatedAction, nextRepeatState, repairFingerprint } from '.
 import { mergeVerificationState } from './verification.js';
 import { maskSecrets } from '../utils/mask.js';
 import { inspectUpgrade, diagnoseUpgradeRequest, applyUpgrade } from '../upgrade/engine.js';
+import { diagnoseProject, buildAdvisorReport } from '../diagnose/project.js';
+import { refreshProjectBrain, rememberFailedRepair, wasRepairTried } from '../diagnose/brain.js';
 
 // Safety net only — does not change what inspectUpgrade does on the happy path.
 // Without this, a slow/unusual imported repo (e.g. a hung install/test step)
@@ -42,6 +44,27 @@ export function registerPipeline(app) {
   const { jobs, ai, projects, snapshots, runner, sandbox, github, releases, cfg, log } = app;
 
   // Upgrade Workshop is deliberately isolated from create_app/improve flows.
+  jobs.on('project_diagnose', async (job, { emit }) => {
+    const project = mustProject(job.payload.projectId);
+    emit('inspect', 'running', '🩺 Inspecting the project before making any change…');
+    const runtime = await projects.readMetadata(project, 'runtime-state.json', {});
+    const recent = await projects.readMetadata(project, 'runtime-diagnostics.json', {});
+    const logs = [recent?.error, recent?.logs, runtime?.error, runtime?.logs].filter(Boolean).join('\n');
+    const report = await diagnoseProject({ project: projects.get(project.id), projects, db: app.db, ai, logs });
+    await refreshProjectBrain({ project, projects, db: app.db, extra: { notes: report.rootCause } });
+    emit('diagnose', 'done', `Diagnosis complete: ${report.confidence} confidence. No files were changed.`);
+    return { projectId: project.id, diagnosis: report, status: 'DIAGNOSED', brief: formatProjectDiagnosis(report) };
+  });
+
+  jobs.on('builder_advisor', async (job, { emit }) => {
+    const project = mustProject(job.payload.projectId);
+    emit('advisor', 'running', '🧭 Reviewing recent failures and repair history…');
+    const report = await buildAdvisorReport({ project: projects.get(project.id), projects, db: app.db });
+    await refreshProjectBrain({ project, projects, db: app.db });
+    emit('advisor', 'done', `Advisor found ${report.findings.length} improvement finding(s).`);
+    return { projectId: project.id, advisor: report, status: 'ADVISOR_READY', brief: formatAdvisor(report) };
+  });
+
   jobs.on('upgrade_github_import', async (job, { emit }) => {
     const parsed = parseGithubRepoUrl(job.payload.url);
     if (!parsed) throw new Error('Use a public GitHub repository URL such as https://github.com/owner/repository');
@@ -2079,4 +2102,21 @@ function gateAction(action, { files = [], runtime = {}, githubConfigured = false
     return { action: 'reply', lock: 'Publish needs a GitHub username and token in Settings. Add them, then tap Publish.' };
   }
   return { action, lock: '' };
+}
+
+function formatProjectDiagnosis(report) {
+  const lines = ['🩺 PROJECT DIAGNOSIS', `Status: ${report.currentStatus || 'unknown'}`, `Confidence: ${report.confidence}`, `Root cause: ${report.rootCause}`];
+  if (report.fingerprint && report.fingerprint !== 'NONE') lines.push(`Fingerprint: ${report.fingerprint}`);
+  if (report.problems?.length) lines.push('', ...report.problems.slice(0, 4).map((p) => `⚠ ${p.id}: ${p.recommendation || p.evidence}`));
+  if (report.previousFailedAttempts?.length) lines.push('', '⛔ Repeated ineffective repair detected. I will not repeat the same fix without new evidence.');
+  lines.push('', `Next: ${report.recommendation}`, '', 'Verification: Build → Start → Health → Functional → Preview');
+  if (report.ai?.unavailable) lines.push('', 'AI enhancement unavailable; deterministic evidence report is still available.');
+  return lines.join('\n');
+}
+
+function formatAdvisor(report) {
+  const lines = ['🧭 BUILDER ADVISOR', `Findings: ${report.findings?.length || 0}`];
+  for (const f of (report.findings || []).slice(0, 5)) lines.push('', `• ${f.problem}`, `  Evidence: ${JSON.stringify(f.evidence)}`, `  Recommendation: ${f.recommendation}`);
+  lines.push('', report.expectedImprovement);
+  return lines.join('\n');
 }

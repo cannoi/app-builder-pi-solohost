@@ -1,3 +1,10 @@
+## 1.4.50
+
+- Job events no longer mark the whole Publish job done, so chat stays on the running work until the real result.
+- Missing-job recovery reconnects to the latest project job instead of cancelling.
+- Native sqlite compile failures are not treated as missing package.json entries.
+- Project Brain metadata is refreshed on Diagnose and Advisor.
+
 ## 1.4.48
 
 - Skip SoloHost runtime preflight on Check image / waiting GHCR so Publish does not re-patch the same Dockerfile.
