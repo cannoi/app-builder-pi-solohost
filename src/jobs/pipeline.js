@@ -468,6 +468,50 @@ export function registerPipeline(app) {
       throw new Error(`RELEASE_SECURITY_BLOCKED\n${security.summary}\n\n${report}\n\nNEXT: Tap Improve and let the AI apply the smallest targeted security fix, then Run and Publish again.`);
     }
     if (runtime.status !== 'passed' || runtime.health !== true) throw new Error('Release blocked: run the app successfully before publishing. Tap Run first.');
+
+    const pendingEarly = await projects.readMetadata(project, 'release-pending.json', null);
+    const verifyOnlyEarly = Boolean(pendingEarly?.githubUrl)
+      && payload.existingAction !== 'overwrite'
+      && payload.forcePublish !== true
+      && (
+        payload.verifyImage === true
+        || payload.recheck === true
+        || pendingEarly.status === 'workflow_failed'
+        || pendingEarly.status === 'waiting_image'
+      );
+
+    // SoloHost runtime contract preflight runs before the first GitHub publication.
+    // Check-image / re-check must not re-apply the same Dockerfile contract or the
+    // user gets a repair loop while GitHub Actions is still building.
+    let releaseDare = { ok: false, stopped: false, alreadyFixed: false };
+    if (!verifyOnlyEarly) {
+      const releaseDareHistory = await projects.readMetadata(project, 'dare-history.json', []);
+      const releaseDareCheckpoint = await snapshots.create(project, 'before-release-runtime-preflight').catch(() => null);
+      releaseDare = await runDare({
+        sourceDir: source,
+        logs: `${runtime.error || ''}\n${runtime.logs || ''}`,
+        extra: { message: 'SOLOHOST_RELEASE_PREFLIGHT' },
+        history: Array.isArray(releaseDareHistory) ? releaseDareHistory : [],
+      });
+      await projects.saveMetadata(project, 'dare-history.json', (releaseDare.history || []).slice(-20));
+      if (releaseDare.ok && (releaseDare.changed || []).length) {
+        emit('validate', 'running', `SoloHost runtime preflight repaired ${releaseDare.files.join(', ') || 'the runtime contract'}; rechecking before publish…`);
+        const preflightStatic = await runStaticTests(source);
+        const preflightNode = await runNodeTests(source, 45000);
+        const preflightScan = await scanProject(source);
+        if (preflightStatic.status === 'failed' || preflightNode.status === 'failed' || preflightScan.critical > 0) {
+          if (releaseDareCheckpoint?.id) await snapshots.restore(project, releaseDareCheckpoint.id).catch(() => {});
+          throw new Error(`RELEASE_RUNTIME_PREFLIGHT_FAILED\n${formatDareReport(releaseDare)}\nThe deterministic repair did not pass local verification, so the previous state was restored.`);
+        }
+        emit('validate', 'done', `✓ SoloHost runtime preflight passed after ${releaseDare.ruleId || 'deterministic'} repair.`);
+      } else if (releaseDare.alreadyFixed || releaseDare.next === 'CONTINUE') {
+        emit('validate', 'done', '✓ SoloHost runtime contract already satisfied. Continuing publish.');
+      } else if (releaseDare.stopped && pendingEarly?.githubUrl) {
+        emit('validate', 'done', 'Runtime contract was already repaired. Checking GitHub/GHCR instead of repeating the same patch.');
+      } else if (releaseDare.stopped) {
+        emit('validate', 'done', 'Runtime contract repair already ran. Continuing with the current source instead of repeating the same patch.');
+      }
+    }
     const previewFresh = runtime.status === 'passed' && runtime.health === true;
     if (tests.nodeResult?.status === 'failed' && !previewFresh) {
       throw new Error('Release blocked: the latest saved verification still has a failed runtime test. Tap Run first so the live preview can refresh the test report.');
@@ -494,7 +538,7 @@ export function registerPipeline(app) {
     let workflowDiagnostics = null;
     let autoRepair = null;
 
-    let pending = await projects.readMetadata(project, 'release-pending.json', null);
+    const pending = await projects.readMetadata(project, 'release-pending.json', null);
     const verifyOnly = Boolean(pending?.githubUrl)
       && payload.existingAction !== 'overwrite'
       && payload.forcePublish !== true
@@ -550,7 +594,13 @@ export function registerPipeline(app) {
 
     const owner = githubPublish?.owner || pending?.owner || cfg.github.owner || 'YOUR_GITHUB';
     const repo = githubPublish?.repo || pending?.repo || project.slug;
-    const registryImage = `ghcr.io/${owner}/${repo}:${notes.version}`.toLowerCase();
+    // Prefer the immutable commit SHA tag for the install kit. The workflow
+    // smoke-tests that exact commit and SoloHost will never accidentally reuse
+    // a stale image carrying the same human version tag. Keep the version tag
+    // as a fallback for older/pending releases where a commit SHA is unknown.
+    let imageTag = githubPublish?.sha || pending?.sha || notes.version;
+    imageTag = /^[0-9a-f]{40}$/i.test(String(imageTag)) ? String(imageTag).toLowerCase() : notes.version;
+    let registryImage = `ghcr.io/${owner}/${repo}:${imageTag}`.toLowerCase();
 
     async function savePending(extra = {}) {
       await projects.saveMetadata(project, 'release-pending.json', {
@@ -564,7 +614,7 @@ export function registerPipeline(app) {
       await savePending({ status: 'waiting_image' });
       for (let cycle = 0; cycle < 2; cycle += 1) {
         emit('docker-publish', 'running', cycle === 0 ? 'Checking GitHub Actions → GHCR image…' : 'Re-checking the repaired GitHub Actions build…');
-        const wait = await waitForGithubImage({ repo, owner, version: notes.version, headSha: githubPublish?.sha || pending?.sha || null, emit });
+        const wait = await waitForGithubImage({ repo, owner, imageTag: imageTag, headSha: githubPublish?.sha || pending?.sha || null, emit });
         imageVerification = wait.imageVerification || { ok: false };
         workflowRun = wait.workflowRun || null;
         workflowDiagnostics = wait.diagnostics || null;
@@ -591,7 +641,11 @@ export function registerPipeline(app) {
         pending.autoRepairAttempts = 1;
         githubPublish = autoRepair.githubPublish || githubPublish;
         githubUrl = githubPublish?.url || githubUrl;
-        await savePending({ status: 'waiting_image', autoRepairAttempts: 1, sha: githubPublish?.sha || null });
+        if (/^[0-9a-f]{40}$/i.test(String(githubPublish?.sha || ''))) {
+          imageTag = String(githubPublish.sha).toLowerCase();
+          registryImage = `ghcr.io/${owner}/${repo}:${imageTag}`.toLowerCase();
+        }
+        await savePending({ status: 'waiting_image', autoRepairAttempts: 1, sha: githubPublish?.sha || null, image: registryImage });
       }
     }
 
@@ -661,7 +715,7 @@ export function registerPipeline(app) {
     };
   }
 
-  async function waitForGithubImage({ repo, owner, version, headSha, emit }) {
+  async function waitForGithubImage({ repo, owner, imageTag, headSha, emit }) {
     const deadline = Date.now() + 480000;
     let imageVerification = { ok: false };
     let workflowRun = null;
@@ -680,10 +734,10 @@ export function registerPipeline(app) {
         if (workflowRun.id && typeof github.workflowDiagnostics === 'function') {
           diagnostics = await github.workflowDiagnostics(repo, workflowRun.id).catch((err) => ({ summary: 'Unable to read GitHub Actions logs.', logTail: String(err.message || err) }));
         }
-        imageVerification = await github.verifyContainerImage(`${owner}/${repo}`, version).catch((err) => ({ ok: false, error: String(err?.message || err) }));
+        imageVerification = await github.verifyContainerImage(`${owner}/${repo}`, imageTag).catch((err) => ({ ok: false, error: String(err?.message || err) }));
         return { failed: true, imageVerification: { ...imageVerification, workflow: workflowRun, error: `GitHub Actions finished with ${workflowRun.conclusion}.` }, workflowRun, diagnostics };
       }
-      imageVerification = await github.verifyContainerImage(`${owner}/${repo}`, version).catch((err) => ({ ok: false, error: String(err?.message || err) }));
+      imageVerification = await github.verifyContainerImage(`${owner}/${repo}`, imageTag).catch((err) => ({ ok: false, error: String(err?.message || err) }));
       if (workflowRun?.status === 'completed' && workflowRun.conclusion === 'success' && imageVerification.ok) {
         return { ok: true, imageVerification, workflowRun, diagnostics };
       }
@@ -894,16 +948,18 @@ export function registerPipeline(app) {
       });
       await projects.saveMetadata(project, 'dare-history.json', (dare.history || []).slice(-20));
       if (dare.stopped) {
-        runtime.brief = formatDareReport(dare);
-        return runtime;
+        return { handled: false, stopped: true, evidence, dare };
       }
-      if (dare.ok) {
-        emit('repair', 'done', formatDareReport(dare));
+      if (dare.ok || dare.alreadyFixed || dare.next === 'CONTINUE') {
+        if (dare.ok) emit('repair', 'done', formatDareReport(dare));
+        else emit('repair', 'done', `✓ Deterministic diagnosis complete. ${dare.reason || 'The source already contains the required runtime repair.'}`);
         return {
           handled: true,
           action: evidence.published ? 'publish' : 'run',
-          reply: `I found a verified runtime error and applied the smallest deterministic repair (${dare.files.join(', ') || 'project files'}). I will verify it before reporting success.`,
-          goal: evidence.published ? 'Rebuild and verify the published app after the deterministic runtime repair.' : 'Run the repaired app and verify health before reporting success.',
+          reply: dare.ok
+            ? `I found a concrete runtime problem and applied the smallest safe repair. I will verify the published image before reporting success.`
+            : `I found the same runtime issue, but the source already contains the required safe repair. I will verify the published image instead of changing the app again.`,
+          goal: evidence.published ? 'Verify the published GitHub Actions run and exact GHCR image after the deterministic runtime diagnosis; do not repeat the same source patch.' : 'Run the repaired app and verify health before reporting success.',
           dare,
           evidence,
         };
@@ -940,10 +996,23 @@ export function registerPipeline(app) {
     const requestedImage = extractGhcrImage(message);
     const installFromImage = Boolean(requestedImage && /(solohost|cài đặt|cai dat|install|docker-compose|config_options|file cài|tạo file|tao file|generate)/i.test(message));
     const incident = await triagePublishedIncident(project, message, runtimeNow, emit);
+    const pendingRelease = await projects.readMetadata(project, 'release-pending.json', null);
+    const waitingForImage = Boolean(pendingRelease?.githubUrl) && ['waiting_image', 'workflow_failed'].includes(String(pendingRelease?.status || ''));
+    const asksPublishStatus = /publish|ghcr|github|check image|re-?check|xuất bản|xuat ban|ảnh|image/i.test(message);
     const incidentContext = incident?.evidence?.context ? `\n${incident.evidence.context}` : '';
     emit('ai', 'running', installFromImage ? 'Preparing SoloHost install files from the GitHub image…' : (incident?.handled ? 'Skipping AI: deterministic repair is being verified…' : 'AI is deciding the next best step…'));
     let r = { json: { action: inferAction(message) || 'reply', reply: '', commands: [] } };
-    if (incident?.handled) {
+    if (!incident?.handled && waitingForImage && asksPublishStatus) {
+      r = {
+        json: {
+          action: 'publish',
+          reply: pendingRelease.status === 'workflow_failed'
+            ? 'GitHub already has the source. I will read the latest Actions result instead of editing the app again.'
+            : 'GitHub already has the source. I will check whether the GHCR image is ready instead of changing the app.',
+          steps: [{ action: 'publish', goal: 'Check the existing GitHub Actions / GHCR image without republishing source.' }],
+        },
+      };
+    } else if (incident?.handled) {
       const verifiedPublishedIncident = Boolean(incident.evidence?.published && incident.evidence?.repoInfo?.repo);
       const needsFreshRun = runtimeNow?.status !== 'passed' || runtimeNow?.health !== true;
       const steps = verifiedPublishedIncident && incident.action === 'publish' && needsFreshRun
@@ -1091,6 +1160,7 @@ export function registerPipeline(app) {
               approved: true,
               confirm: true,
               push: true,
+              verifyImage: waitingForImage || payload.verifyImage === true,
               existingAction: autoRepairRelease ? 'overwrite' : 'confirm',
               repoName: autoRepairRelease ? incident.evidence.repoInfo.repo : undefined,
             }, emit);
@@ -1569,30 +1639,6 @@ export function registerPipeline(app) {
 
   async function improveProject(project, feedback, emit) {
     const source = projects.sourceDir(project.slug);
-    try {
-      const history = await projects.readMetadata(project, 'dare-history.json', []);
-      const dare = await runDare({
-        sourceDir: source,
-        logs: feedback,
-        extra: { message: feedback },
-        history: Array.isArray(history) ? history : [],
-      });
-      await projects.saveMetadata(project, 'dare-history.json', (dare.history || []).slice(-20));
-      if (dare.ok) {
-        emit('repair', 'done', formatDareReport(dare));
-        await stampMadeBy(source, cfg);
-        const tested = { staticResult: await runStaticTests(source), nodeResult: await runNodeTests(source, 45000), scan: await scanProject(source) };
-        return {
-          files: dare.files || [],
-          explanation: dare.reason,
-          dare,
-          tested,
-          brief: `${formatDareReport(dare)}\nNEXT: Tap Run, then Publish once to rebuild the image.`,
-        };
-      }
-    } catch (err) {
-      emit('repair', 'failed', String(err?.message || err).slice(0, 240));
-    }
 
     const networkRequest = /\b(internet|offline|online|network|dns|proxy|gateway|browse|browsing|fetch|connection|kết nối|mạng|internet|truy cập web)\b/i.test(String(feedback || ''));
     let networkPreflight = null;
@@ -1609,8 +1655,47 @@ export function registerPipeline(app) {
     const runtimeState = await projects.readMetadata(project, 'runtime.json', {});
     const problemFingerprint = repairFingerprint({ feedback, runtime: runtimeState });
     const guard = await projects.readMetadata(project, 'action-guard.json', null);
+
+    // Deterministic-first: a concrete runtime fingerprint must go through DARE
+    // before AI is allowed to touch source code. This is especially important
+    // for SoloHost container failures such as EACCES.
+    const dareHistory = await projects.readMetadata(project, 'dare-history.json', []);
+    const dareCheckpoint = await snapshots.create(project, 'before-improve-dare').catch(() => null);
+    let dare = null;
+    try {
+      dare = await runDare({
+        sourceDir: source,
+        logs: `${feedback}\n${runtimeState?.error || ''}\n${runtimeState?.logs || ''}\n${runtimeState?.brief || ''}`,
+        extra: runtimeState || {},
+        history: Array.isArray(dareHistory) ? dareHistory : [],
+      });
+      await projects.saveMetadata(project, 'dare-history.json', (dare.history || []).slice(-20));
+      if (dare.ok || dare.alreadyFixed || dare.next === 'CONTINUE') {
+        if (dare.ok) emit('repair', 'done', formatDareReport(dare));
+        else emit('repair', 'done', `✓ Deterministic runtime contract already applied. ${dare.reason || 'No source patch is needed.'}`);
+        const afterStatic = await runStaticTests(source);
+        const afterNode = await runNodeTests(source, 45000);
+        const afterScan = await scanProject(source);
+        if (afterStatic.status === 'passed' && afterNode.status !== 'failed' && afterScan.critical === 0) {
+          const repairedRuntime = await runProject(projects.get(project.id), emit);
+          if (repairedRuntime?.status === 'passed') {
+            await projects.saveMetadata(project, 'action-guard.json', null);
+            return { feedback, rootCause: dare.reason || '', explanation: dare.reason || 'Deterministic runtime repair verified.', files: dare.files || [], tested: { staticResult: afterStatic, nodeResult: afterNode, scan: afterScan }, runtime: repairedRuntime, dare };
+          }
+        }
+        if (dareCheckpoint?.id) await snapshots.restore(project, dareCheckpoint.id).catch(() => {});
+        emit('rollback', 'done', 'The deterministic repair did not reach a verified running state, so the previous checkpoint was restored.');
+      }
+    } catch (err) {
+      if (dareCheckpoint?.id) await snapshots.restore(project, dareCheckpoint.id).catch(() => {});
+      emit('repair', 'failed', `Deterministic repair stopped safely: ${String(err.message || err).slice(0, 240)}`);
+    }
+
+    // Only count an AI attempt after deterministic repair is exhausted. The same
+    // fingerprint is allowed once; a second identical click stops instead of
+    // sending the same failing request back to AI.
     if (shouldBlockRepeatedAction(guard, problemFingerprint)) {
-      const message = 'NEEDS_USER_ACTION: The same runtime problem was already attempted twice without a verified step forward. I stopped the repair loop. Provide the latest runtime or Actions log, or change the failing condition before trying again.';
+      const message = 'NEEDS_USER_ACTION: The same problem already had an automatic repair/AI attempt without a verified step forward. I stopped the loop. Provide new runtime evidence or change the failing condition before trying again.';
       emit('repair', 'failed', message);
       await projects.chat(project, message, 'assistant', { action: 'loop-guard', fingerprint: problemFingerprint });
       throw new Error(message);

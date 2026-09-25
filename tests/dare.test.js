@@ -93,6 +93,21 @@ test('DARE patches localhost bind to 0.0.0.0', async () => {
   await fs.rm(dir, { recursive: true, force: true });
 });
 
+
+test('DARE preflight detects a non-root Node app that writes its own data directory before runtime failure', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'paf-dare-preflight-perm-'));
+  await fs.writeFile(path.join(dir, 'Dockerfile'), 'FROM node:18-alpine\nWORKDIR /app\nCOPY . .\nUSER node\nCMD ["node","server.js"]\n');
+  await fs.writeFile(path.join(dir, 'server.js'), "const path = require('path'); const fs = require('fs'); const dir = path.join(__dirname, 'data'); fs.mkdirSync(dir, { recursive: true });\n");
+  const r = await runDare({ sourceDir: dir });
+  assert.equal(r.ok, true);
+  assert.equal(r.ruleId, 'RUNTIME_FILESYSTEM_PERMISSION');
+  assert.deepEqual(r.files, ['Dockerfile']);
+  const dockerfile = await fs.readFile(path.join(dir, 'Dockerfile'), 'utf8');
+  assert.match(dockerfile, /mkdir -p '\/app\/data' && chown 'node' '\/app\/data'/);
+  assert.doesNotMatch(dockerfile, /chmod\s+(-R\s+)?777/);
+  await fs.rm(dir, { recursive: true, force: true });
+});
+
 test('DARE loop protection stops the second identical repair', async () => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'paf-dare-loop-'));
   await fs.writeFile(path.join(dir, 'package.json'), JSON.stringify({ name: 'x', dependencies: { sqlite3: '*' } }));
@@ -148,14 +163,29 @@ test('DARE does not auto-repair permission errors outside the Docker WORKDIR', a
   await fs.rm(dir, { recursive: true, force: true });
 });
 
-test('DARE patches Dockerfile so USER can write mkdir data dir', async () => {
-  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'paf-dare-eacces-'));
+test('second SoloHost preflight after a successful permission repair does not loop or rewrite', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'paf-dare-preflight-noloop-'));
   await fs.writeFile(path.join(dir, 'Dockerfile'), 'FROM node:18-alpine\nWORKDIR /app\nCOPY . .\nUSER node\nCMD ["node","server.js"]\n');
-  await fs.writeFile(path.join(dir, 'server.js'), "const fs=require('fs');\nfs.mkdirSync('/app/data',{recursive:true});\n");
+  await fs.writeFile(path.join(dir, 'server.js'), "const fs = require('fs'); fs.mkdirSync('/app/data', { recursive: true });\n");
+  const first = await runDare({ sourceDir: dir, extra: { message: 'SOLOHOST_RELEASE_PREFLIGHT' } });
+  assert.equal(first.ok, true);
+  const dockerfile = await fs.readFile(path.join(dir, 'Dockerfile'), 'utf8');
+  const second = await runDare({ sourceDir: dir, extra: { message: 'SOLOHOST_RELEASE_PREFLIGHT' }, history: first.history });
+  assert.equal(second.ok, false);
+  assert.equal(second.stopped, false);
+  assert.equal(await fs.readFile(path.join(dir, 'Dockerfile'), 'utf8'), dockerfile);
+  await fs.rm(dir, { recursive: true, force: true });
+});
+
+test('DARE treats an old EACCES log as a verified no-op after the Dockerfile permission repair exists', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'paf-dare-old-log-'));
+  await fs.writeFile(path.join(dir, 'Dockerfile'), 'FROM node:18-alpine\nWORKDIR /app\nCOPY . .\nRUN mkdir -p \'/app/data\' && chown \'node\' \'/app/data\'\nUSER node\nCMD ["node","server.js"]\n');
+  await fs.writeFile(path.join(dir, 'server.js'), "const fs = require('fs'); fs.mkdirSync('/app/data', { recursive: true });\n");
   const r = await runDare({ sourceDir: dir, logs: "Error: EACCES: permission denied, mkdir '/app/data'" });
-  assert.equal(r.ok, true);
-  const df = await fs.readFile(path.join(dir, 'Dockerfile'), 'utf8');
-  assert.match(df, /mkdir -p '\/app\/data'/);
-  assert.match(df, /chown 'node' '\/app\/data'/);
+  assert.equal(r.ok, false);
+  assert.equal(r.alreadyFixed, true);
+  assert.equal(r.next, 'CONTINUE');
+  assert.equal(r.aiRequired, false);
+  assert.deepEqual(r.changed, []);
   await fs.rm(dir, { recursive: true, force: true });
 });

@@ -1,3 +1,17 @@
+## 1.4.48
+
+- Skip SoloHost runtime preflight on Check image / waiting GHCR so Publish does not re-patch the same Dockerfile.
+- Treat an already-applied runtime permission contract as PASS, not RELEASE_RUNTIME_PREFLIGHT_STOPPED.
+- Route "fix publish" chat to GHCR status check when source is already on GitHub.
+
+## 1.4.47
+
+- Added deterministic SoloHost runtime preflight for application-owned writable paths used by non-root container users.
+- Fixed Improve/Diagnose flow to run DARE before AI for concrete runtime failures.
+- Added verified rollback when a deterministic repair does not produce a running app.
+- Tightened repeated-repair guard to stop the same unresolved problem after one automatic attempt.
+- Kept existing Create App, GitHub, GHCR, Preview, and SoloHost packaging architecture unchanged.
+
 ## 1.4.46 — Deterministic repair loop guard
 
 - Stop repeated repairs by concrete runtime error fingerprint instead of changing user wording.

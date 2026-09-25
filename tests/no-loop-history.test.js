@@ -10,12 +10,12 @@ import { mergeVerificationState } from '../src/jobs/verification.js';
 import { openDb } from '../src/storage/db.js';
 import { ProjectManager } from '../src/projects/manager.js';
 
-test('repeat guard blocks the same failed action after two attempts in a short window', () => {
+test('repeat guard blocks the same failed action after one automatic attempt in a short window', () => {
   const now = Date.now();
   const history = { fingerprint: 'release-tests-failed', attempts: 2, lastAt: new Date(now - 60_000).toISOString() };
-  assert.equal(shouldBlockRepeatedAction(history, 'release-tests-failed', now, 10 * 60_000, 2), true);
+  assert.equal(shouldBlockRepeatedAction(history, 'release-tests-failed', now, 10 * 60_000, 1), true);
   assert.equal(shouldBlockRepeatedAction(history, 'different-failure', now, 10 * 60_000, 2), false);
-  assert.equal(shouldBlockRepeatedAction(history, 'release-tests-failed', now + 11 * 60_000, 10 * 60_000, 2), false);
+  assert.equal(shouldBlockRepeatedAction(history, 'release-tests-failed', now + 11 * 60_000, 10 * 60_000, 1), false);
 });
 
 

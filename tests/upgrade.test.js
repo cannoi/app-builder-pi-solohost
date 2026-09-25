@@ -77,3 +77,18 @@ test('Upgrade rejects non-low-risk plans before modifying source', async () => {
   assert.equal(await fs.readFile(path.join(root, 'index.html'), 'utf8'), '<h1>Existing app</h1>');
   await fs.rm(root, { recursive: true, force: true });
 });
+
+test('Upgrade baseline catches SoloHost EACCES runtime permission even when source tests are otherwise healthy', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'paf-upgrade-solohost-runtime-'));
+  await fs.writeFile(path.join(root, 'Dockerfile'), 'FROM node:18-alpine\nWORKDIR /app\nCOPY . .\nUSER node\nCMD ["node","server.js"]\n');
+  await fs.writeFile(path.join(root, 'server.js'), "const fs = require('fs'); fs.mkdirSync('/app/data', { recursive: true });\n");
+  const { project, projects, snapshots } = fakeProject(root);
+  const result = await inspectUpgrade({ project, projects, snapshots, log: { info() {} } });
+  assert.equal(result.ready, true);
+  assert.equal(result.safeRepairs.length >= 1, true);
+  assert.equal(result.safeRepairs[0].ruleId, 'RUNTIME_FILESYSTEM_PERMISSION');
+  const dockerfile = await fs.readFile(path.join(root, 'Dockerfile'), 'utf8');
+  assert.match(dockerfile, /mkdir -p '\/app\/data' && chown 'node' '\/app\/data'/);
+  assert.doesNotMatch(dockerfile, /chmod\s+(-R\s+)?777/);
+  await fs.rm(root, { recursive: true, force: true });
+});

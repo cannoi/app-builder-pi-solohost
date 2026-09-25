@@ -99,6 +99,7 @@ jobs:
           tags: |
             type=raw,value=latest
             type=raw,value=${version}
+            type=raw,value=\${{ github.sha }}
             type=ref,event=tag
             type=sha,prefix=
 
@@ -116,16 +117,9 @@ jobs:
           set -euo pipefail
           REPO="ghcr.io/\${{ github.repository }}"
           REPO="\${REPO,,}"
-          IMAGE="$REPO:${version}"
+          IMAGE="$REPO:\${{ github.sha }}"
           if ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
-            FALLBACK="$(docker images --format '{{.Repository}}:{{.Tag}}' | awk -v repo="$REPO" 'tolower(\$1) ~ tolower(repo) {print; exit}')"
-            if [[ -n "\${FALLBACK}" ]]; then
-              echo "Release tag $IMAGE was missing; tagging fallback \$FALLBACK -> $IMAGE"
-              docker tag "\$FALLBACK" "$IMAGE" || true
-            fi
-          fi
-          if ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
-            echo "Expected release image tag was not found locally: $IMAGE"
+            echo "Expected immutable release image tag was not found locally: $IMAGE"
             docker images
             exit 1
           fi

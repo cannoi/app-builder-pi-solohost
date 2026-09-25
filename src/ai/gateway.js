@@ -80,8 +80,13 @@ export class AIGateway {
       this.record({ projectId, task, provider: routed.provider, model: routed.model, success: 1, durationMs: routed.durationMs, tokens: routed.tokens, error: null });
       return routed;
     } catch (err) {
-      if (this.hub.isRoutingLocked?.()) throw err;
-      this.log.warn('AI hub execute failed; trying saved DeepSeek/Gemini keys', { error: err.message });
+      // A provider/model selection is normally respected. Only fall back when
+      // the hub supplies concrete provider-level evidence (for example 402
+      // billing, rate-limit, or network failure). This keeps an explicit
+      // locked selection deterministic while making common provider outages
+      // invisible to non-technical Builder users when a second provider works.
+      if (this.hub.isRoutingLocked?.() && !Array.isArray(err?.providerErrors)) throw err;
+      this.log.warn('AI hub execute failed; trying another configured provider', { error: err.message });
     }
     const errors = [];
     const order = this.pickOrder(images);

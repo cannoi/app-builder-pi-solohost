@@ -123,3 +123,44 @@ test('work-plan Publish is not marked done unless a verified release state is re
   assert.match(text, /publishStatus = String\(payload\.result\?\.status/);
   assert.match(text, /!\['released', 'packaged'\]\.includes\(publishStatus\)/);
 });
+
+test('AI provider preference failure falls back to another configured provider instead of blocking the Builder', async () => {
+  const { AIGateway } = await import('../src/ai/gateway.js');
+  const db = {
+    setting: (_key, fallback) => fallback,
+    run() {},
+    setSetting() {},
+  };
+  const cfg = {
+    dataDir: await fs.mkdtemp(path.join(os.tmpdir(), 'paf-ai-fallback-')),
+    ai: { provider: 'deepseek', deepseekKey: 'ds', deepseekModel: 'deepseek-v4-flash', geminiKey: 'gm', geminiModel: 'gemini-2.5-flash', mode: 'single' },
+  };
+  const gateway = new AIGateway({ cfg, db, log: { warn() {} } });
+  gateway.hub = {
+    async execute() { throw Object.assign(new Error('DeepSeek HTTP 402: Insufficient Balance'), { code: 'AI_UNAVAILABLE', providerErrors: ['deepseek/deepseek-v4-flash: Insufficient Balance'] }); },
+    isRoutingLocked() { return true; },
+    selectedModels() { return []; },
+  };
+  gateway.deepseek.complete = async () => { throw new Error('DeepSeek HTTP 402: Insufficient Balance'); };
+  gateway.gemini.complete = async () => ({ provider: 'gemini', model: 'gemini-2.5-flash', text: '{"ok":true}', durationMs: 1, tokens: 1 });
+  const result = await gateway.complete({ task: 'USER_CHAT', prompt: 'hello', system: 'test', json: true });
+  assert.equal(result.provider, 'gemini');
+  await fs.rm(cfg.dataDir, { recursive: true, force: true });
+});
+
+test('SoloHost release package prefers the immutable published commit image tag', async () => {
+  const text = await fs.readFile(new URL('../src/jobs/pipeline.js', import.meta.url), 'utf8');
+  assert.match(text, /let imageTag = githubPublish\?\.sha \|\| pending\?\.sha \|\| notes\.version/);
+  assert.match(text, /let registryImage = `ghcr\.io\/\$\{owner\}\/\$\{repo\}:\$\{imageTag\}`/);
+  assert.match(text, /verifyContainerImage\(`\$\{owner\}\/\$\{repo\}`, imageTag\)/);
+});
+
+test('GitHub workflow publishes a full immutable commit SHA tag', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'paf-workflow-sha-'));
+  await writeGithubWorkflow(dir, { version: '1.4.48' });
+  const yml = await fs.readFile(path.join(dir, '.github/workflows/docker.yml'), 'utf8');
+  assert.match(yml, /type=raw,value=\$\{\{ github\.sha \}\}/);
+  assert.match(yml, /IMAGE=\"\$REPO:\$\{\{ github\.sha \}\}\"/);
+  assert.doesNotMatch(yml, /tagging fallback/);
+  await fs.rm(dir, { recursive: true, force: true });
+});

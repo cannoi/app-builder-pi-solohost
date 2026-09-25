@@ -23,12 +23,16 @@ export async function inspectUpgrade({ project, projects, snapshots, log }) {
   const safeRepairs = [];
   let repairHistory = await projects.readMetadata(project, 'upgrade-repair-history.json', []);
   for (let attempt = 0; attempt < MAX_SAFE_REPAIRS; attempt += 1) {
-    if (!(await hasDeterministicCandidate(sourceDir))) break;
+    // Upgrade inspection must include the SoloHost runtime contract even when
+    // source-level tests are green. A non-root Docker image can pass Node tests
+    // and still crash at startup on SoloHost (for example EACCES /app/data).
+    const candidate = await hasDeterministicCandidate(sourceDir);
+    if (!candidate && attempt > 0) break;
     const checkpoint = await snapshots.create(project, `before-upgrade-safe-${attempt + 1}`);
     const repair = await runDare({
       sourceDir,
-      logs: 'Upgrade preflight deterministic inspection: module/config/runtime/lockfile/workflow checks.',
-      extra: { message: 'preflight module configuration workflow lockfile' },
+      logs: 'Upgrade preflight deterministic inspection.',
+      extra: { message: 'SOLOHOST_UPGRADE_PREFLIGHT' },
       history: repairHistory,
     });
     if (!repair?.ok) {

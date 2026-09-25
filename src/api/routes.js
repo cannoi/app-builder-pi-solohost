@@ -22,11 +22,12 @@ export function registerRoutes(r, app) {
   const ensureFree = (projectId, res) => {
     if (!jobs.isBusy(projectId)) return true;
     const current = jobs.runningJob(projectId);
-    res.status(409).json({
+    res.status(202).json({
       busy: true,
+      reused: true,
       jobId: current?.id || null,
       stage: current?.stage || 'running',
-      error: 'An action is already running. I kept the current job; wait for its result instead of starting a duplicate action.'
+      message: 'An action is already running. I kept the current job and will follow its result instead of starting a duplicate action.'
     });
     return false;
   };
@@ -668,6 +669,21 @@ export function registerRoutes(r, app) {
     }
     await projects.archive(p);
     res.json({ ok: true });
+  });
+
+  // Reconcile a stale client-side job id after refresh/reconnect. The UI can
+  // safely ask for the project's current owner without creating a new action.
+  r.get('/api/jobs/current', (req, res) => {
+    const projectId = String(req.query.projectId || '').trim() || null;
+    const current = jobs.runningJob(projectId);
+    res.json({
+      active: Boolean(current),
+      recovered: Boolean(current),
+      jobId: current?.id || null,
+      projectId: current?.project_id || projectId,
+      type: current?.type || null,
+      stage: current?.stage || null,
+    });
   });
 
   r.get('/api/jobs/:id', (req, res) => {

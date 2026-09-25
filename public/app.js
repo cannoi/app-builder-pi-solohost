@@ -1,5 +1,5 @@
 const $ = (id) => document.getElementById(id);
-const state = { projectId: null, projects: [], busy: false, jobId: null, poll: null, seenEvents: 0, files: [], settings: null };
+const state = { projectId: null, projects: [], busy: false, jobId: null, poll: null, pollFailures: 0, seenEvents: 0, files: [], settings: null, pollInFlight: false, pollInFlightJobId: null, watchSeq: 0 };
 
 async function api(url, options = {}) {
   const r = await fetch(url, { headers: { 'Content-Type': 'application/json', ...(options.headers || {}) }, ...options });
@@ -97,7 +97,7 @@ async function stopLive() {
     add('ai', 'Test app stopped. Extra Builder containers and unused images were removed.');
     if (r.jobId) watch(r.jobId);
     else setBusy(false);
-  } catch (e) { setBusy(false); add('ai', e.message); }
+  } catch (e) { handleJobActionError(e); }
 }
 function setBusy(on, text = 'Working…') {
   state.busy = on;
@@ -115,10 +115,24 @@ function setBusy(on, text = 'Working…') {
     sendBtn.classList.toggle('stopMode', on);
   }
 }
+function handleJobActionError(e) {
+  // A 409 from the server can include the job that already owns this project.
+  // Never drop the visible job state in that case: attach the chat to the existing
+  // job instead of telling the user to retry or starting a duplicate action.
+  if (e?.jobId) {
+    add('system', `↻ An action is already running · following the current job.`);
+    watch(e.jobId);
+    return true;
+  }
+  setBusy(false);
+  add('ai', e?.message || 'The action could not start.');
+  return false;
+}
+
 async function cancelCurrentJob() {
   if (!state.busy) return;
   const jobId = state.jobId;
-  clearInterval(state.poll); state.poll = null;
+  stopJobWatch();
   setBusy(false);
   add('system', '⏹ Cancelled. The step may still finish in the background, but you can send a new message now.');
   if (jobId) { try { await api(`/api/jobs/${jobId}/cancel`, { method: 'POST', body: '{}' }); } catch {} }
@@ -194,7 +208,7 @@ async function openProject(id, announce = true) {
   const recent = Array.isArray(p.releases) ? p.releases : [];
   const activity = await api(`/api/activity?projectId=${encodeURIComponent(id)}`).catch(() => ({items:[]}));
   const running = activity.items?.find((x) => x.running);
-  if (running) add('system', `↻ ${running.type} is still running · ${running.stage || 'working'}`);
+  if (running) { add('system', `↻ ${running.type} is still running · ${running.stage || 'working'}`); watch(running.id); }
   const last = activity.items?.find((x) => !x.running);
   if (last?.status === 'failed' && last.error) add('system', `⚠ Last issue: ${String(last.error).split('\n')[0].slice(0, 220)}`);
   if (announce) {
@@ -220,7 +234,7 @@ async function sendMessage() {
     try {
       const r = await api(`/api/projects/${state.projectId}/answer`, { method: 'POST', body: JSON.stringify({ answers: { custom: message, ...state.pendingAnswers } }) });
       watch(r.jobId);
-    } catch (e) { setBusy(false); add('ai', e.message); }
+    } catch (e) { handleJobActionError(e); }
     return;
   }
   const files = state.files.slice(); state.files = []; renderFiles();
@@ -232,7 +246,7 @@ async function sendMessage() {
       const r = await api('/api/projects/upgrade/github', { method: 'POST', body: JSON.stringify({ url: githubUrl }) });
       add('ai', '🔧 GitHub source imported into the independent Upgrade Workshop.');
       watch(r.jobId);
-    } catch (e) { setBusy(false); add('ai', e.message); }
+    } catch (e) { handleJobActionError(e); }
     return;
   }
   setBusy(true, state.projectId ? 'AI is working on your app…' : 'AI is creating your app…');
@@ -286,7 +300,7 @@ function pickImportZip() {
       if (!r.ok) throw new Error(data.error || 'Import failed.');
       add('ai', `Importing ${file.name}. I will unpack it and flatten a wrapper folder if needed.`);
       watch(data.jobId);
-    } catch (e) { setBusy(false); add('ai', e.message); }
+    } catch (e) { handleJobActionError(e); }
   };
   input.click();
 }
@@ -305,7 +319,7 @@ async function startUpgrade() {
     const url = parseGithubInput(request.text) || request.text.trim();
     setBusy(true, 'Importing public GitHub source…');
     try { const r = await api('/api/projects/upgrade/github', { method: 'POST', body: JSON.stringify({ url }) }); add('ai', '🔧 GitHub source imported into the independent Upgrade Workshop.'); watch(r.jobId); }
-    catch (e) { setBusy(false); add('ai', e.message); }
+    catch (e) { handleJobActionError(e); }
     return;
   }
   setBusy(true, 'Inspecting the existing app…');
@@ -313,7 +327,7 @@ async function startUpgrade() {
     const r = await api(`/api/projects/${state.projectId}/upgrade/inspect`, { method: 'POST', body: '{}' });
     add('ai', '🔧 Upgrade Workshop started. I will inspect the existing app, repair only safe deterministic issues, and create a baseline before asking what you want to change.');
     watch(r.jobId);
-  } catch (e) { setBusy(false); add('ai', e.message); }
+  } catch (e) { handleJobActionError(e); }
 }
 async function askUpgradeRequest() {
   const request = await askSafeAction('UPGRADE WORKSHOP', 'What would you like to improve in this existing app?');
@@ -322,7 +336,7 @@ async function askUpgradeRequest() {
   try {
     const r = await api(`/api/projects/${state.projectId}/upgrade/request`, { method: 'POST', body: JSON.stringify({ request: request.text }) });
     watch(r.jobId);
-  } catch (e) { setBusy(false); add('ai', e.message); }
+  } catch (e) { handleJobActionError(e); }
 }
 function renderUpgradeBaseline(result) {
   const health = result.baseline?.health?.status || result.knowledge?.runtime?.status || 'HEALTHY';
@@ -357,7 +371,7 @@ function renderUpgradePlan(plan, request) {
     if (state.busy) return;
     setBusy(true, 'Applying the minimal upgrade…');
     try { const r = await api(`/api/projects/${state.projectId}/upgrade/apply`, { method: 'POST', body: JSON.stringify({ approved: true, request, plan }) }); watch(r.jobId); }
-    catch (e) { setBusy(false); add('ai', e.message); }
+    catch (e) { handleJobActionError(e); }
   };
   row.appendChild(apply); box.appendChild(row); $('chat').appendChild(box); if (chatNearBottom()) $('chat').scrollTop = $('chat').scrollHeight;
 }
@@ -368,7 +382,7 @@ async function startSandboxDemo() {
     const r = await api('/api/projects/sandbox-demo', { method: 'POST', body: '{}' });
     add('ai', 'Starting Sandbox Benchmark: runtime + Internet/DNS + browser checks. This separates Sandbox network problems from app problems.');
     watch(r.jobId);
-  } catch (e) { setBusy(false); add('ai', e.message); }
+  } catch (e) { handleJobActionError(e); }
 }
 async function quick(action, extraPayload = {}) {
   if (state.busy) return;
@@ -414,7 +428,7 @@ async function quick(action, extraPayload = {}) {
     else r = await api(`/api/projects/${state.projectId}/${action}`, { method: 'POST', body: '{}' });
     if (r.needsConfirmation) { setBusy(false); add('ai', `I need your approval before ${actionText(action).toLowerCase()}.`); return; }
     watch(r.jobId);
-  } catch (e) { setBusy(false); add('ai', e.message); }
+  } catch (e) { handleJobActionError(e); }
 }
 async function askSafeAction(kind, initial = '') {
   return new Promise((resolve) => {
@@ -433,61 +447,143 @@ async function askSafeAction(kind, initial = '') {
   });
 }
 
-async function watch(jobId) {
-  state.jobId = jobId; state.seenEvents = 0;
-  clearInterval(state.poll);
-  state.poll = setInterval(async () => {
-    try {
-      const job = await api(`/api/jobs/${jobId}`);
-      const events = job.events || [];
-      for (let i = state.seenEvents; i < events.length; i++) event(events[i].stage, events[i].status, events[i].message);
-      state.seenEvents = events.length;
-      if (job.status === 'done' || job.status === 'failed' || job.status === 'cancelled') {
-        clearInterval(state.poll); state.poll = null; setBusy(false);
-        const result = job.result || {};
+function stopJobWatch() {
+  if (state.poll) clearTimeout(state.poll);
+  state.poll = null;
+}
+
+async function recoverMissingJob(jobId, seq) {
+  if (state.jobId !== jobId || state.watchSeq !== seq) return true;
+  try {
+    const projectId = state.projectId ? encodeURIComponent(state.projectId) : '';
+    const current = await api(`/api/jobs/current?projectId=${projectId}`);
+    if (state.jobId !== jobId || state.watchSeq !== seq) return true;
+    if (current?.jobId && current.jobId !== jobId) {
+      add('system', '↻ The previous job reference expired. I reconnected to the active job.');
+      watch(current.jobId);
+      return true;
+    }
+    stopJobWatch();
+    state.jobId = null;
+    setBusy(false);
+    add('system', '⚠ The current job is no longer available. No new action was started. You can safely retry the last action.');
+    return true;
+  } catch (recoveryError) {
+    stopJobWatch();
+    state.jobId = null;
+    setBusy(false);
+    add('system', `⚠ The current job could not be recovered (${recoveryError.message || 'job unavailable'}). No duplicate action was started.`);
+    return true;
+  }
+}
+
+function scheduleJobPoll(jobId, delay = 700) {
+  stopJobWatch();
+  const seq = state.watchSeq;
+  state.poll = setTimeout(() => {
+    if (seq !== state.watchSeq || state.jobId !== jobId) return;
+    watch(jobId, { preserveEvents: true, resetFailures: false });
+  }, delay);
+}
+
+async function watch(jobId, { preserveEvents = false, resetFailures = true } = {}) {
+  if (state.jobId !== jobId) {
+    state.jobId = jobId;
+    state.watchSeq += 1;
+    state.seenEvents = 0;
+    state.pollFailures = 0;
+  } else if (resetFailures) {
+    state.pollFailures = 0;
+  }
+  if (!preserveEvents && state.seenEvents) state.seenEvents = 0;
+  setBusy(true, state.pollFailures ? 'Still working…' : 'Working…');
+
+  // Multiple UI paths can attach to the same job (for example a duplicate Publish
+  // request receiving the existing jobId). Never issue overlapping GETs for the same
+  // job, but allow a new job to take over while an obsolete request is finishing.
+  // Check this BEFORE clearing the scheduled poll: an attach during an in-flight
+  // request must not cancel the only continuation that will schedule the next poll.
+  if (state.pollInFlight && state.pollInFlightJobId === jobId) return;
+  stopJobWatch();
+  const seq = state.watchSeq;
+  state.pollInFlight = true;
+  state.pollInFlightJobId = jobId;
+
+  try {
+    const job = await api(`/api/jobs/${jobId}`);
+    if (state.jobId !== jobId || state.watchSeq !== seq) return;
+    state.pollFailures = 0;
+    const events = job.events || [];
+    for (let i = state.seenEvents; i < events.length; i++) event(events[i].stage, events[i].status, events[i].message);
+    state.seenEvents = events.length;
+
+    if (job.status === 'done' || job.status === 'failed' || job.status === 'cancelled') {
+      stopJobWatch(); setBusy(false);
+      const result = job.result || {};
+      if (result.projectId && result.projectId !== state.projectId) {
+        state.projectId = result.projectId;
+        await loadProjects();
+        await openProject(result.projectId, false);
+      }
+      if (job.status === 'done' && (job.type === 'upgrade_inspect' || job.type === 'upgrade_github_import')) {
         if (result.projectId && result.projectId !== state.projectId) {
           state.projectId = result.projectId;
           await loadProjects();
           await openProject(result.projectId, false);
         }
-        if (job.status === 'done' && (job.type === 'upgrade_inspect' || job.type === 'upgrade_github_import')) {
-          if (result.projectId && result.projectId !== state.projectId) {
-            state.projectId = result.projectId;
-            await loadProjects();
-            await openProject(result.projectId, false);
-          }
-          renderUpgradeBaseline(result);
-          if (state.projectId) await askUpgradeRequest();
-        }
-        if (job.status === 'done' && job.type === 'upgrade_request' && result.plan) {
-          renderUpgradePlan(result.plan, result.plan.request || '');
-        }
-        if (job.status === 'failed') {
-          const failure = String(job.error || 'The action failed.');
-          add('ai', failure);
-          renderRepairAction(failure);
-        }
-        const reportFailure = Array.isArray(result.reports) && result.reports.find((r) => r.status === 'failed' || r.status === 'blocked');
-        if (reportFailure) {
-          const failure = `Step ${reportFailure.action} was not completed: ${reportFailure.error || 'blocked by a previous failure.'}`;
-          add('ai', failure);
-          renderRepairAction(failure);
-        }
-        if (result.status === 'github_actions_failed' && result.diagnosis) {
-          renderRepairAction(result.diagnosis);
-        }
-        if (result.brief) add('ai', result.brief);
-        else if (result.reply) add('ai', result.reply);
-        else if (state.projectId) { await loadProjects(); }
-        summarizeResult(result, job.status);
-        if (result.guide) renderGuide(result.guide);
-        const live = extractRuntime(result);
-        if (live?.status === 'passed') setLive(true);
-        if (live?.status === 'stopped' || result.status === 'released') setLive(Boolean(live?.status === 'passed'));
-        maybeJump();
+        renderUpgradeBaseline(result);
+        if (state.projectId) await askUpgradeRequest();
       }
-    } catch (e) { clearInterval(state.poll); state.poll = null; setBusy(false); add('ai', `Connection lost while checking the job: ${e.message}`); }
-  }, 700);
+      if (job.status === 'done' && job.type === 'upgrade_request' && result.plan) {
+        renderUpgradePlan(result.plan, result.plan.request || '');
+      }
+      if (job.status === 'failed') {
+        const failure = String(job.error || 'The action failed.');
+        add('ai', failure);
+        renderRepairAction(failure);
+      }
+      const reportFailure = Array.isArray(result.reports) && result.reports.find((r) => r.status === 'failed' || r.status === 'blocked');
+      if (reportFailure) {
+        const failure = `Step ${reportFailure.action} was not completed: ${reportFailure.error || 'blocked by a previous failure.'}`;
+        add('ai', failure);
+        renderRepairAction(failure);
+      }
+      if (result.status === 'github_actions_failed' && result.diagnosis) {
+        renderRepairAction(result.diagnosis);
+      }
+      if (result.brief) add('ai', result.brief);
+      else if (result.reply) add('ai', result.reply);
+      else if (state.projectId) { await loadProjects(); }
+      summarizeResult(result, job.status);
+      if (result.guide) renderGuide(result.guide);
+      const live = extractRuntime(result);
+      if (live?.status === 'passed') setLive(true);
+      if (live?.status === 'stopped' || result.status === 'released') setLive(Boolean(live?.status === 'passed'));
+      maybeJump();
+      return;
+    }
+
+    // A successful poll proves the backend still owns the job. Keep the chat in a
+    // waiting state until the server records a terminal status.
+    scheduleJobPoll(jobId, 700);
+  } catch (e) {
+    if (state.jobId !== jobId || state.watchSeq !== seq) return;
+    if (e?.status === 404 || /Job not found/i.test(String(e?.message || ''))) {
+      await recoverMissingJob(jobId, seq);
+      return;
+    }
+    state.pollFailures += 1;
+    const delay = Math.min(5000, 700 * (2 ** Math.min(state.pollFailures, 3)));
+    setBusy(true, state.pollFailures === 1 ? 'Reconnecting…' : 'Still working…');
+    if (state.pollFailures === 1) add('system', '↻ Connection to the current job was interrupted. The job is still being watched; no new action was started.');
+    scheduleJobPoll(jobId, delay);
+    if (state.pollFailures === 1) add('system', `Waiting for the current job result… (${e.message})`);
+  } finally {
+    if (state.pollInFlightJobId === jobId) {
+      state.pollInFlight = false;
+      state.pollInFlightJobId = null;
+    }
+  }
 }
 // Fix: `result.runtime` can be either the preview engine name as a plain string
 // (e.g. "native-preview", set by src/runtime/native-preview.js) or, in older/other
@@ -531,7 +627,7 @@ function renderRepairAction(errorText) {
       const r = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(r.error || 'Repair could not start.');
       watch(r.jobId);
-    } catch (e) { setBusy(false); add('ai', e.message); }
+    } catch (e) { handleJobActionError(e); }
   };
   row.appendChild(b); box.appendChild(row);
   $('chat').appendChild(box); $('chat').scrollTop = $('chat').scrollHeight;
@@ -605,7 +701,7 @@ function renderRepoChoices(choices) {
         const body = { approved: true, confirm: true, push: true, existingAction: choice.action, repoName: choice.repoName };
         const r = await api(`/api/projects/${state.projectId}/release`, { method: 'POST', body: JSON.stringify(body) });
         watch(r.jobId);
-      } catch (e) { setBusy(false); add('ai', e.message); }
+      } catch (e) { handleJobActionError(e); }
     }; row.appendChild(b);
   });
   box.appendChild(row); $('chat').appendChild(box); maybeJump();
@@ -674,7 +770,7 @@ async function submitQuestionAnswers(questions) {
   try {
     const r = await api(`/api/projects/${state.projectId}/answer`, { method: 'POST', body: JSON.stringify({ answers }) });
     watch(r.jobId);
-  } catch (e) { setBusy(false); add('ai', e.message); }
+  } catch (e) { handleJobActionError(e); }
 }
 async function inspectDocker() {
   if (state.busy) return;

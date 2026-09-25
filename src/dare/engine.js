@@ -17,35 +17,53 @@ export async function runDare({ sourceDir, logs = '', extra = {}, history = [] }
   const layer = classifyLayer(fp);
   const previous = Array.isArray(history) ? history : [];
   const sourceHash = manifestHash(before);
-  const attempted = previous.filter((h) => h.fingerprint === fp && h.sourceHash === sourceHash);
-  const priorRule = attempted[0]?.ruleId || null;
-
-  if (attempted.length >= MAX_ATTEMPTS_PER_FINGERPRINT) {
-    return report({
-      ok: false, stopped: true, fingerprint: fp, layer,
-      reason: 'Loop protection stopped another automatic repair of the same error.',
-      next: fp === 'GHCR_PACKAGE_WRITE_PERMISSION' || fp === 'GHCR_LOGIN_FAILED' ? 'USER_ACTION' : 'AI',
-      history: previous,
-      before,
-      sourceHash,
-      priorRule,
-    });
-  }
-
   let action = await matchRule(sourceDir, fp, logs);
 
-  // A generic/unknown runtime error still gets one deterministic preflight scan.
-  if (!action && fp === 'UNKNOWN' && /module|import|require|missing script|localhost|ghcr|compose/i.test(`${logs}\n${extraText}`)) {
+  // Run a lightweight deterministic preflight even before a runtime log exists.
+  // This prevents predictable container-contract failures from reaching AI.
+  const preflightMode = /SOLOHOST_(?:RELEASE|UPGRADE)_PREFLIGHT/i.test(extraText);
+  if (!action && (fp === 'NONE' || fp === 'UNKNOWN' || preflightMode)) {
     action = await preflightScan(sourceDir);
   }
+
+  const actionFp = action?.fingerprint || fp;
+  const attempted = previous.filter((h) => h.fingerprint === actionFp && h.sourceHash === sourceHash && h.result === 'patched');
+  const priorRule = attempted[0]?.ruleId || action?.ruleId || null;
 
   if (!action) {
     return report({
       ok: false, fingerprint: fp, layer,
-      reason: 'DARE has no safe deterministic rule for this fingerprint.',
-      next: layer === 'GHCR_ERROR' ? 'USER_ACTION' : 'AI',
+      reason: preflightMode
+        ? 'SoloHost runtime preflight found no remaining deterministic contract issue.'
+        : 'DARE has no safe deterministic rule for this fingerprint.',
+      next: preflightMode ? 'CONTINUE' : (layer === 'GHCR_ERROR' ? 'USER_ACTION' : 'AI'),
       history: previous,
       before,
+      sourceHash,
+    });
+  }
+
+  // A runtime permission incident can still be reported by an older image/log
+  // after the Dockerfile has already been repaired. Treat that as a verified
+  // deterministic no-op, not as permission to call AI or repeat the patch.
+  if (action.alreadyPrepared) {
+    return report({
+      ok: false, alreadyFixed: true, stopped: false, fingerprint: actionFp, layer,
+      ruleId: action.ruleId, reason: action.reason || 'The required runtime directory is already prepared for the image user.',
+      next: 'CONTINUE', history: previous, before, sourceHash, files: [], changed: [],
+    });
+  }
+
+  if (attempted.length >= MAX_ATTEMPTS_PER_FINGERPRINT) {
+    return report({
+      ok: false, stopped: true, alreadyFixed: attempted.some((h) => h.result === 'patched'), fingerprint: actionFp, layer,
+      reason: 'Loop protection stopped another automatic repair of the same error.',
+      next: actionFp === 'GHCR_PACKAGE_WRITE_PERMISSION' || actionFp === 'GHCR_LOGIN_FAILED' ? 'USER_ACTION' : 'AI',
+      history: previous,
+      before,
+      sourceHash,
+      priorRule,
+      ruleId: action.ruleId,
     });
   }
 
@@ -53,7 +71,7 @@ export async function runDare({ sourceDir, logs = '', extra = {}, history = [] }
     return report({ ok: false, fingerprint: fp, layer, reason: action.reason, next: action.next || 'USER_ACTION', history: previous, before });
   }
 
-  const result = await applyAction(sourceDir, { ...action, fingerprint: fp, layer }, previous);
+  const result = await applyAction(sourceDir, { ...action, fingerprint: action.fingerprint || fp, layer: action.layer || layer }, previous);
   const after = await fileManifest(sourceDir);
   const changed = diffManifest(before, after);
 
@@ -68,10 +86,32 @@ export async function runDare({ sourceDir, logs = '', extra = {}, history = [] }
     });
   }
 
+  if (!changed.length) {
+    const createdDirs = (result.files || []).filter((file) => String(file).endsWith('/'));
+    if (result.ok && createdDirs.length) {
+      return report({ ...result, before, after, changed: createdDirs, history: previous, sourceHash });
+    }
+    return report({
+      ...result,
+      ok: false,
+      alreadyFixed: true,
+      stopped: false,
+      next: 'CONTINUE',
+      reason: result.reason || 'The deterministic runtime contract is already present; no extra patch was applied.',
+      before,
+      after,
+      changed,
+      history: previous,
+      sourceHash,
+    });
+  }
+
   return report({ ...result, before, after, changed, history: previous, sourceHash });
 }
 
 async function preflightScan(sourceDir) {
+  const runtimePermission = await runtimeFilesystemPermissionPreflight(sourceDir);
+  if (runtimePermission) return runtimePermission;
   const deps = await findMissingNodeModules(sourceDir).catch(() => ({ missing: [] }));
   if (deps.missing?.length) {
     return {
@@ -107,11 +147,6 @@ async function matchRule(sourceDir, fp, logs) {
   }
   if (fp === 'DOCKER_CONTAINER_CRASH' && /cannot find module|module not found/i.test(logs)) {
     return { ruleId: 'NODE_MODULE_MISSING', risk: 'SAFE', repair: 'deps', reason: 'Container crashed because a Node package is missing.' };
-  }
-  if (fp === 'DOCKER_CONTAINER_CRASH' || fp === 'RUNTIME_FILESYSTEM_PERMISSION' || fp.startsWith('RUNTIME_FILESYSTEM_PERMISSION:')) {
-    const inferred = fp.startsWith('RUNTIME_FILESYSTEM_PERMISSION:') ? fp : `RUNTIME_FILESYSTEM_PERMISSION:${await inferWritableDirFromSource(sourceDir) || ''}`.replace(/:$/, '');
-    const fsRepair = await runtimeFilesystemPermissionRepair(sourceDir, inferred, logs);
-    if (fsRepair) return fsRepair;
   }
   if (fp === 'NODE_ENGINE_MISMATCH') {
     return await nodeEngineRepair(sourceDir, logs);
@@ -275,27 +310,86 @@ async function localhostBind(sourceDir) {
   return null;
 }
 
-async function inferWritableDirFromSource(sourceDir) {
-  const df = await fs.readFile(path.join(sourceDir, 'Dockerfile'), 'utf8').catch(() => '');
-  if (!df) return '';
-  const workdir = path.posix.normalize(df.match(/^WORKDIR\s+([^\s#]+)/mi)?.[1] || '/app');
-  const files = await listFiles(sourceDir);
-  for (const rel of files) {
-    if (!/\.(js|mjs|cjs|ts|tsx)$/.test(rel) || rel.startsWith('node_modules/')) continue;
-    const text = await fs.readFile(path.join(sourceDir, rel), 'utf8').catch(() => '');
-    const abs = text.match(/mkdir(?:Sync)?\s*\(\s*['"](\/[^'"]+)['"]/);
-    if (abs?.[1]) return path.posix.normalize(abs[1]);
-    const joinData = text.match(/mkdir(?:Sync)?\s*\([^)]*(?:['"]data['"]|['"]\.\/data['"]|['"]\/app\/data['"])/);
-    if (joinData) return path.posix.join(workdir, 'data');
+
+function dockerfilePreparesWritablePath(df, target) {
+  const text = String(df || '');
+  const parts = String(target || '').split('/').filter(Boolean);
+  const paths = [];
+  let acc = '';
+  for (const part of parts) {
+    acc += `/${part}`;
+    paths.push(acc);
   }
-  return '';
+  return paths.some((candidate) => {
+    const escaped = candidate.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return new RegExp(
+      `(?:RUN[^\\n]*(?:mkdir\\s+-p|install[^\\n]*-d)[^\\n]*${escaped}[^\\n]*chown|RUN[^\\n]*chown[^\\n]*${escaped}|COPY\\s+--chown=[^\\s]+\\s+\\.\\s+\\.)`,
+      'i',
+    ).test(text);
+  });
+}
+
+async function runtimeFilesystemPermissionPreflight(sourceDir) {
+  const dfPath = path.join(sourceDir, 'Dockerfile');
+  const df = await fs.readFile(dfPath, 'utf8').catch(() => '');
+  if (!df) return null;
+  const workdir = path.posix.normalize(df.match(/^WORKDIR\s+([^\s#]+)/mi)?.[1] || '/app');
+  const userMatches = [...df.matchAll(/^USER\s+([^\s#]+)/gmi)];
+  const runtimeUser = userMatches.length ? userMatches[userMatches.length - 1][1] : '';
+  if (!runtimeUser || /^(0|root)$/i.test(runtimeUser)) return null;
+  if (/COPY\s+--chown=[^\s]+\s+\.\s+\./i.test(df)) return null;
+
+  const files = await listFiles(sourceDir);
+  const sourceFiles = files.filter((rel) => /\.(js|mjs|cjs|ts|tsx|jsx|py)$/.test(rel) && !rel.startsWith('node_modules/'));
+  const candidates = new Set();
+  const addCandidate = (value) => {
+    const raw = String(value || '').trim();
+    if (!raw || raw.includes('..')) return;
+    const normalized = path.posix.normalize(raw.startsWith('/') ? raw : path.posix.join(workdir, raw));
+    const base = workdir.replace(/\/$/, '');
+    if (normalized.startsWith(`${base}/`) && normalized !== base) candidates.add(normalized);
+  };
+
+  for (const rel of sourceFiles) {
+    const text = await fs.readFile(path.join(sourceDir, rel), 'utf8').catch(() => '');
+    for (const m of text.matchAll(/path\.join\(\s*(?:__dirname|process\.cwd\(\))\s*,\s*['\"]([^'\"]+)['\"]/g)) addCandidate(m[1]);
+    for (const m of text.matchAll(/(?:fs\.(?:mkdirSync|mkdir|writeFileSync|writeFile|appendFileSync|appendFile|createWriteStream|renameSync|rename|copyFileSync|copyFile)|openSync|sqlite|Database)\s*[^\n]{0,240}['\"](\/app\/[^'\"]+)['\"]/gi)) addCandidate(m[1]);
+  }
+
+  for (const target of candidates) {
+    const escaped = target.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const alreadyPrepared = dockerfilePreparesWritablePath(df, target);
+    if (alreadyPrepared) {
+      return {
+        ruleId: 'RUNTIME_FILESYSTEM_PERMISSION',
+        fingerprint: `RUNTIME_FILESYSTEM_PERMISSION:${target}`,
+        layer: 'RUNTIME_ERROR',
+        risk: 'SAFE',
+        alreadyPrepared: true,
+        path: target,
+        user: runtimeUser,
+        reason: `The runtime path ${target} is already prepared for ${runtimeUser}; an older container/image may still be reporting the pre-repair error.`,
+      };
+    }
+    return {
+      ruleId: 'RUNTIME_FILESYSTEM_PERMISSION',
+      fingerprint: `RUNTIME_FILESYSTEM_PERMISSION:${target}`,
+      layer: 'RUNTIME_ERROR',
+      risk: 'SAFE',
+      repair: 'filesystem-permission',
+      dockerfile: 'Dockerfile',
+      path: target,
+      user: runtimeUser,
+      reason: `Preflight found an application-owned runtime path ${target} used by a non-root image user ${runtimeUser} without a writable-directory preparation step.`,
+    };
+  }
+  return null;
 }
 
 async function runtimeFilesystemPermissionRepair(sourceDir, fp, logs = '') {
-  let rawPath = fp.startsWith('RUNTIME_FILESYSTEM_PERMISSION:')
+  const rawPath = fp.startsWith('RUNTIME_FILESYSTEM_PERMISSION:')
     ? fp.slice('RUNTIME_FILESYSTEM_PERMISSION:'.length).trim()
     : String(String(logs).match(/(?:mkdir|open|write|rename|unlink)[^'\"]*['\"]([^'\"]+)['\"]/i)?.[1] || '').trim();
-  if (!rawPath || !rawPath.startsWith('/')) rawPath = await inferWritableDirFromSource(sourceDir);
   if (!rawPath || !rawPath.startsWith('/')) return null;
 
   const dfPath = path.join(sourceDir, 'Dockerfile');
@@ -311,6 +405,19 @@ async function runtimeFilesystemPermissionRepair(sourceDir, fp, logs = '') {
   const normalizedTarget = path.posix.normalize(rawPath);
   const underWorkdir = normalizedTarget === normalizedWorkdir || normalizedTarget.startsWith(`${normalizedWorkdir.replace(/\/$/, '')}/`);
   if (!underWorkdir) return null;
+
+  if (dockerfilePreparesWritablePath(df, normalizedTarget)) {
+    return {
+      ruleId: 'RUNTIME_FILESYSTEM_PERMISSION',
+      fingerprint: fp,
+      layer: 'RUNTIME_ERROR',
+      risk: 'SAFE',
+      alreadyPrepared: true,
+      path: normalizedTarget,
+      user: runtimeUser,
+      reason: `The runtime path ${normalizedTarget} is already prepared for ${runtimeUser}; verify the exact published image instead of repeating the patch.`,
+    };
+  }
 
   // Only repair the concrete runtime directory implicated by mkdir/open/write.
   // Do not chmod the whole app, and do not modify source code.
@@ -452,6 +559,7 @@ function report(row) {
     added: row.added || [],
     reason: row.reason || '',
     next: row.next || (row.ok ? 'CONTINUE' : 'AI'),
+    alreadyFixed: Boolean(row.alreadyFixed),
     aiRequired: row.next === 'AI',
     userAction: row.next === 'USER_ACTION',
     history,
