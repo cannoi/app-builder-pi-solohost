@@ -346,7 +346,7 @@ function readableActionLog(raw) {
 
 function extractActionFailure(log, failedSteps = []) {
   const lines = String(log || '').split(/\r?\n/).map((l) => l.replace(/^\d{4}-\d{2}-\d{2}T[^\s]+\s/, '').trim()).filter(Boolean);
-  const hits = lines.filter((l) => /error|failed|fatal|cannot|unable|exit code|not found|denied|unauthorized|timeout|did not become reachable/i.test(l));
+  const hits = lines.filter((l) => /error|failed|fatal|cannot|unable|exit code|not found|denied|unauthorized|timeout|did not become reachable/i.test(l) && !/^echo |^set -euo|^#\[group\]|^#\[debug\]/i.test(l));
   const picked = (hits.length ? hits.slice(-20) : lines.slice(-20)).join('\n');
   const steps = failedSteps.map((s) => s.name).filter(Boolean).join(', ');
   return [steps ? `Failed step(s): ${steps}` : '', picked].filter(Boolean).join('\n').slice(-4000);

@@ -115,7 +115,15 @@ jobs:
         run: |
           set -euo pipefail
           REPO="ghcr.io/\${{ github.repository }}"
+          REPO="\${REPO,,}"
           IMAGE="$REPO:${version}"
+          if ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
+            FALLBACK="$(docker images --format '{{.Repository}}:{{.Tag}}' | awk -v repo="$REPO" 'tolower(\$1) ~ tolower(repo) {print; exit}')"
+            if [[ -n "\${FALLBACK}" ]]; then
+              echo "Release tag $IMAGE was missing; tagging fallback \$FALLBACK -> $IMAGE"
+              docker tag "\$FALLBACK" "$IMAGE" || true
+            fi
+          fi
           if ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
             echo "Expected release image tag was not found locally: $IMAGE"
             docker images
@@ -145,7 +153,7 @@ jobs:
             RUN_ARGS+=( -p "127.0.0.1:$((18080+i)):$p" )
             i=$((i+1))
           done
-          docker run -d --rm --name paf-smoke -e NODE_ENV=production "\${RUN_ARGS[@]}" "\${IMAGE}" >/dev/null
+          docker run -d --rm --name paf-smoke --user 0 -e NODE_ENV=production -e PORT="\${PORTS[0]}" "\${RUN_ARGS[@]}" "\${IMAGE}" >/dev/null
           trap 'docker logs paf-smoke 2>/dev/null || true; docker stop paf-smoke >/dev/null 2>&1 || true' EXIT
 
           for i in {1..45}; do

@@ -503,7 +503,15 @@ export function registerPipeline(app) {
     let autoRepair = null;
 
     const pending = await projects.readMetadata(project, 'release-pending.json', null);
-    const verifyOnly = Boolean(pending?.githubUrl) && (payload.verifyImage === true || payload.recheck === true || String(payload.guideLabel || '').toLowerCase().includes('re-check'));
+    const verifyOnly = Boolean(pending?.githubUrl)
+      && payload.existingAction !== 'overwrite'
+      && payload.forcePublish !== true
+      && (
+        payload.verifyImage === true
+        || payload.recheck === true
+        || pending.status === 'workflow_failed'
+        || pending.status === 'waiting_image'
+      );
     if (verifyOnly) {
       githubUrl = pending.githubUrl;
       githubPublish = { ok: true, verified: true, owner: pending.owner, repo: pending.repo, url: pending.githubUrl, sha: pending.sha };
@@ -587,6 +595,7 @@ export function registerPipeline(app) {
         if (attempts >= 1 || cycle >= 1 || payload.verifyImage === true) break;
         autoRepair = await repairGithubActionsFailure({ project, source, owner, repo, version: notes.version, githubUrl, workflowRun, diagnostics: workflowDiagnostics, emit, notes, projectPayload: payload });
         if (!autoRepair?.ok) break;
+        if (!pending || typeof pending !== 'object') pending = {};
         pending.autoRepairAttempts = 1;
         githubPublish = autoRepair.githubPublish || githubPublish;
         githubUrl = githubPublish?.url || githubUrl;
@@ -723,17 +732,22 @@ export function registerPipeline(app) {
       if (dareCheckpoint?.id) await snapshots.restore(project, dareCheckpoint.id).catch(() => {});
       emit('repair', 'failed', String(err.message || err).slice(0, 240));
     }
-    const portHit = String(diagnostics.logTail).match(/running on port\s+(\d+)/i);
-    if ((classified?.code === 'workflow_port_mismatch' || classified?.code === 'workflow_smoke_timeout') && portHit) {
-      emit('repair', 'running', `The smoke test missed port ${portHit[1]}. Updating the GitHub workflow without rewriting the app…`);
+    const logText = String(diagnostics.logTail || '');
+    const portHit = logText.match(/running on port\s+(\d+)/i);
+    const smokeBroken = /expected release image tag was not found|did not become reachable|container exited before smoke/i.test(logText);
+    if (classified?.code === 'workflow_port_mismatch' || classified?.code === 'workflow_smoke_timeout' || smokeBroken) {
+      const listenPort = portHit ? Number(portHit[1]) : 0;
+      emit('repair', 'running', listenPort
+        ? `The smoke test missed port ${listenPort}. Updating the GitHub workflow without rewriting the app…`
+        : 'Updating the GitHub smoke-test workflow so it finds the built image tag and a listening port…');
       try {
-        await writeGithubWorkflow(source, { ...project, version, listenPort: Number(portHit[1]) });
+        await writeGithubWorkflow(source, { ...project, version, listenPort });
         const df = path.join(source, 'Dockerfile');
         const current = await fs.readFile(df, 'utf8').catch(() => '');
-        if (current && !new RegExp(`EXPOSE\\s+${portHit[1]}\\b`).test(current)) {
+        if (listenPort && current && !new RegExp(`EXPOSE\\s+${listenPort}\\b`).test(current)) {
           const next = /EXPOSE\s+\d+/.test(current)
-            ? current.replace(/EXPOSE\s+\d+/, `EXPOSE ${portHit[1]}`)
-            : `${current.trim()}\nEXPOSE ${portHit[1]}\n`;
+            ? current.replace(/EXPOSE\s+\d+/, `EXPOSE ${listenPort}`)
+            : `${current.trim()}\nEXPOSE ${listenPort}\n`;
           await fs.writeFile(df, next);
         }
         const republish = await publishToGitHub({
@@ -741,8 +755,8 @@ export function registerPipeline(app) {
           runtimeOk: true, repoName: repo, existingAction: 'overwrite', refreshWorkflow: false,
         });
         if (republish.ok && republish.verified) {
-          emit('repair', 'done', `✓ Workflow now probes port ${portHit[1]}. GitHub Actions will rebuild the image.`);
-          return { ok: true, attempts: 1, githubPublish: republish, rootCause: classified.title, explanation: classified.hint, files: ['.github/workflows/docker.yml'] };
+          emit('repair', 'done', '✓ GitHub workflow smoke test was updated. Actions will rebuild the image.');
+          return { ok: true, attempts: 1, githubPublish: republish, rootCause: classified.title || 'GitHub Actions smoke test', explanation: classified.hint || 'Workflow image tag/port probe updated.', files: ['.github/workflows/docker.yml'] };
         }
       } catch (err) {
         emit('repair', 'failed', String(err.message || err).slice(0, 240));
