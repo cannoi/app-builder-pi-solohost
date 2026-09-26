@@ -12,3 +12,7 @@
 .supportTabs{display:flex;gap:8px;margin:0 0 12px}.supportTab{flex:1;background:#252d38;color:var(--text);border:1px solid var(--line);border-radius:10px;padding:8px}.supportTab.on{border-color:var(--accent);color:#fff}.supportQr{width:min(220px,70vw);height:auto;display:block;margin:0 auto 10px;border-radius:12px;background:#fff;padding:8px}.supportPane .muted{margin:0 0 4px;text-align:center}
 .send.stopMode{background:var(--bad);animation:stopPulse 1.4s ease-in-out infinite}
 @keyframes stopPulse{0%,100%{box-shadow:0 0 0 0 rgba(255,107,120,.35)}50%{box-shadow:0 0 0 6px rgba(255,107,120,0)}}
+
+.advisorBox{margin-top:10px;padding:8px;border:1px solid var(--line);border-radius:12px;background:var(--panel2)}
+.advisorBox h3{margin:0 0 4px;font-size:.9rem}
+.advisorOut{max-height:160px;overflow:auto;white-space:pre-wrap;font-size:.72rem;margin:8px 0 0}

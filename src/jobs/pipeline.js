@@ -57,12 +57,12 @@ export function registerPipeline(app) {
   });
 
   jobs.on('builder_advisor', async (job, { emit }) => {
-    const project = mustProject(job.payload.projectId);
-    emit('advisor', 'running', '🧭 Reviewing recent failures and repair history…');
-    const report = await buildAdvisorReport({ project: projects.get(project.id), projects, db: app.db });
-    await refreshProjectBrain({ project, projects, db: app.db });
-    emit('advisor', 'done', `Advisor found ${report.findings.length} improvement finding(s).`);
-    return { projectId: project.id, advisor: report, status: 'ADVISOR_READY', brief: formatAdvisor(report) };
+    const project = job.payload.projectId ? projects.get(job.payload.projectId) : (projects.list()[0] || null);
+    emit('advisor', 'running', '🧭 Reviewing session history. No files will be changed.');
+    const report = await buildAdvisorReport({ project, projects, db: app.db, scope: job.payload.scope || '30d' });
+    if (project) await refreshProjectBrain({ project, projects, db: app.db });
+    emit('advisor', 'done', formatAdvisor(report));
+    return { projectId: project?.id || null, advisor: report, status: 'ADVISOR_READY', brief: formatAdvisor(report) };
   });
 
   jobs.on('upgrade_github_import', async (job, { emit }) => {
@@ -384,7 +384,19 @@ export function registerPipeline(app) {
       // Fix: previously this handler returned normally even when the preview failed,
       // which made JobQueue mark the job "done" and hid the error + link from the UI.
       // Throwing here makes JobQueue mark it "failed" so the real error reaches the user.
-      throw new Error(message);
+      emit('diagnose', 'running', '⚠️ Problem detected. Investigating…');
+      try {
+        const report = await diagnoseProject({ project, projects, db: app.db, logs: [result.error, result.logs, message].filter(Boolean).join('\n') });
+        await refreshProjectBrain({ project, projects, db: app.db, extra: { notes: report.rootCause } });
+        const brief = formatUserDiagnosis(report);
+        emit('diagnose', 'done', brief);
+        const err = new Error(brief);
+        err.diagnosis = report;
+        throw err;
+      } catch (diagErr) {
+        if (diagErr.diagnosis) throw diagErr;
+        throw new Error(message);
+      }
     }
     return { ...runtime, downloads: [], ui_url: publicUiUrl, next: 'Open the test link, improve if needed, then Publish.' };
   });
@@ -2115,8 +2127,27 @@ function formatProjectDiagnosis(report) {
 }
 
 function formatAdvisor(report) {
-  const lines = ['🧭 BUILDER ADVISOR', `Findings: ${report.findings?.length || 0}`];
-  for (const f of (report.findings || []).slice(0, 5)) lines.push('', `• ${f.problem}`, `  Evidence: ${JSON.stringify(f.evidence)}`, `  Recommendation: ${f.recommendation}`);
-  lines.push('', report.expectedImprovement);
+  const o = report.overview || {};
+  const lines = [
+    '🧭 AI ADVISOR',
+    `Apps analyzed: ${o.appsAnalyzed || 0}`,
+    `Failed jobs: ${o.failedJobs || 0}`,
+    'Advisor does not edit apps or Builder.',
+  ];
+  for (const row of (report.patterns || []).slice(0, 4)) lines.push('', `Pattern: ${row.what}`, `Why: ${row.why || ''}`, `Recommendation: ${row.recommendation}`);
+  for (const row of (report.appImprovements || []).slice(0, 4)) lines.push('', `App: ${row.app}`, `What: ${row.what}`, `Recommendation: ${row.recommendation}`);
+  if (!report.patterns?.length && !report.appImprovements?.length) lines.push('', 'No recurring problems in the selected scope.');
   return lines.join('\n');
+}
+
+function formatUserDiagnosis(report) {
+  return [
+    '⚠️ Problem detected',
+    '🔎 Diagnosis complete',
+    `Cause: ${report.rootCause}`,
+    `Confidence: ${report.confidence}`,
+    report.evidenceLedger?.conclusion ? `Evidence: ${report.evidenceLedger.conclusion}` : '',
+    `Next: ${report.recommendation}`,
+    report.previousFailedAttempts?.length ? 'The previous repair will not be repeated automatically.' : '',
+  ].filter(Boolean).join('\n');
 }

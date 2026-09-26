@@ -400,8 +400,6 @@ async function startSandboxDemo() {
 async function quick(action, extraPayload = {}) {
   if (state.busy) return;
   if (action === 'support') return openSupport();
-  if (action === 'diagnose') return startDiagnose();
-  if (action === 'advisor') return startAdvisor();
   if (action === 'script-run') return downloadScript('run');
   if (action === 'script-github') return downloadScript('github');
   if (action === 'docker') return inspectDocker();
@@ -561,7 +559,8 @@ async function watch(jobId, { preserveEvents = false, resetFailures = true } = {
       }
       if (job.status === 'failed') {
         const failure = String(job.error || 'The action failed.');
-        add('ai', failure);
+        if (result.diagnosis) add('ai', result.diagnosis.brief || result.brief || failure);
+        else add('ai', failure);
         renderRepairAction(failure);
       }
       const reportFailure = Array.isArray(result.reports) && result.reports.find((r) => r.status === 'failed' || r.status === 'blocked');
@@ -572,6 +571,9 @@ async function watch(jobId, { preserveEvents = false, resetFailures = true } = {
       }
       if (result.status === 'github_actions_failed' && result.diagnosis) {
         renderRepairAction(result.diagnosis);
+      }
+      if (job.type === 'builder_advisor' && $('advisorOut')) {
+        $('advisorOut').textContent = result.brief || 'Advisor finished.';
       }
       if (result.brief) add('ai', result.brief);
       else if (result.reply) add('ai', result.reply);
@@ -919,6 +921,19 @@ $('attachBtn').onclick = () => $('fileInput').click();
 $('fileInput').onchange = () => { state.files.push(...Array.from($('fileInput').files || [])); renderFiles(); $('fileInput').value = ''; };
 $('attachments').onclick = (e) => { const b = e.target.closest('[data-remove]'); if (b) { state.files.splice(Number(b.dataset.remove),1); renderFiles(); } };
 $('settingsBtn').onclick = () => { loadSettings(); $('settings').hidden = false; };
+$('advisorRun') && ($('advisorRun').onclick = runAdvisorFromSettings);
+async function runAdvisorFromSettings() {
+  const out = $('advisorOut');
+  if (out) out.textContent = 'Analyzing history…';
+  try {
+    const body = JSON.stringify({ scope: $('advisorScope')?.value || '30d', projectId: state.projectId || null });
+    const r = await api('/api/advisor/analyze', { method: 'POST', body });
+    if (r.jobId) watch(r.jobId);
+    else if (out) out.textContent = r.brief || JSON.stringify(r, null, 2);
+  } catch (e) {
+    if (out) out.textContent = e.message || 'Advisor could not run.';
+  }
+}
 $('closeSettings').onclick = () => $('settings').hidden = true;
 $('saveSettings').onclick = saveSettings;
 if ($('hubAdd')) $('hubAdd').onclick = addHubProvider;

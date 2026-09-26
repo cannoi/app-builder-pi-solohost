@@ -74,7 +74,6 @@
         <button data-action="improve">✦ Improve</button>
         <button data-action="edit">✎ Edit</button>
         <button data-action="run">▶ Run</button>
-        <button data-action="diagnose">🩺 Diagnose</button>
       </div>
 
       <!-- UPGRADE APP -->
@@ -112,8 +111,6 @@
         </button>
 
         <button data-action="sandbox">🧪 Sandbox</button>
-        <button data-action="advisor">🧭 Advisor</button>
-
         <button
           type="button"
           id="scriptGhBtn"
@@ -338,6 +335,20 @@
   </div>
 
   <button id="saveSettings" class="primary wide">Save</button>
+
+  <div class="advisorBox">
+    <h3>🧭 AI Advisor</h3>
+    <p class="muted">Reviews history only. It never edits your app or Builder.</p>
+    <label>Scope
+      <select id="advisorScope">
+        <option value="7d">7 days</option>
+        <option value="30d" selected>30 days</option>
+        <option value="all">All history</option>
+      </select>
+    </label>
+    <button id="advisorRun" class="wide" type="button">Analyze now</button>
+    <pre id="advisorOut" class="advisorOut muted">No analysis yet.</pre>
+  </div>
 
   <p id="settingsState" class="muted"></p>
 

@@ -1,3 +1,9 @@
+## 1.4.51
+
+- Diagnose is automatic on preview/runtime failure; the Diagnose quick action is removed.
+- Advisor lives in Settings, observes history only, and never edits apps or Builder.
+- Evidence ledger invalidates NODE_MODULE_MISSING when the package exists and node-gyp failed.
+
 ## 1.4.50
 
 - Job events no longer mark the whole Publish job done, so chat stays on the running work until the real result.

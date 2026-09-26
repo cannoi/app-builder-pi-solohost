@@ -29,9 +29,26 @@ export async function diagnoseProject({ project, projects, db = null, ai = null,
   const recentEvents = db ? db.all('SELECT job_id,stage,status,message,created_at FROM job_events WHERE job_id IN (SELECT id FROM jobs WHERE project_id = ? ORDER BY created_at DESC LIMIT 10) ORDER BY id DESC LIMIT 80', project.id) : [];
   const prior = [...(Array.isArray(history) ? history : []), ...(Array.isArray(diagnosisHistory) ? diagnosisHistory : []), ...recentJobs.map((j) => ({ fingerprint: fingerprintError(j.error || ''), error: j.error, type: j.type, status: j.status }))].slice(-60);
   const repeated = detectRepeatedFailures(prior, fingerprint);
+  const pkg = parsePackage(reads);
+  const declaredDeps = { ...(pkg.dependencies || {}), ...(pkg.devDependencies || {}) };
+  let invalidated = [];
+  if (fingerprint.startsWith('NODE_MODULE_MISSING:')) {
+    const name = fingerprint.slice('NODE_MODULE_MISSING:'.length);
+    if (declaredDeps[name]) {
+      invalidated.push({ old: fingerprint, status: 'INVALIDATED', reason: `${name} is already declared in package.json.` });
+    }
+  }
+  if (/node-gyp|gyp ERR|bindings file/i.test(logText) && /sqlite|better-sqlite3|bcrypt|sharp/i.test(logText)) {
+    invalidated.push({ old: 'NODE_MODULE_MISSING', status: 'INVALIDATED', reason: 'Native compilation failed; the package is present.' });
+  }
   let rootCause = 'No deterministic root cause is proven yet.';
   let confidence = 'low';
   const problems = [];
+  if (invalidated.length) {
+    rootCause = 'NATIVE_DEPENDENCY_BUILD_FAILURE';
+    confidence = 'high';
+    problems.push({ id: 'NATIVE_DEPENDENCY_BUILD_FAILURE', severity: 'high', evidence: invalidated, recommendation: 'Do not add the package again. Inspect Node version, Alpine toolchain, and the native module version.' });
+  }
   if (fingerprint.startsWith('RUNTIME_FILESYSTEM_PERMISSION')) {
     rootCause = `The runtime process cannot write ${fingerprint.split(':').slice(1).join(':') || 'the required application data path'}.`;
     confidence = 'high';
@@ -56,6 +73,15 @@ export async function diagnoseProject({ project, projects, db = null, ai = null,
     previousFailedAttempts: repeated,
     recentActivity: { jobs: recentJobs.map((j) => ({ id: j.id, type: j.type, status: j.status, stage: j.stage, error: String(j.error || '').slice(0, 1200), createdAt: j.created_at, updatedAt: j.updated_at })), events: recentEvents.map((e) => ({ stage: e.stage, status: e.status, message: String(e.message || '').slice(0, 1200), createdAt: e.created_at })) },
     recommendation: problems[0]?.recommendation || 'Collect a runtime/build/preview failure signal before changing code.',
+    evidenceLedger: {
+      problem: rootCause,
+      evidenceFor: evidence.map((e) => e.finding),
+      evidenceAgainst: invalidated.map((i) => i.reason),
+      previousAttempts: repeated,
+      conclusion: invalidated.length ? 'Previous missing-dependency hypothesis is invalid.' : (repeated.length ? 'Do not repeat the last repair without new evidence.' : 'Need verification at the failing stage.'),
+    },
+    invalidatedHypotheses: invalidated,
+    result: confidence === 'high' ? 'FAILED' : 'NEEDS_EVIDENCE',
     verificationPlan: ['Inspect affected files', 'Apply the smallest evidence-backed change only if safe', 'Build', 'Start exact runtime', 'Health/HTTP check', 'Functional/preview check', 'Compare before/after'],
     generatedAt: new Date().toISOString(),
   };
@@ -74,23 +100,55 @@ export async function diagnoseProject({ project, projects, db = null, ai = null,
   return report;
 }
 
-export async function buildAdvisorReport({ project, projects, db = null } = {}) {
-  const repairs = await projects.readMetadata(project, 'upgrade-repair-history.json', []);
-  const history = await projects.readMetadata(project, 'upgrade-history.json', []);
-  const diagnosis = await projects.readMetadata(project, 'project-diagnosis.json', null);
-  const chat = await projects.readMetadata(project, 'chat.json', []);
-  const userMessages = (Array.isArray(chat) ? chat : []).filter((m) => m?.role === 'user').map((m) => String(m.message || '').trim()).filter(Boolean);
-  const repeatedRequests = countRepeated(userMessages.map((m) => m.toLowerCase()));
-  const jobs = db ? db.all('SELECT type,status,error,created_at FROM jobs WHERE project_id = ? ORDER BY created_at DESC LIMIT 50', project.id) : [];
-  const failedJobs = jobs.filter((j) => j.status === 'failed');
-  const repeated = countRepeated(failedJobs.map((j) => j.error || j.type));
-  const findings = [];
-  if (repeated.length) findings.push({ problem: 'Repeated failed actions', evidence: repeated, impact: 'Users can get stuck retrying the same operation.', recommendation: 'Show the previous failure and require new evidence before another repair.' });
-  if ((repairs || []).length > 3) findings.push({ problem: 'Repeated repair history', evidence: `${repairs.length} repair records`, impact: 'The Builder can accumulate ineffective hypotheses.', recommendation: 'Use repair history as a hard anti-loop input and summarize failed attempts.' });
-  if (diagnosis?.confidence === 'low') findings.push({ problem: 'Root cause not proven', evidence: diagnosis.rootCause, impact: 'Automatic edits would be risky.', recommendation: 'Collect the missing runtime/build/preview evidence before patching.' });
-  if (repeatedRequests.length) findings.push({ problem: 'Repeated user request', evidence: repeatedRequests, impact: 'The workflow may not be resolving the user need in one pass.', recommendation: 'Improve the relevant Builder step or expose a clearer next action instead of asking the user to repeat themselves.' });
-  const report = { projectId: project.id, generatedAt: new Date().toISOString(), findings: findings.slice(0, 20), source: { repairHistory: Array.isArray(repairs) ? repairs.length : 0, upgradeHistory: Array.isArray(history) ? history.length : 0, failedJobs: failedJobs.length, userMessages: userMessages.length }, expectedImprovement: 'Fewer repeated repairs, clearer next actions, and evidence-first recovery.' };
-  await projects.saveMetadata(project, 'builder-advisor.json', report);
+export async function buildAdvisorReport({ project = null, projects, db = null, scope = '30d' } = {}) {
+  const list = typeof projects.list === 'function' ? projects.list() : (project ? [project] : []);
+  const cutoff = scope === '7d' ? Date.now() - 7 * 86400000 : scope === 'all' ? 0 : Date.now() - 30 * 86400000;
+  const appImprovements = [];
+  const builderInsights = [];
+  const patterns = [];
+  let failedJobs = 0;
+  let nativeFails = 0;
+  let previewPassBuildFail = 0;
+  for (const item of list) {
+    const repairs = await projects.readMetadata(item, 'upgrade-repair-history.json', []).catch(() => []);
+    const diagnosis = await projects.readMetadata(item, 'project-diagnosis.json', null).catch(() => null);
+    const runtime = await projects.readMetadata(item, 'runtime.json', {}).catch(() => ({}));
+    const pending = await projects.readMetadata(item, 'release-pending.json', null).catch(() => null);
+    const jobs = db ? db.all('SELECT type,status,error,created_at FROM jobs WHERE project_id = ? ORDER BY created_at DESC LIMIT 40', item.id) : [];
+    const recent = jobs.filter((j) => !cutoff || Date.parse(j.created_at || '') >= cutoff);
+    failedJobs += recent.filter((j) => j.status === 'failed').length;
+    if (String(diagnosis?.rootCause || '').includes('NATIVE') || recent.some((j) => /node-gyp|better-sqlite3|gyp ERR/i.test(j.error || ''))) {
+      nativeFails += 1;
+      appImprovements.push({ app: item.slug || item.id, what: 'Native dependency build risk', recommendation: 'Verify compile compatibility before Publish.', confidence: 'high' });
+    }
+    if (runtime.status === 'passed' && pending && ['workflow_failed', 'waiting_image'].includes(pending.status)) {
+      previewPassBuildFail += 1;
+      appImprovements.push({ app: item.slug || item.id, what: 'Preview passed but production image is not ready', recommendation: 'Treat GHCR/Actions as a separate stage from Preview.', confidence: 'high' });
+    }
+    if ((repairs || []).length > 2) {
+      builderInsights.push({ what: 'Repeated repairs on one app', why: `${item.slug || item.id} has ${repairs.length} repair records`, recommendation: 'Stop repeating an ineffective patch without new evidence.', confidence: 'medium' });
+    }
+  }
+  if (nativeFails >= 2) patterns.push({ what: 'Recurring native dependency build failures', why: `${nativeFails} apps`, recommendation: 'Add a pre-publish native compatibility check. Advisor will not change Builder itself.', confidence: 'high' });
+  if (previewPassBuildFail >= 1) patterns.push({ what: 'Preview success used as production success', why: `${previewPassBuildFail} apps`, recommendation: 'Keep Preview, GitHub, GHCR, and SoloHost as separate gates.', confidence: 'high' });
+  const report = {
+    generatedAt: new Date().toISOString(),
+    scope,
+    overview: { appsAnalyzed: list.length, failedJobs, recurringNativeFailures: nativeFails, previewVsProductionGaps: previewPassBuildFail },
+    patterns,
+    appImprovements: appImprovements.slice(0, 12),
+    builderInsights: builderInsights.slice(0, 8),
+    findings: [...patterns, ...builderInsights, ...appImprovements].slice(0, 20).map((row) => ({
+      problem: row.what,
+      evidence: row.why || row.app || '',
+      recommendation: row.recommendation,
+      impact: row.what,
+    })),
+    expectedImprovement: 'Fewer repeated repairs and clearer Preview vs production gates.',
+    mutatesCode: false,
+  };
+  if (project?.id) await projects.saveMetadata(project, 'builder-advisor.json', report);
+  if (db) db.setSetting('advisor:last', { generatedAt: report.generatedAt, scope, apps: list.length });
   return report;
 }
 

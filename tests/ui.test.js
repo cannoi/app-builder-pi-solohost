@@ -165,3 +165,11 @@ test('preview return preserves the active project history', () => {
   assert.match(js, /workHistory/);
   assert.match(js, /rememberProject\(id\)/);
 });
+
+test('Diagnose is internal and Advisor lives in Settings', () => {
+  const html = fs.readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
+  assert.doesNotMatch(html, /data-action="diagnose"/);
+  assert.doesNotMatch(html, /data-action="advisor"/);
+  assert.match(html, /AI Advisor/);
+  assert.match(html, /advisorRun/);
+});

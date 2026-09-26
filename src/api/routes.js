@@ -383,9 +383,20 @@ export function registerRoutes(r, app) {
     const p = projects.get(req.params.id);
     if (!p) return res.status(404).json({ error: 'Project not found' });
     if (!ensureFree(p.id, res)) return;
-    const job = jobs.enqueue({ type: 'builder_advisor', projectId: p.id, payload: { projectId: p.id } });
+    const job = jobs.enqueue({ type: 'builder_advisor', projectId: p.id, payload: { projectId: p.id, scope: req.body?.scope || '30d' } });
     setImmediate(() => jobs.kick(job));
     res.status(202).json({ jobId: job.id, message: 'Builder Advisor started.' });
+  });
+
+  r.post('/api/advisor/analyze', (req, res) => {
+    if (!ensureFree(req.body?.projectId || null, res)) return;
+    const job = jobs.enqueue({
+      type: 'builder_advisor',
+      projectId: req.body?.projectId || null,
+      payload: { projectId: req.body?.projectId || null, scope: req.body?.scope || '30d' },
+    });
+    setImmediate(() => jobs.kick(job));
+    res.status(202).json({ jobId: job.id, message: 'Advisor analysis started. No files will be changed.' });
   });
 
   r.get('/api/projects/:id/diagnosis', async (req, res) => {
