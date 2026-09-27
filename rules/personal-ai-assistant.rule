@@ -1,16 +1,8 @@
-RULE_VERSION: 1.1
+RULE_VERSION: 1.0
 RULE_NAME: PERSONAL_AI_ASSISTANT
 APP_TYPE: AI_ASSISTANT
 TARGET: PI_SOLOHOST
-GOAL: A personal AI assistant with real conversations, provider selection, reliable errors, and persistent history.
-
-PHASES:
-- Chat experience
-- AI provider configuration
-- Provider selection and fallback
-- Conversation persistence
-- Error handling
-- SoloHost runtime verification
+GOAL: A personal AI assistant with real conversations and persistent history.
 
 REQUIRED CAPABILITIES:
 - Chat
@@ -18,25 +10,16 @@ REQUIRED CAPABILITIES:
 - Provider selection
 - Error handling
 - Persistent data
-- SoloHost runtime compatibility
+EXECUTION:
+  MAX_CYCLES: 8
+  MAX_TASKS: 16
+  MAX_RETRIES_PER_TASK: 1
+  AUTO_APPLY: true
+  VERIFY_EACH_TASK: true
+  STOP_ON_USER_ACTION: true
 
-FUNCTIONAL ACCEPTANCE:
-- User can send a message and receive an AI response when a provider is configured
-- Provider failure is shown clearly and does not crash the app
-- Conversation history survives restart when persistence is enabled
-- Provider can be selected or configured as designed
-- Container starts and HTTP health succeeds
-
-QUESTIONS:
-- Which AI providers should be enabled?
-- Should users supply their own provider keys?
-
-SECRETS:
-AI_PROVIDER_API_KEY
-
-STOP CONDITIONS:
-- Required provider credentials are missing
-- Provider cannot be reached or verified
-
-MAX_CYCLES: 4
-AUTO_REPAIR: true
+DEFINITION_OF_DONE:
+- Chat works with a configured provider
+- Conversation history persists after restart
+- Provider errors are handled clearly
+- SoloHost runtime starts successfully

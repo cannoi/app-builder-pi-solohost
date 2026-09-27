@@ -558,10 +558,15 @@ async function watch(jobId, { preserveEvents = false, resetFailures = true } = {
         renderUpgradeBaseline(result);
         if (state.projectId) await askUpgradeRequest();
       }
-      if (job.status === 'done' && job.type === 'upgrade_request' && result.plan) {
-        if (result.autoApplied) add('ai', result.brief || result.ruleProgress?.message || 'Rule upgrade applied automatically.');
-        else if (result.needsUserAction) add('ai', result.brief || 'Rule needs a choice or key before it can continue.');
-        else renderUpgradePlan(result.plan, result.plan.request || '');
+      if (job.status === 'done' && job.type === 'upgrade_request' && result.plan && !result.execution) {
+        renderUpgradePlan(result.plan, result.plan.request || '');
+      }
+      if (job.status === 'done' && job.type === 'upgrade_request' && result.execution) {
+        const state = result.execution;
+        const pending = (state.tasks || []).filter(t => ['pending','waiting_user','failed','blocked'].includes(t.status));
+        add('ai', result.brief || `Rule ${state.status}. ${state.cycle || 0} cycle(s) completed.`);
+        if (result.needsUserAction) add('ai', `🔑 ${result.needsUserAction}`);
+        else if (pending.length) add('ai', `Next: Builder stopped safely with ${pending.length} task(s) remaining. No identical repair was repeated.`);
       }
       if (job.status === 'failed') {
         const failure = String(job.error || 'The action failed.');

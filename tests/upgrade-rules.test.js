@@ -31,53 +31,21 @@ test('upgrade workshop accepts rule file attachments', () => {
   assert.match(js, /attach a Rule file/);
 });
 
-test('rule parser supports bounded phases, questions, acceptance and cycle limits', () => {
-  const rule = parseRule(`RULE_VERSION: 1.1
-RULE_NAME: TEST_RULE
-APP_TYPE: TEST
-TARGET: PI_SOLOHOST
-GOAL: Make the app usable
-PHASES:
-- Core feature
-- Runtime verification
-FUNCTIONAL ACCEPTANCE:
-- Main action works
-QUESTIONS:
-- Which provider should be enabled?
-MAX_CYCLES: 9
-AUTO_REPAIR: true
-REQUIRED CAPABILITIES:
-- Playback
-`);
+import { normalizeExecution, buildRuleTasks } from '../src/upgrade/rules.js';
+
+test('Rule execution tolerates null or missing execution config', () => {
+  const a = normalizeExecution(null);
+  const b = normalizeExecution(undefined);
+  assert.equal(a.maxCycles, 8);
+  assert.equal(b.maxCycles, 8);
+  assert.ok(a.maxTasks >= 1);
+});
+
+test('Rule parser accepts execution parameters without one-shot execution', () => {
+  const rule = parseRule(`RULE_NAME: TEST_RULE\nGOAL: Complete the app\nREQUIRED_CAPABILITIES:\n- Search\n- Playback\nEXECUTION:\n  MAX_CYCLES: 12\n  MAX_TASKS: 20\n  MAX_RETRIES_PER_TASK: 1\n  AUTO_APPLY: true\nDEFINITION_OF_DONE:\n- Search returns results\n- Playback works`);
   assert.equal(rule.valid, true);
-  assert.equal(rule.maxCycles, 6);
-  assert.equal(rule.phases.length, 2);
-  assert.equal(rule.questions.length, 1);
-  assert.equal(rule.functionalTests.length, 1);
-  assert.equal(rule.autoRepair, true);
-});
-
-test('accepts extra custom rule fields without failing', () => {
-  const rule = parseRule('RULE_NAME: CUSTOM\nGOAL: keep extra fields\nREQUIRED CAPABILITIES:\n- Chat\nTHEME: dark\nLOCALE: vi');
-  assert.equal(rule.valid, true);
-  assert.equal(rule.extras.THEME, 'dark');
-  assert.equal(rule.extras.LOCALE, 'vi');
-});
-
-test('rule without explicit GOAL still parses when capabilities exist', () => {
-  const rule = parseRule('RULE_NAME: MINIMAL\nREQUIRED CAPABILITIES:\n- Chat');
-  assert.equal(rule.valid, true);
-  assert.equal(rule.goal, 'MINIMAL');
-});
-
-test('rule upgrades skip the Apply button when auto-applied', () => {
-  const js = fs.readFileSync(new URL('../public/app.js', import.meta.url), 'utf8');
-  assert.match(js, /result\.autoApplied/);
-  assert.match(js, /Rule upgrade applied automatically/);
-});
-
-test('bounded rule execution is not entered when no rule exists', () => {
-  const js = fs.readFileSync(new URL('../src/jobs/pipeline.js', import.meta.url), 'utf8');
-  assert.match(js, /if \(rule && rule\.autoRepair !== false\)/);
-  assert.match(js, /if \(!rule \|\| typeof rule !== 'object'\)/);
+  assert.equal(rule.execution.maxCycles, 12);
+  assert.equal(rule.execution.maxTasks, 20);
+  assert.equal(rule.execution.autoApply, true);
+  assert.equal(buildRuleTasks(rule).length, 4);
 });

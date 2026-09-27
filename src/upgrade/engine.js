@@ -7,7 +7,7 @@ import { runStaticTests, runNodeTests } from '../testing/engine.js';
 import { runDare } from '../dare/engine.js';
 import { findMissingNodeModules } from '../projects/deps-fix.js';
 import { writeGeneratedFiles } from '../projects/generator.js';
-import { parseRule, capabilityGap, formatRuleStatus } from './rules.js';
+import { parseRule, capabilityGap, formatRuleStatus, buildRuleTasks, normalizeExecution } from './rules.js';
 
 const MAX_SAFE_REPAIRS = 2;
 const PROTECTED = /^(?:\.env(?:\.|$)|.*\/(?:\.env(?:\.|$)|id_rsa(?:\.|$)|private[_-]?key(?:\.|$)))/i;
@@ -109,7 +109,7 @@ BASELINE:
 ${JSON.stringify(baseline)}
 
 RULE:
-${parsed.valid ? JSON.stringify({ name: parsed.name, goal: parsed.goal, required: parsed.requiredCapabilities, missing: gap?.missingCapabilities || [], secrets: parsed.secrets, phases: parsed.phases, questions: parsed.questions, functionalAcceptance: parsed.functionalTests, stopConditions: parsed.stopConditions, maxCycles: parsed.maxCycles }) : 'No structured rule. Treat the user text as a normal upgrade request.'}
+${parsed.valid ? JSON.stringify({ name: parsed.name, goal: parsed.goal, required: parsed.requiredCapabilities, missing: gap?.missingCapabilities || [], secrets: parsed.secrets }) : 'No structured rule. Treat the user text as a normal upgrade request.'}
 
 USER REQUEST:
 ${String(request).trim()}
@@ -127,9 +127,6 @@ Return JSON only with:
   "verification": ["checks"],
   "missing_capabilities": [],
   "needs_user_action": "",
-  "user_questions": [{"id":"...","prompt":"...","required":true,"options":[]}],
-  "next_phase": "rule phase name",
-  "completion": false,
   "alternatives": [{"name":"...","risk":"...","scope":"..."}]
 }
 Rules: do not invent facts; do not propose dependency-wide upgrades; do not modify secrets, credentials, database schema, auth, payment, wallet, or Docker architecture unless explicitly required and marked high risk. If the rule lists required secrets, set needs_user_action instead of writing secrets into source.`;
@@ -137,11 +134,15 @@ Rules: do not invent facts; do not propose dependency-wide upgrades; do not modi
   return { ...(result.json || {}), rule: parsed.valid ? parsed : null, gap, ruleStatus: parsed.valid ? formatRuleStatus(parsed, gap) : '' };
 }
 
-export async function applyUpgrade({ project, projects, snapshots, plan, request, approved = false }) {
+export async function applyUpgrade({ project, projects, snapshots, plan, request, approved = false, ruleExecution = false }) {
   const risk = String(plan?.risk || 'high').toLowerCase();
-  if (risk === 'high' && !approved) throw new Error('NEEDS_USER_ACTION: High-risk upgrade needs an explicit review. Cancel unless you accept the risk.');
-  if (risk !== 'low' && risk !== 'medium' && !approved) throw new Error('NEEDS_USER_ACTION: Upgrade plan is not low risk. Review and approve the change before applying it.');
-  if (risk === 'medium' && !approved) throw new Error('NEEDS_USER_ACTION: Medium-risk upgrade needs your Apply confirmation.');
+  // Rule execution may auto-apply proven low/medium-risk patches. High-risk work
+  // always stops for a real user decision. Normal chat upgrades keep the existing
+  // approval gate.
+  if (risk === 'high' && !approved) throw new Error('NEEDS_USER_ACTION: High-risk upgrade needs an explicit review.');
+  if (!ruleExecution && risk !== 'low' && risk !== 'medium' && !approved) throw new Error('NEEDS_USER_ACTION: Upgrade plan is not low risk. Review and approve the change before applying it.');
+  if (!ruleExecution && risk === 'medium' && !approved) throw new Error('NEEDS_USER_ACTION: Medium-risk upgrade needs your Apply confirmation.');
+  if (ruleExecution && risk === 'medium' && plan?.needs_user_action) throw new Error(`NEEDS_USER_ACTION: ${plan.needs_user_action}`);
   const files = Array.isArray(plan.files) ? plan.files.filter((f) => f && f.path && typeof f.content === 'string') : [];
   if (!files.length) throw new Error('Upgrade plan contains no file changes.');
   if (files.length > 8) throw new Error('Upgrade scope is too large for an automatic minimal patch.');
@@ -175,6 +176,149 @@ export async function applyUpgrade({ project, projects, snapshots, plan, request
   });
   await projects.saveMetadata(project, 'upgrade-baseline.json', { ...baseline, updatedAt: new Date().toISOString(), sourceHash: manifestHash(after), knownIssues: verified.issues });
   return { ok: true, files: written, verification: verified.health, checkpointId: checkpoint.id };
+}
+
+export async function runRuleUpgrade({ project, projects, snapshots, ai, request = '', ruleText = '', emit = () => {} }) {
+  const parsed = parseRule(ruleText || request);
+  if (!parsed.valid) throw new Error(parsed.error);
+
+  // Defensive normalization is intentional: old/custom Rules can contain
+  // EXECUTION: null, missing maxCycles, strings, or extra parameters.
+  const execution = normalizeExecution(parsed.execution);
+  const sourceDir = projects.sourceDir(project.slug);
+  const history = await projects.readMetadata(project, 'upgrade-rule-execution.json', {});
+  const previous = Array.isArray(history?.history) ? history.history : [];
+  const initialContext = await relevantContext(sourceDir, parsed.requiredCapabilities.join(' '));
+  let gap = capabilityGap(parsed, initialContext);
+  let tasks = buildRuleTasks(parsed, gap).slice(0, execution.maxTasks);
+  const state = {
+    rule: parsed.name,
+    version: parsed.version,
+    execution,
+    status: 'running',
+    cycle: 0,
+    tasks,
+    history: previous.slice(-80),
+    startedAt: new Date().toISOString(),
+  };
+  await projects.saveMetadata(project, 'upgrade-rule-execution.json', state);
+  emit('rule', 'running', `🧭 Rule loaded: ${parsed.name}. Builder will plan and execute ${tasks.filter(t => t.status === 'pending').length} task(s).`);
+
+  const seen = new Set(previous.map((x) => `${x.capability}|${x.sourceHash}|${x.patchHash || ''}`));
+  let userAction = '';
+  let completed = 0;
+  for (let cycle = 1; cycle <= execution.maxCycles; cycle += 1) {
+    state.cycle = cycle;
+    const context = await relevantContext(sourceDir, parsed.requiredCapabilities.join(' '));
+    gap = capabilityGap(parsed, context);
+    if (gap.complete && !tasks.some(t => t.status === 'pending' && t.acceptance)) break;
+    const pending = tasks.filter(t => t.status === 'pending').slice(0, execution.maxTasks);
+    if (!pending.length) break;
+    const task = pending[0];
+    const taskRequest = `${request || parsed.goal}\nRULE TASK: Complete only this task: ${task.capability}\nDo not redesign unrelated parts. Inspect current evidence and preserve working behavior.`;
+    emit('plan', 'running', `🧩 Task ${completed + 1}/${tasks.length}: ${task.capability}`);
+    let plan;
+    try {
+      // Definition-of-done items are evaluation tasks, not invitations to invent
+      // more code. Ask the model to verify evidence first; only a failed criterion
+      // becomes a repair task on the next cycle.
+      if (task.acceptance) {
+        const evaluation = await ai.completeJson({
+          task: 'RULE_ACCEPTANCE_CHECK',
+          system: 'Evaluate the existing app against one acceptance criterion. Do not modify files. Use only evidence from the supplied project context.',
+          prompt: `${taskRequest}\n\nPROJECT EVIDENCE:\n${context}\n\nReturn JSON only: {"passed":true|false,"evidence":"...","missing":"...","next_action":"..."}` ,
+          projectId: project.id,
+        });
+        if (evaluation.json?.passed === true) {
+          task.status = 'done'; task.evidence = evaluation.json.evidence || 'Acceptance criterion verified.';
+          completed += 1;
+          await projects.saveMetadata(project, 'upgrade-rule-execution.json', state);
+          emit('verify', 'done', `✓ Verified: ${task.capability}`);
+          continue;
+        }
+        task.status = 'pending';
+        task.lastEvaluation = evaluation.json || {};
+        task.capability = `${task.capability} — ${evaluation.json?.missing || evaluation.json?.next_action || 'needs implementation'}`;
+      }
+      plan = await diagnoseUpgradeRequest({ project, projects, ai, request: taskRequest, ruleText: JSON.stringify({ ...parsed, execution }) });
+    } catch (err) {
+      task.status = 'blocked'; task.error = String(err.message || err).slice(0, 500);
+      await projects.saveMetadata(project, 'upgrade-rule-execution.json', state);
+      throw err;
+    }
+    if (plan.needs_user_action) {
+      task.status = 'waiting_user'; task.needsUserAction = plan.needs_user_action;
+      userAction = plan.needs_user_action;
+      emit('input', 'done', `⏸ ${userAction}`);
+      if (execution.stopOnUserAction) break;
+      continue;
+    }
+    const risk = String(plan.risk || 'high').toLowerCase();
+    if (risk === 'high') {
+      task.status = 'waiting_user'; task.needsUserAction = 'This step is high risk and needs your confirmation.';
+      userAction = task.needsUserAction;
+      emit('input', 'done', `⏸ ${userAction}`);
+      break;
+    }
+    const before = await fileManifest(sourceDir);
+    const sourceHash = manifestHash(before);
+    const patchHash = crypto.createHash('sha256').update(JSON.stringify(plan.files || [])).digest('hex');
+    const key = `${task.capability}|${sourceHash}|${patchHash}`;
+    if (seen.has(key)) {
+      task.status = 'blocked'; task.error = 'Same repair already attempted for the same source state.';
+      emit('guard', 'done', `🛑 Same repair blocked: ${task.capability}`);
+      break;
+    }
+    seen.add(key);
+    try {
+      const result = await applyUpgrade({ project, projects, snapshots, plan, request: taskRequest, approved: true, ruleExecution: true });
+      task.status = 'done'; task.files = result.files; task.verification = result.verification;
+      completed += 1;
+      state.history.push({ cycle, capability: task.capability, sourceHash, patchHash, files: result.files, result: 'verified', at: new Date().toISOString() });
+      emit('verify', 'done', `✓ Verified: ${task.capability}`);
+    } catch (err) {
+      task.status = 'failed'; task.error = String(err.message || err).slice(0, 700);
+      state.history.push({ cycle, capability: task.capability, sourceHash, patchHash, result: 'failed', error: task.error, at: new Date().toISOString() });
+      emit('verify', 'failed', `⚠ ${task.capability}: ${task.error}`);
+      task.retries = Number(task.retries || 0) + 1;
+      if (task.retries > execution.maxRetriesPerTask) break;
+      // Re-plan once from fresh evidence. The same source+patch fingerprint is
+      // blocked above, so a retry can only happen with genuinely different evidence.
+      task.status = 'pending';
+      continue;
+    }
+    await projects.saveMetadata(project, 'upgrade-rule-execution.json', state);
+    // Rebuild task status from fresh evidence after every successful patch.
+    const afterContext = await relevantContext(sourceDir, parsed.requiredCapabilities.join(' '));
+    gap = capabilityGap(parsed, afterContext);
+    for (const t of tasks) {
+      if (gap.currentCapabilities.some(c => String(c).toLowerCase() === String(t.capability).toLowerCase())) t.status = 'satisfied';
+    }
+  }
+  const finalContext = await relevantContext(sourceDir, parsed.requiredCapabilities.join(' '));
+  gap = capabilityGap(parsed, finalContext);
+  const pending = tasks.filter(t => t.status === 'pending');
+  const blocked = tasks.filter(t => ['blocked','failed'].includes(t.status));
+  state.status = userAction ? 'NEEDS_USER_ACTION' : (!pending.length && !blocked.length ? 'completed' : 'stopped');
+  state.finishedAt = new Date().toISOString();
+  state.gap = gap;
+  state.tasks = tasks;
+  await projects.saveMetadata(project, 'upgrade-rule-execution.json', state);
+  return {
+    projectId: project.id,
+    rule: parsed,
+    execution: state,
+    status: state.status,
+    completedTasks: tasks.filter(t => t.status === 'done' || t.status === 'satisfied').length,
+    totalTasks: tasks.length,
+    needsUserAction: userAction,
+    gap,
+    brief: userAction
+      ? `⏸ Rule paused: ${userAction}`
+      : state.status === 'completed'
+        ? `✓ Rule completed: ${parsed.name}`
+        : `⚠ Rule stopped safely after ${completed} verified task(s). No failed repair was repeated.`,
+  };
 }
 
 async function inspectState(sourceDir) {

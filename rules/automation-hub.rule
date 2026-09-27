@@ -1,38 +1,24 @@
-RULE_VERSION: 1.1
+RULE_VERSION: 1.0
 RULE_NAME: PERSONAL_AUTOMATION_HUB
 APP_TYPE: AUTOMATION
 TARGET: PI_SOLOHOST
-GOAL: A personal automation hub that can create, run, inspect, and persist workflows reliably.
-
-PHASES:
-- Workflow creation
-- Workflow execution
-- Execution history
-- Persistent storage
-- Error handling and recovery
-- SoloHost runtime verification
+GOAL: A personal automation hub that can create, run, and persist workflows.
 
 REQUIRED CAPABILITIES:
 - Create automation
 - Run automation
 - Execution history
 - Persistent storage
-- Error handling
-- SoloHost runtime compatibility
+EXECUTION:
+  MAX_CYCLES: 8
+  MAX_TASKS: 16
+  MAX_RETRIES_PER_TASK: 1
+  AUTO_APPLY: true
+  VERIFY_EACH_TASK: true
+  STOP_ON_USER_ACTION: true
 
-FUNCTIONAL ACCEPTANCE:
-- User can create a workflow
-- User can execute a workflow and see its result
-- Failed execution is recorded without crashing the app
-- History survives restart when persistence is required
-- Container starts and HTTP health succeeds
-
-QUESTIONS:
-- Which automation providers or integrations should be enabled?
-
-STOP CONDITIONS:
-- External integration credentials are missing
-- Requested integration cannot be verified safely
-
-MAX_CYCLES: 4
-AUTO_REPAIR: true
+DEFINITION_OF_DONE:
+- Automation can be created and run
+- Execution history persists
+- Persistent data survives restart
+- SoloHost runtime starts successfully

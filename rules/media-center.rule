@@ -1,16 +1,8 @@
-RULE_VERSION: 1.1
+RULE_VERSION: 1.0
 RULE_NAME: MEDIA_CENTER
 APP_TYPE: MEDIA
 TARGET: PI_SOLOHOST
-GOAL: A usable personal media center that can discover, select, and play media reliably on SoloHost.
-
-PHASES:
-- Core UI and navigation
-- Search and discovery
-- Playback
-- History and favorites
-- Error handling and runtime recovery
-- SoloHost deployment verification
+GOAL: A usable personal media center that can discover, select, and play media.
 
 REQUIRED CAPABILITIES:
 - Search
@@ -20,24 +12,20 @@ REQUIRED CAPABILITIES:
 - Error handling
 - SoloHost runtime compatibility
 
-FUNCTIONAL ACCEPTANCE:
-- Search returns usable results or a clear provider error
-- A selected media item can start playback
-- Playback failure is shown clearly and does not crash the app
-- History and favorites survive restart when persistence is required
-- Container starts and HTTP health succeeds on SoloHost-compatible runtime
-
 SECRETS:
 YOUTUBE_API_KEY
+EXECUTION:
+  MAX_CYCLES: 10
+  MAX_TASKS: 20
+  MAX_RETRIES_PER_TASK: 1
+  AUTO_APPLY: true
+  VERIFY_EACH_TASK: true
+  STOP_ON_USER_ACTION: true
 
-QUESTIONS:
-- Which media provider should be enabled?
-- Do you want YouTube search/playback enabled?
-
-STOP CONDITIONS:
-- Provider credentials are required but not supplied
-- External provider policy blocks the requested playback behavior
-- Runtime verification cannot prove the app works
-
-MAX_CYCLES: 4
-AUTO_REPAIR: true
+DEFINITION_OF_DONE:
+- Search returns usable media results
+- Playback works
+- History persists
+- Favorites work
+- Runtime errors are handled
+- SoloHost runtime starts successfully

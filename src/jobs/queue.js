@@ -60,8 +60,7 @@ export class JobQueue {
     // as soon as the first validate step emits "done".
     const current = this.db.get('SELECT status FROM jobs WHERE id = ?', jobId);
     const terminal = current && ['done', 'failed', 'cancelled'].includes(current.status);
-    const initialQueuedEvent = current?.status === 'queued' && stage === 'queued' && status === 'queued';
-    if (!terminal && !initialQueuedEvent) {
+    if (!terminal) {
       this.db.run(
         'UPDATE jobs SET stage=?, status=?, updated_at=? WHERE id=?',
         stage, 'running', new Date().toISOString(), jobId,

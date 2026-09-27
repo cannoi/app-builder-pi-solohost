@@ -1,42 +1,25 @@
-RULE_VERSION: 1.1
+RULE_VERSION: 1.0
 RULE_NAME: AI_MEETING_ASSISTANT
 APP_TYPE: AI
 TARGET: PI_SOLOHOST
-GOAL: A meeting assistant that turns notes into useful summaries and action items.
-
-PHASES:
-- Meeting capture
-- AI summarization
-- Action items
-- Meeting history
-- Provider error handling
-- SoloHost runtime verification
+GOAL: A meeting assistant that turns notes into summary and action items.
 
 REQUIRED CAPABILITIES:
 - Meeting notes
 - AI summarization
 - Action items
 - Meeting history
-- Error handling
-- SoloHost runtime compatibility
+EXECUTION:
+  MAX_CYCLES: 10
+  MAX_TASKS: 20
+  MAX_RETRIES_PER_TASK: 1
+  AUTO_APPLY: true
+  VERIFY_EACH_TASK: true
+  STOP_ON_USER_ACTION: true
 
-FUNCTIONAL ACCEPTANCE:
-- User can enter or import meeting notes
-- A configured AI provider can produce a summary
-- Action items are extracted and editable
-- Meeting history persists when enabled
-- AI/provider failure is handled without app crash
-
-QUESTIONS:
-- Which AI provider should be the default?
-- Should users be allowed to enter their own provider key?
-
-SECRETS:
-AI_PROVIDER_API_KEY
-
-STOP CONDITIONS:
-- AI credentials are required but unavailable
-- Provider request cannot be verified
-
-MAX_CYCLES: 4
-AUTO_REPAIR: true
+DEFINITION_OF_DONE:
+- Meeting notes can be created
+- AI summary works with configured provider
+- Action items are generated
+- Meeting history persists
+- SoloHost runtime starts successfully

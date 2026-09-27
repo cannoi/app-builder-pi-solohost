@@ -431,7 +431,7 @@ export function registerRoutes(r, app) {
     if (!p) return res.status(404).json({ error: 'Project not found' });
     if (req.body?.approved !== true) return res.status(400).json({ error: 'Upgrade approval is required.' });
     if (!ensureFree(p.id, res)) return;
-    const job = jobs.enqueue({ type: 'upgrade_apply', projectId: p.id, payload: { projectId: p.id, request: req.body?.request || '', plan: req.body?.plan || null } });
+    const job = jobs.enqueue({ type: 'upgrade_apply', projectId: p.id, payload: { projectId: p.id, request: req.body?.request || '', plan: req.body?.plan || null, approved: true } });
     setImmediate(() => jobs.kick(job));
     res.status(202).json({ jobId: job.id, message: 'Approved upgrade started.' });
   });

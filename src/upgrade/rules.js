@@ -13,11 +13,12 @@ export function parseRule(input = '') {
 
 export function normalizeRule(raw = {}, source = '') {
   const name = String(raw.RULE_NAME || raw.rule_name || raw.name || '').trim();
-  const goal = String(raw.GOAL || raw.goal || raw.DESCRIPTION || raw.description || raw.RULE_NAME || raw.name || '').trim();
+  const goal = String(raw.GOAL || raw.goal || '').trim();
   const required = asList(raw.REQUIRED_CAPABILITIES || raw.requiredCapabilities || raw.required);
   const problems = [];
   if (!name) problems.push('missing RULE_NAME');
-  if (!required.length && !goal) problems.push('missing GOAL or REQUIRED CAPABILITIES');
+  if (!goal) problems.push('missing GOAL');
+  if (!required.length) problems.push('missing REQUIRED CAPABILITIES');
   if (containsLiveSecret(source)) problems.push('rule contains a real-looking secret; remove credentials from the file');
   if (problems.length) return { valid: false, error: `RULE_INVALID: ${problems.join('; ')}.`, raw };
   return {
@@ -31,12 +32,9 @@ export function normalizeRule(raw = {}, source = '') {
     optionalCapabilities: asList(raw.OPTIONAL_CAPABILITIES || raw.optionalCapabilities),
     secrets: asSecrets(raw.REQUIRED_SECRETS || raw.SECRETS || raw.secrets),
     functionalTests: asList(raw.FUNCTIONAL_ACCEPTANCE || raw.FUNCTIONAL_TEST || raw.functionalTests),
-    phases: asPhases(raw.PHASES || raw.STEPS || raw.phases || raw.steps),
-    questions: asQuestions(raw.QUESTIONS || raw.USER_QUESTIONS || raw.questions),
-    stopConditions: asList(raw.STOP_CONDITIONS || raw.stopConditions),
-    maxCycles: clampCycles(raw.MAX_CYCLES || raw.maxCycles),
-    autoRepair: raw.AUTO_REPAIR !== false && raw.autoRepair !== false,
-    extras: pickExtras(raw),
+    execution: normalizeExecution(raw.EXECUTION || raw.execution || raw.RULE_EXECUTION || raw.ruleExecution),
+    definitionOfDone: asList(raw.DEFINITION_OF_DONE || raw.DEFINITION || raw.definitionOfDone),
+    userChoices: asList(raw.USER_CHOICES || raw.REQUIRED_CHOICES || raw.userChoices),
     source,
   };
 }
@@ -66,9 +64,48 @@ export function formatRuleStatus(rule, gap) {
     gap.missingCapabilities.length ? `Missing: ${gap.missingCapabilities.join(', ')}` : 'Required capabilities look present in source.',
   ];
   if (rule.secrets?.some((s) => s.required)) lines.push(`🔑 Required configuration: ${rule.secrets.filter((s) => s.required).map((s) => s.name).join(', ')}`);
-  if (rule.phases?.length) lines.push(`Steps: ${rule.phases.map((p) => p.name).join(' → ')}`);
-  lines.push(`Mode: ${rule.autoRepair ? 'bounded auto-repair' : 'guided'} · Max cycles: ${rule.maxCycles}`);
   return lines.join('\n');
+}
+
+export function normalizeExecution(value) {
+  // Rules may omit EXECUTION entirely or explicitly provide null. Never dereference
+  // a nullable execution object: the old runner crashed on `execution.maxCycles`.
+  const raw = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+  const n = (v, fallback, min, max) => {
+    const x = Number(v);
+    if (!Number.isFinite(x)) return fallback;
+    return Math.min(max, Math.max(min, Math.floor(x)));
+  };
+  return {
+    autoApply: raw.AUTO_APPLY !== false && raw.autoApply !== false,
+    maxCycles: n(raw.MAX_CYCLES ?? raw.maxCycles, 8, 1, 24),
+    maxTasks: n(raw.MAX_TASKS ?? raw.maxTasks, 32, 1, 64),
+    maxRetriesPerTask: n(raw.MAX_RETRIES_PER_TASK ?? raw.maxRetriesPerTask, 1, 0, 2),
+    verifyEachTask: raw.VERIFY_EACH_TASK !== false && raw.verifyEachTask !== false,
+    stopOnUserAction: raw.STOP_ON_USER_ACTION !== false && raw.stopOnUserAction !== false,
+    allowMediumRisk: raw.ALLOW_MEDIUM_RISK !== false && raw.allowMediumRisk !== false,
+  };
+}
+
+export function buildRuleTasks(rule, gap = null) {
+  const required = Array.isArray(rule?.requiredCapabilities) ? rule.requiredCapabilities : [];
+  const missing = new Set((gap?.missingCapabilities || required).map((x) => String(x).trim().toLowerCase()));
+  const tasks = required.map((capability, index) => ({
+    id: `cap-${index + 1}`,
+    capability,
+    status: missing.has(String(capability).trim().toLowerCase()) ? 'pending' : 'satisfied',
+    dependsOn: index > 0 ? [`cap-${index}`] : [],
+  }));
+  if (rule?.definitionOfDone?.length) {
+    tasks.push(...rule.definitionOfDone.map((item, index) => ({
+      id: `done-${index + 1}`,
+      capability: `Acceptance: ${item}`,
+      status: 'pending',
+      dependsOn: required.length ? [`cap-${required.length}`] : [],
+      acceptance: true,
+    })));
+  }
+  return tasks;
 }
 
 function parseLoose(text) {
@@ -80,6 +117,14 @@ function parseLoose(text) {
     if (heading && !line.startsWith('-')) {
       current = heading[1].trim().replace(/\s+/g, '_').toUpperCase();
       out[current] = heading[2] ? heading[2].trim() : (out[current] || '');
+      continue;
+    }
+    const nested = line.match(/^\s{2,}([A-Z][A-Z0-9 _/-]{2,}):\s*(.*)$/);
+    if (nested && current) {
+      const key = nested[1].trim().replace(/\s+/g, '_').toUpperCase();
+      const value = nested[2].trim();
+      if (typeof out[current] !== 'object' || Array.isArray(out[current]) || out[current] == null) out[current] = {};
+      out[current][key] = value;
       continue;
     }
     const item = line.match(/^\s*[-*]\s+(.+)/);
@@ -110,37 +155,4 @@ function asSecrets(value) {
 
 function containsLiveSecret(text) {
   return SECRET_KEYS.test(text) && /(?:sk-|AIza|ghp_|xai-|Bearer\s+[A-Za-z0-9._-]{20,})/.test(text);
-}
-
-
-function asPhases(value) {
-  if (Array.isArray(value)) return value.map((v, i) => {
-    if (typeof v === 'string') return { name: v.trim(), goal: v.trim(), order: i + 1 };
-    return { name: String(v?.name || v?.NAME || `Step ${i + 1}`).trim(), goal: String(v?.goal || v?.GOAL || v?.description || '').trim(), verify: asList(v?.verify || v?.VERIFY), order: i + 1 };
-  }).filter((v) => v.name);
-  return asList(value).map((name, i) => ({ name, goal: name, order: i + 1 }));
-}
-
-function asQuestions(value) {
-  if (Array.isArray(value)) return value.map((v) => typeof v === 'string' ? { id: v, prompt: v, required: true, options: [] } : {
-    id: String(v?.id || v?.ID || v?.name || v?.NAME || '').trim(),
-    prompt: String(v?.prompt || v?.PROMPT || v?.question || v?.QUESTION || '').trim(),
-    required: v?.required !== false && v?.REQUIRED !== false,
-    options: asList(v?.options || v?.OPTIONS),
-  }).filter((v) => v.id || v.prompt);
-  return asList(value).map((prompt, i) => ({ id: `question_${i + 1}`, prompt, required: true, options: [] }));
-}
-
-function clampCycles(value) {
-  const n = Number(value || 3);
-  return Number.isFinite(n) ? Math.max(1, Math.min(6, Math.floor(n))) : 3;
-}
-
-function pickExtras(raw = {}) {
-  const known = new Set(['RULE_VERSION','RULE_NAME','APP_TYPE','GOAL','TARGET','REQUIRED_CAPABILITIES','OPTIONAL_CAPABILITIES','REQUIRED_SECRETS','SECRETS','FUNCTIONAL_ACCEPTANCE','FUNCTIONAL_TEST','PHASES','STEPS','QUESTIONS','USER_QUESTIONS','STOP_CONDITIONS','MAX_CYCLES','AUTO_REPAIR','version','name','appType','goal','target','requiredCapabilities','optionalCapabilities','secrets','functionalTests','phases','steps','questions','stopConditions','maxCycles','autoRepair','DESCRIPTION','description']);
-  const extras = {};
-  for (const [k, v] of Object.entries(raw || {})) {
-    if (!known.has(k) && v != null && v !== '') extras[k] = v;
-  }
-  return extras;
 }

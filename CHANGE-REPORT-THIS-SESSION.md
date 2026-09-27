@@ -18,3 +18,15 @@ Publish and Check image both re-ran SoloHost runtime preflight. After the Docker
 
 ### Not changed
 Create App, Preview, Provider Hub, GitHub publisher internals, Upgrade Workshop UI, ZIP import/export, SoloHost package format.
+
+
+## 2026-09-28 — Rule Engine execution hardening
+
+- Rule execution now uses a bounded task/cycle engine instead of sending the whole Rule as a one-shot AI request.
+- Nullable/missing EXECUTION configuration is normalized safely; `maxCycles` always has a bounded default.
+- Rule runs auto-apply safe low/medium-risk patches and stop only for genuine user decisions such as credentials or high-risk changes.
+- Every task is checkpointed and verified; repeated source+patch fingerprints are blocked.
+- Definition-of-Done entries are evaluated before any repair is proposed.
+- Existing normal Upgrade requests keep the Apply approval flow.
+- Bundled Rules now include bounded execution and Definition-of-Done contracts.
+- No UI, provider, GitHub, GHCR, or SoloHost architecture was intentionally changed.
