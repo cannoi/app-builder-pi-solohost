@@ -13,12 +13,11 @@ export function parseRule(input = '') {
 
 export function normalizeRule(raw = {}, source = '') {
   const name = String(raw.RULE_NAME || raw.rule_name || raw.name || '').trim();
-  const goal = String(raw.GOAL || raw.goal || '').trim();
+  const goal = String(raw.GOAL || raw.goal || raw.DESCRIPTION || raw.description || raw.RULE_NAME || raw.name || '').trim();
   const required = asList(raw.REQUIRED_CAPABILITIES || raw.requiredCapabilities || raw.required);
   const problems = [];
   if (!name) problems.push('missing RULE_NAME');
-  if (!goal) problems.push('missing GOAL');
-  if (!required.length) problems.push('missing REQUIRED CAPABILITIES');
+  if (!required.length && !goal) problems.push('missing GOAL or REQUIRED CAPABILITIES');
   if (containsLiveSecret(source)) problems.push('rule contains a real-looking secret; remove credentials from the file');
   if (problems.length) return { valid: false, error: `RULE_INVALID: ${problems.join('; ')}.`, raw };
   return {
@@ -37,6 +36,7 @@ export function normalizeRule(raw = {}, source = '') {
     stopConditions: asList(raw.STOP_CONDITIONS || raw.stopConditions),
     maxCycles: clampCycles(raw.MAX_CYCLES || raw.maxCycles),
     autoRepair: raw.AUTO_REPAIR !== false && raw.autoRepair !== false,
+    extras: pickExtras(raw),
     source,
   };
 }
@@ -134,4 +134,13 @@ function asQuestions(value) {
 function clampCycles(value) {
   const n = Number(value || 3);
   return Number.isFinite(n) ? Math.max(1, Math.min(6, Math.floor(n))) : 3;
+}
+
+function pickExtras(raw = {}) {
+  const known = new Set(['RULE_VERSION','RULE_NAME','APP_TYPE','GOAL','TARGET','REQUIRED_CAPABILITIES','OPTIONAL_CAPABILITIES','REQUIRED_SECRETS','SECRETS','FUNCTIONAL_ACCEPTANCE','FUNCTIONAL_TEST','PHASES','STEPS','QUESTIONS','USER_QUESTIONS','STOP_CONDITIONS','MAX_CYCLES','AUTO_REPAIR','version','name','appType','goal','target','requiredCapabilities','optionalCapabilities','secrets','functionalTests','phases','steps','questions','stopConditions','maxCycles','autoRepair','DESCRIPTION','description']);
+  const extras = {};
+  for (const [k, v] of Object.entries(raw || {})) {
+    if (!known.has(k) && v != null && v !== '') extras[k] = v;
+  }
+  return extras;
 }

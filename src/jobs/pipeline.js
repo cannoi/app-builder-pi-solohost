@@ -133,8 +133,36 @@ export function registerPipeline(app) {
       ruleText: job.payload.ruleText || '',
     });
     await projects.saveMetadata(project, 'upgrade-plan.json', { ...plan, request: job.payload.request, createdAt: new Date().toISOString() });
-    projects.setStatus(projects.get(project.id), 'UPGRADE_WAITING_APPROVAL');
     if (plan.ruleStatus) emit('inspect', 'done', plan.ruleStatus);
+
+    const rule = plan.rule && plan.rule.valid !== false ? plan.rule : null;
+    const needsConfig = Boolean(plan.needs_user_action)
+      || (rule?.questions || []).length > 0
+      || (rule?.secrets || []).some((s) => s && s.required !== false);
+    const risk = String(plan.risk || 'low').toLowerCase();
+
+    if (rule && !needsConfig && risk !== 'high') {
+      emit('recommend', 'done', 'Rule accepted. Applying the safest upgrade automatically…');
+      projects.setStatus(projects.get(project.id), 'UPGRADING');
+      let applied = { files: [], verification: [] };
+      if (Array.isArray(plan.files) && plan.files.length) {
+        applied = await applyUpgrade({ project: projects.get(project.id), projects, snapshots, plan, request: job.payload.request || '', approved: true });
+      }
+      const ruleProgress = await runBoundedRuleExecution({
+        project: projects.get(project.id), projects, snapshots, ai, rule,
+        request: job.payload.request || plan.request || rule.goal || '',
+        emit,
+      });
+      projects.setStatus(projects.get(project.id), 'UPGRADE_READY');
+      if (ruleProgress?.needsUserAction) {
+        emit('verify', 'done', ruleProgress.message || 'Rule paused for a required choice or key.');
+        return { projectId: project.id, plan: { ...plan, request: job.payload.request }, autoApplied: true, needsApproval: false, needsUserAction: true, ruleProgress, brief: ruleProgress.message };
+      }
+      emit('verify', 'done', ruleProgress?.message || 'Rule upgrade finished without extra confirmation.');
+      return { projectId: project.id, plan: { ...plan, request: job.payload.request }, autoApplied: true, needsApproval: false, applied, ruleProgress, brief: ruleProgress?.message || plan.recommendation };
+    }
+
+    projects.setStatus(projects.get(project.id), 'UPGRADE_WAITING_APPROVAL');
     emit('recommend', 'done', plan.needs_user_action || plan.recommendation || 'Upgrade plan is ready for review.');
     return { projectId: project.id, plan: { ...plan, request: job.payload.request }, needsApproval: true, brief: plan.ruleStatus || plan.recommendation };
   });
@@ -149,7 +177,7 @@ export function registerPipeline(app) {
     const ruleRecord = await projects.readMetadata(project, 'upgrade-rule.json', null);
     const rule = ruleRecord?.rule?.valid ? ruleRecord.rule : null;
     let ruleProgress = null;
-    if (rule?.autoRepair !== false) {
+    if (rule && rule.autoRepair !== false) {
       ruleProgress = await runBoundedRuleExecution({ project: projects.get(project.id), projects, snapshots, ai, rule, request: job.payload.request || plan.request || '', emit });
     }
 
@@ -164,6 +192,7 @@ export function registerPipeline(app) {
   });
 
   async function runBoundedRuleExecution({ project, projects, snapshots, ai, rule, request, emit }) {
+    if (!rule || typeof rule !== 'object') return { complete: false, cycle: 0, filesChanged: 0, stopped: true, message: 'No valid Rule is loaded.' };
     const maxCycles = Math.max(1, Math.min(6, Number(rule.maxCycles || 3)));
     let filesChanged = 0;
     let lastSignature = '';

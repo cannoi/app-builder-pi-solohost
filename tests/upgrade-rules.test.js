@@ -56,3 +56,28 @@ REQUIRED CAPABILITIES:
   assert.equal(rule.functionalTests.length, 1);
   assert.equal(rule.autoRepair, true);
 });
+
+test('accepts extra custom rule fields without failing', () => {
+  const rule = parseRule('RULE_NAME: CUSTOM\nGOAL: keep extra fields\nREQUIRED CAPABILITIES:\n- Chat\nTHEME: dark\nLOCALE: vi');
+  assert.equal(rule.valid, true);
+  assert.equal(rule.extras.THEME, 'dark');
+  assert.equal(rule.extras.LOCALE, 'vi');
+});
+
+test('rule without explicit GOAL still parses when capabilities exist', () => {
+  const rule = parseRule('RULE_NAME: MINIMAL\nREQUIRED CAPABILITIES:\n- Chat');
+  assert.equal(rule.valid, true);
+  assert.equal(rule.goal, 'MINIMAL');
+});
+
+test('rule upgrades skip the Apply button when auto-applied', () => {
+  const js = fs.readFileSync(new URL('../public/app.js', import.meta.url), 'utf8');
+  assert.match(js, /result\.autoApplied/);
+  assert.match(js, /Rule upgrade applied automatically/);
+});
+
+test('bounded rule execution is not entered when no rule exists', () => {
+  const js = fs.readFileSync(new URL('../src/jobs/pipeline.js', import.meta.url), 'utf8');
+  assert.match(js, /if \(rule && rule\.autoRepair !== false\)/);
+  assert.match(js, /if \(!rule \|\| typeof rule !== 'object'\)/);
+});

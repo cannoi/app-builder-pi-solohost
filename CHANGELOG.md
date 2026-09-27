@@ -1,3 +1,9 @@
+## 1.4.54
+
+- Fix Rule crash: null rule no longer reads maxCycles.
+- Rule upgrades auto-apply; ask only for keys/choices/high risk.
+- Extra Rule fields are kept instead of rejected.
+
 ## 1.4.53 — Runtime/Rule hardening
 
 - Added a bounded Docker image preflight before first GitHub upload when the protected Container Sandbox is available.

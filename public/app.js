@@ -559,7 +559,9 @@ async function watch(jobId, { preserveEvents = false, resetFailures = true } = {
         if (state.projectId) await askUpgradeRequest();
       }
       if (job.status === 'done' && job.type === 'upgrade_request' && result.plan) {
-        renderUpgradePlan(result.plan, result.plan.request || '');
+        if (result.autoApplied) add('ai', result.brief || result.ruleProgress?.message || 'Rule upgrade applied automatically.');
+        else if (result.needsUserAction) add('ai', result.brief || 'Rule needs a choice or key before it can continue.');
+        else renderUpgradePlan(result.plan, result.plan.request || '');
       }
       if (job.status === 'failed') {
         const failure = String(job.error || 'The action failed.');
