@@ -1,3 +1,9 @@
+## 1.4.55
+
+- Rule engine loops 20–100 cycles and stops early when goals are met or the user must act.
+- Each cycle: Builder DARE first, then AI receives only the current task — never the full Rule.
+- Pasted Rule text uses the same multi-cycle engine as uploaded Rule files.
+
 ## 1.4.53
 
 - Upgrade Workshop accepts Rule files (.rule/.yaml/.json/.md) plus pasted rules.

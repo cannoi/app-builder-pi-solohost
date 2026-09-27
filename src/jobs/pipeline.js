@@ -126,11 +126,12 @@ export function registerPipeline(app) {
     if (!baseline) throw new Error('Upgrade baseline is missing. Inspect the app first.');
     projects.setStatus(project, 'UPGRADE_DIAGNOSING');
     const ruleText = String(job.payload.ruleText || '').trim();
+    const pastedRule = /RULE_NAME|REQUIRED CAPABILITIES|REQUIRED_CAPABILITIES/i.test(String(job.payload.request || ''));
     // A Rule is an execution contract, not a one-shot AI prompt. When a Rule is
     // supplied, the Builder owns planning, task ordering, checkpoints, verification
     // and re-planning. There is intentionally no Apply Upgrade gate for safe steps.
-    if (ruleText) {
-      const result = await runRuleUpgrade({ project, projects, snapshots, ai, request: job.payload.request, ruleText, emit });
+    if (ruleText || pastedRule) {
+      const result = await runRuleUpgrade({ project, projects, snapshots, ai, request: job.payload.request, ruleText: ruleText || job.payload.request, emit });
       projects.setStatus(projects.get(project.id), result.needsUserAction ? 'UPGRADE_WAITING_INPUT' : (result.status === 'completed' ? 'UPGRADE_READY' : 'UPGRADE_READY'));
       return result;
     }

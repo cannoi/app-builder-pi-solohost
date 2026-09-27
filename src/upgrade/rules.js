@@ -78,8 +78,8 @@ export function normalizeExecution(value) {
   };
   return {
     autoApply: raw.AUTO_APPLY !== false && raw.autoApply !== false,
-    maxCycles: n(raw.MAX_CYCLES ?? raw.maxCycles, 8, 1, 24),
-    maxTasks: n(raw.MAX_TASKS ?? raw.maxTasks, 32, 1, 64),
+    maxCycles: n(raw.MAX_CYCLES ?? raw.maxCycles, 20, 20, 100),
+    maxTasks: n(raw.MAX_TASKS ?? raw.maxTasks, 40, 1, 80),
     maxRetriesPerTask: n(raw.MAX_RETRIES_PER_TASK ?? raw.maxRetriesPerTask, 1, 0, 2),
     verifyEachTask: raw.VERIFY_EACH_TASK !== false && raw.verifyEachTask !== false,
     stopOnUserAction: raw.STOP_ON_USER_ACTION !== false && raw.stopOnUserAction !== false,

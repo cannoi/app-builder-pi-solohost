@@ -36,16 +36,30 @@ import { normalizeExecution, buildRuleTasks } from '../src/upgrade/rules.js';
 test('Rule execution tolerates null or missing execution config', () => {
   const a = normalizeExecution(null);
   const b = normalizeExecution(undefined);
-  assert.equal(a.maxCycles, 8);
-  assert.equal(b.maxCycles, 8);
+  assert.equal(a.maxCycles, 20);
+  assert.equal(b.maxCycles, 20);
   assert.ok(a.maxTasks >= 1);
 });
 
 test('Rule parser accepts execution parameters without one-shot execution', () => {
   const rule = parseRule(`RULE_NAME: TEST_RULE\nGOAL: Complete the app\nREQUIRED_CAPABILITIES:\n- Search\n- Playback\nEXECUTION:\n  MAX_CYCLES: 12\n  MAX_TASKS: 20\n  MAX_RETRIES_PER_TASK: 1\n  AUTO_APPLY: true\nDEFINITION_OF_DONE:\n- Search returns results\n- Playback works`);
   assert.equal(rule.valid, true);
-  assert.equal(rule.execution.maxCycles, 12);
+  assert.equal(rule.execution.maxCycles, 20);
   assert.equal(rule.execution.maxTasks, 20);
   assert.equal(rule.execution.autoApply, true);
   assert.equal(buildRuleTasks(rule).length, 4);
+});
+
+test('Rule engine asks AI for one task instead of the full Rule', () => {
+  const js = fs.readFileSync(new URL('../src/upgrade/engine.js', import.meta.url), 'utf8');
+  assert.match(js, /taskBrief/);
+  assert.match(js, /ONE BUILDER TASK ONLY/);
+  assert.doesNotMatch(js, /ruleText: JSON\.stringify\(\{ \.\.\.parsed/);
+});
+
+test('Rule cycles stay between 20 and 100', () => {
+  const high = normalizeExecution({ maxCycles: 999 });
+  const low = normalizeExecution({ maxCycles: 2 });
+  assert.equal(high.maxCycles, 100);
+  assert.equal(low.maxCycles, 20);
 });

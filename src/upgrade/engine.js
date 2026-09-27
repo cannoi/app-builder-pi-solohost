@@ -89,16 +89,36 @@ export async function inspectUpgrade({ project, projects, snapshots, log }) {
   return { baseline, knowledge, issues: refreshed.issues, safeRepairs, ready: true };
 }
 
-export async function diagnoseUpgradeRequest({ project, projects, ai, request, ruleText = '' }) {
+export async function diagnoseUpgradeRequest({ project, projects, ai, request, ruleText = '', taskBrief = null }) {
   const sourceDir = projects.sourceDir(project.slug);
   const knowledge = await projects.readMetadata(project, 'upgrade-knowledge.json', {});
   const baseline = await projects.readMetadata(project, 'upgrade-baseline.json', {});
-  const parsed = parseRule(ruleText || (/RULE_NAME|REQUIRED CAPABILITIES|REQUIRED_CAPABILITIES/i.test(request || '') ? request : ''));
-  const relevant = await relevantContext(sourceDir, `${request}\n${parsed.valid ? parsed.requiredCapabilities.join(' ') : ''}`);
+  const parsed = taskBrief ? { valid: false } : parseRule(ruleText || (/RULE_NAME|REQUIRED CAPABILITIES|REQUIRED_CAPABILITIES/i.test(request || '') ? request : ''));
+  const relevant = await relevantContext(sourceDir, `${request}\n${taskBrief?.capability || (parsed.valid ? parsed.requiredCapabilities.join(' ') : '')}`);
   const gap = parsed.valid ? capabilityGap(parsed, relevant) : null;
-  if (ruleText && !parsed.valid) throw new Error(parsed.error);
+  if (ruleText && !taskBrief && !parsed.valid) throw new Error(parsed.error);
   if (parsed.valid) await projects.saveMetadata(project, 'upgrade-rule.json', { rule: parsed, gap, loadedAt: new Date().toISOString() });
-  const prompt = `UPGRADE WORKSHOP — EXISTING APP ONLY
+  const prompt = taskBrief ? `ONE BUILDER TASK ONLY
+
+Do not receive or invent a full Rule. Complete only this assigned task.
+
+TASK: ${taskBrief.capability}
+WHY: ${taskBrief.why || 'Required capability is still missing.'}
+CONSTRAINTS: Preserve working features. Smallest patch. No secrets in source. No architecture rewrite.
+
+EVIDENCE:
+${relevant.slice(0, 14000)}
+
+Return JSON only with:
+{
+  "root_cause": "evidence-based diagnosis",
+  "recommendation": "smallest effective upgrade",
+  "risk": "low|medium|high",
+  "files": [{"path":"relative/file","content":"complete replacement content"}],
+  "expected_result": "verifiable result",
+  "verification": ["checks"],
+  "needs_user_action": ""
+}` : `UPGRADE WORKSHOP — EXISTING APP ONLY
 
 Preserve the existing application. Do not redesign or regenerate it.
 
@@ -212,6 +232,14 @@ export async function runRuleUpgrade({ project, projects, snapshots, ai, request
     const context = await relevantContext(sourceDir, parsed.requiredCapabilities.join(' '));
     gap = capabilityGap(parsed, context);
     if (gap.complete && !tasks.some(t => t.status === 'pending' && t.acceptance)) break;
+    if (await hasDeterministicCandidate(sourceDir)) {
+      emit('repair', 'running', `🛠 Cycle ${cycle}/${execution.maxCycles}: Builder applying a proven local fix before asking AI.`);
+      const dare = await runDare({ sourceDir, logs: `Rule cycle ${cycle} deterministic pass.`, extra: { message: 'RULE_ENGINE_CYCLE' }, history: state.history });
+      if (dare?.ok && !dare.alreadyFixed && Array.isArray(dare.files) && dare.files.length) {
+        emit('verify', 'done', `✓ Builder fixed a proven issue on cycle ${cycle} without AI.`);
+        continue;
+      }
+    }
     const pending = tasks.filter(t => t.status === 'pending').slice(0, execution.maxTasks);
     if (!pending.length) break;
     const task = pending[0];
@@ -240,7 +268,7 @@ export async function runRuleUpgrade({ project, projects, snapshots, ai, request
         task.lastEvaluation = evaluation.json || {};
         task.capability = `${task.capability} — ${evaluation.json?.missing || evaluation.json?.next_action || 'needs implementation'}`;
       }
-      plan = await diagnoseUpgradeRequest({ project, projects, ai, request: taskRequest, ruleText: JSON.stringify({ ...parsed, execution }) });
+      plan = await diagnoseUpgradeRequest({ project, projects, ai, request: taskRequest, ruleText: '', taskBrief: { capability: task.capability, why: parsed.goal } });
     } catch (err) {
       task.status = 'blocked'; task.error = String(err.message || err).slice(0, 500);
       await projects.saveMetadata(project, 'upgrade-rule-execution.json', state);
