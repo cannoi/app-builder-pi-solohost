@@ -419,8 +419,9 @@ export function registerRoutes(r, app) {
     if (!p) return res.status(404).json({ error: 'Project not found' });
     if (!ensureFree(p.id, res)) return;
     const request = String(req.body?.request || '').trim();
-    if (!request) return res.status(400).json({ error: 'Tell me what you want to improve.' });
-    const job = jobs.enqueue({ type: 'upgrade_request', projectId: p.id, payload: { projectId: p.id, request } });
+    const ruleText = String(req.body?.ruleText || '').trim();
+    if (!request && !ruleText) return res.status(400).json({ error: 'Tell me what you want to improve, or attach a Rule file.' });
+    const job = jobs.enqueue({ type: 'upgrade_request', projectId: p.id, payload: { projectId: p.id, request: request || 'Apply the attached Rule to this existing app.', ruleText } });
     setImmediate(() => jobs.kick(job));
     res.status(202).json({ jobId: job.id, message: 'Upgrade diagnosis started.' });
   });

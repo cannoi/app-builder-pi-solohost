@@ -1,3 +1,19 @@
+## 1.4.53 — Runtime/Rule hardening
+
+- Added a bounded Docker image preflight before first GitHub upload when the protected Container Sandbox is available.
+- Added deterministic `npm install` → `npm ci` policy when `package-lock.json` is present.
+- Strengthened native dependency preflight by removing forced source-build and binary-mirror flags together.
+- Extended `.rule` support with phases, functional acceptance, questions, stop conditions, bounded cycles, and guided/automatic repair mode.
+- Added bounded Rule execution that stops on repeated capability gaps, high-risk steps, missing user configuration, or the cycle limit.
+- Added Rule schema documentation and upgraded bundled product rules.
+- Added regression tests for the new pre-publish and Rule behavior.
+
+## 1.4.53
+
+- Upgrade Workshop accepts Rule files (.rule/.yaml/.json/.md) plus pasted rules.
+- Rules are validated, capability gaps recorded, and secrets in rule files are rejected.
+- Bundled templates: media center, AI assistant, automation hub, time tracker, meeting assistant.
+
 ## 1.4.52
 
 - Settings sheet scrolls on every screen size; fields are no longer hidden or clipped.

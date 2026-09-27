@@ -330,11 +330,15 @@ async function startUpgrade() {
   } catch (e) { handleJobActionError(e); }
 }
 async function askUpgradeRequest() {
-  const request = await askSafeAction('UPGRADE WORKSHOP', 'What would you like to improve in this existing app?');
+  const request = await askSafeAction('UPGRADE WORKSHOP', 'Describe the upgrade, or attach a Rule file (.rule .yaml .json .md).');
   if (!request) return;
-  setBusy(true, 'Diagnosing the upgrade request…');
+  setBusy(true, 'Loading the Rule and inspecting the app…');
   try {
-    const r = await api(`/api/projects/${state.projectId}/upgrade/request`, { method: 'POST', body: JSON.stringify({ request: request.text }) });
+    let ruleText = '';
+    for (const file of request.files || []) {
+      if (/\.(rule|ya?ml|json|md)$/i.test(file.name || '')) ruleText += `${await file.text()}\n`;
+    }
+    const r = await api(`/api/projects/${state.projectId}/upgrade/request`, { method: 'POST', body: JSON.stringify({ request: request.text, ruleText }) });
     watch(r.jobId);
   } catch (e) { handleJobActionError(e); }
 }
@@ -446,7 +450,7 @@ async function quick(action, extraPayload = {}) {
 async function askSafeAction(kind, initial = '') {
   return new Promise((resolve) => {
     const wrap = document.createElement('div'); wrap.className = 'modal';
-    wrap.innerHTML = `<div class="sheet"><div class="sheetHead"><h2>${kind}</h2><button class="iconBtn" type="button">✕</button></div><p class="info">What do you want to change?</p><textarea rows="4" style="width:100%;box-sizing:border-box" placeholder="What do you want to change?"></textarea><div class="inputRow" style="margin-top:10px"><button type="button" class="attach modalAttach" title="Attach files">📎</button><input class="modalFiles" type="file" multiple hidden accept=".zip,.pdf,.txt,.md,.json,.yaml,.yml,.js,.ts,.jsx,.tsx,.html,.css,.py,.go,.rs,.java,.php,.sql,.csv,.png,.jpg,.jpeg,.gif,.webp"><span class="modalFileNames muted">No files</span></div><div class="actionCard"><button class="primary wide" type="button">Send</button></div></div>`;
+    wrap.innerHTML = `<div class="sheet"><div class="sheetHead"><h2>${kind}</h2><button class="iconBtn" type="button">✕</button></div><p class="info">What do you want to change?</p><textarea rows="4" style="width:100%;box-sizing:border-box" placeholder="What do you want to change?"></textarea><div class="inputRow" style="margin-top:10px"><button type="button" class="attach modalAttach" title="Attach files">📎</button><input class="modalFiles" type="file" multiple hidden accept=".zip,.pdf,.txt,.md,.json,.yaml,.yml,.rule,.js,.ts,.jsx,.tsx,.html,.css,.py,.go,.rs,.java,.php,.sql,.csv,.png,.jpg,.jpeg,.gif,.webp"><span class="modalFileNames muted">No files</span></div><div class="actionCard"><button class="primary wide" type="button">Send</button></div></div>`;
     document.body.appendChild(wrap); wrap.hidden = false;
     const input = wrap.querySelector('textarea'); const fileInput = wrap.querySelector('.modalFiles'); const names = wrap.querySelector('.modalFileNames');
     input.value = initial;

@@ -1,0 +1,37 @@
+RULE_VERSION: 1.1
+RULE_NAME: TIME_TRACKER
+APP_TYPE: PRODUCTIVITY
+TARGET: PI_SOLOHOST
+GOAL: A reliable personal time tracker with correct elapsed time after restart.
+
+PHASES:
+- Timer creation and controls
+- Correct elapsed-time calculation
+- Daily summary
+- Persistent storage
+- Recovery after restart
+- SoloHost runtime verification
+
+REQUIRED CAPABILITIES:
+- Start timer
+- Stop timer
+- Daily summary
+- Persistent storage
+- Correct elapsed time
+- Restart recovery
+- SoloHost runtime compatibility
+
+FUNCTIONAL ACCEPTANCE:
+- Starting a timer records a real start timestamp
+- Stopping a timer records elapsed time correctly
+- Daily summary reflects stored sessions
+- Timer state survives restart when active state must persist
+- Elapsed time is calculated from timestamps, not only in-memory counters
+- Container starts and HTTP health succeeds
+
+STOP CONDITIONS:
+- Persistence behavior cannot be verified
+- Timer accuracy cannot be demonstrated
+
+MAX_CYCLES: 4
+AUTO_REPAIR: true

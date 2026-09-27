@@ -164,3 +164,21 @@ test('GitHub workflow publishes a full immutable commit SHA tag', async () => {
   assert.doesNotMatch(yml, /tagging fallback/);
   await fs.rm(dir, { recursive: true, force: true });
 });
+
+test('release runs a protected Docker runtime preflight before first GitHub upload', async () => {
+  const text = await fs.readFile(new URL('../src/jobs/pipeline.js', import.meta.url), 'utf8');
+  const preflight = text.indexOf('verifyContainerImageBeforePublish');
+  const upload = text.indexOf('githubPublish = await publishToGitHub');
+  assert.ok(preflight >= 0 && upload > preflight, 'container preflight must be wired before GitHub upload');
+  const block = text.slice(preflight, upload);
+  assert.match(block, /runner\.runPodmanApp/);
+  assert.match(block, /runDare/);
+  assert.match(block, /GitHub upload is blocked/);
+});
+
+test('forced native source builds remain a deterministic pre-publish repair', async () => {
+  const text = await fs.readFile(new URL('../src/dare/engine.js', import.meta.url), 'utf8');
+  assert.match(text, /NATIVE_SOURCE_BUILD_FORCED/);
+  assert.match(text, /--build-from-source/);
+  assert.match(text, /binary-host-mirror/);
+});

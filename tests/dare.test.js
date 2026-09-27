@@ -214,3 +214,17 @@ test('DARE removes forced npm --build-from-source before publish', async () => {
   assert.doesNotMatch(df, /build-from-source/);
   await fs.rm(dir, { recursive: true, force: true });
 });
+
+test('DARE converts npm install to npm ci when a package-lock is present', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'dare-npm-policy-'));
+  await fs.writeFile(path.join(dir, 'package.json'), '{"name":"x","dependencies":{"express":"^4.19.2"}}');
+  await fs.writeFile(path.join(dir, 'package-lock.json'), '{}');
+  await fs.writeFile(path.join(dir, 'Dockerfile'), 'FROM node:18-alpine\nWORKDIR /app\nCOPY package*.json ./\nRUN npm install\nCOPY . .\nEXPOSE 8080\nCMD ["npm","start"]\n');
+  const result = await runDare({ sourceDir: dir, extra: { message: 'SOLOHOST_RELEASE_PREFLIGHT' }, history: [] });
+  assert.equal(result.ruleId, 'NPM_INSTALL_LOCKFILE_POLICY');
+  assert.equal(result.ok, true);
+  const dockerfile = await fs.readFile(path.join(dir, 'Dockerfile'), 'utf8');
+  assert.match(dockerfile, /RUN npm ci/);
+  assert.doesNotMatch(dockerfile, /RUN npm install\b/);
+  await fs.rm(dir, { recursive: true, force: true });
+});

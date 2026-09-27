@@ -23,6 +23,7 @@ import { shouldBlockRepeatedAction, nextRepeatState, repairFingerprint } from '.
 import { mergeVerificationState } from './verification.js';
 import { maskSecrets } from '../utils/mask.js';
 import { inspectUpgrade, diagnoseUpgradeRequest, applyUpgrade } from '../upgrade/engine.js';
+import { capabilityGap } from '../upgrade/rules.js';
 import { diagnoseProject, buildAdvisorReport } from '../diagnose/project.js';
 import { refreshProjectBrain, rememberFailedRepair, wasRepairTried } from '../diagnose/brain.js';
 
@@ -126,11 +127,16 @@ export function registerPipeline(app) {
     if (!baseline) throw new Error('Upgrade baseline is missing. Inspect the app first.');
     projects.setStatus(project, 'UPGRADE_DIAGNOSING');
     emit('diagnose', 'running', 'Diagnosing the request against the real app baseline…');
-    const plan = await diagnoseUpgradeRequest({ project, projects, ai, request: job.payload.request });
+    const plan = await diagnoseUpgradeRequest({
+      project, projects, ai,
+      request: job.payload.request,
+      ruleText: job.payload.ruleText || '',
+    });
     await projects.saveMetadata(project, 'upgrade-plan.json', { ...plan, request: job.payload.request, createdAt: new Date().toISOString() });
     projects.setStatus(projects.get(project.id), 'UPGRADE_WAITING_APPROVAL');
-    emit('recommend', 'done', plan.recommendation || 'Upgrade plan is ready for review.');
-    return { projectId: project.id, plan: { ...plan, request: job.payload.request }, needsApproval: true };
+    if (plan.ruleStatus) emit('inspect', 'done', plan.ruleStatus);
+    emit('recommend', 'done', plan.needs_user_action || plan.recommendation || 'Upgrade plan is ready for review.');
+    return { projectId: project.id, plan: { ...plan, request: job.payload.request }, needsApproval: true, brief: plan.ruleStatus || plan.recommendation };
   });
 
   jobs.on('upgrade_apply', async (job, { emit }) => {
@@ -139,10 +145,90 @@ export function registerPipeline(app) {
     emit('patch', 'running', 'Applying only the approved upgrade files…');
     const plan = job.payload.plan || await projects.readMetadata(project, 'upgrade-plan.json', {});
     const result = await applyUpgrade({ project: projects.get(project.id), projects, snapshots, plan, request: job.payload.request || plan.request || '', approved: job.payload.approved === true });
+
+    const ruleRecord = await projects.readMetadata(project, 'upgrade-rule.json', null);
+    const rule = ruleRecord?.rule?.valid ? ruleRecord.rule : null;
+    let ruleProgress = null;
+    if (rule?.autoRepair !== false) {
+      ruleProgress = await runBoundedRuleExecution({ project: projects.get(project.id), projects, snapshots, ai, rule, request: job.payload.request || plan.request || '', emit });
+    }
+
     projects.setStatus(projects.get(project.id), 'UPGRADE_READY');
-    emit('verify', 'done', `Upgrade verified. ${result.files.length} file(s) changed. Ready for release or rollback.`);
-    return result;
+    const changed = result.files.length + Number(ruleProgress?.filesChanged || 0);
+    if (ruleProgress?.needsUserAction) {
+      emit('verify', 'done', `✓ Current repair verified. Rule paused for required user configuration.`);
+      return { ...result, ruleProgress, needsUserAction: ruleProgress.needsUserAction, status: 'NEEDS_USER_ACTION', brief: ruleProgress.message };
+    }
+    emit('verify', 'done', `Upgrade verified. ${changed} file(s) changed. ${ruleProgress?.complete ? 'Rule acceptance is complete.' : 'Rule stopped at its safe cycle limit.'}`);
+    return { ...result, ruleProgress, status: ruleProgress?.complete ? 'RULE_COMPLETE' : 'UPGRADE_VERIFIED' };
   });
+
+  async function runBoundedRuleExecution({ project, projects, snapshots, ai, rule, request, emit }) {
+    const maxCycles = Math.max(1, Math.min(6, Number(rule.maxCycles || 3)));
+    let filesChanged = 0;
+    let lastSignature = '';
+    const history = await projects.readMetadata(project, 'upgrade-rule-history.json', []);
+    const rows = Array.isArray(history) ? history : [];
+
+    for (let cycle = 1; cycle <= maxCycles; cycle += 1) {
+      const source = projects.sourceDir(project.slug);
+      const context = await readRuleContext(source, rule);
+      const gap = capabilityGap(rule, context);
+      if (gap.complete) {
+        await projects.saveMetadata(project, 'upgrade-rule-history.json', [...rows, { cycle, at: new Date().toISOString(), result: 'complete', missing: [] }].slice(-30));
+        return { complete: true, cycle, filesChanged, gap };
+      }
+
+      const signature = JSON.stringify(gap.missingCapabilities);
+      if (signature === lastSignature) {
+        return { complete: false, cycle, filesChanged, stopped: true, message: '⚠ Rule stopped safely: the same capability gap remains after the previous verified repair. No identical repair will be repeated.', gap };
+      }
+      lastSignature = signature;
+      emit('rule', 'running', `🧭 Rule cycle ${cycle}/${maxCycles}: checking ${gap.missingCapabilities.join(', ')}…`);
+
+      let diagnosis;
+      try {
+        diagnosis = await diagnoseUpgradeRequest({
+          project, projects, ai,
+          request: `${request || rule.goal}\nContinue the loaded Rule. This is cycle ${cycle} of ${maxCycles}. Do not repeat a failed repair.`,
+          ruleText: rule.source || JSON.stringify(rule),
+        });
+      } catch (err) {
+        return { complete: false, cycle, filesChanged, stopped: true, needsUserAction: false, message: `⚠ Rule paused because diagnosis could not be completed: ${String(err.message || err).slice(0, 300)}`, gap };
+      }
+
+      if (diagnosis.needs_user_action || diagnosis.user_questions?.length) {
+        const message = [diagnosis.needs_user_action, ...(diagnosis.user_questions || []).map((q) => `❓ ${q.prompt || q}`)].filter(Boolean).join('\n');
+        await projects.saveMetadata(project, 'upgrade-rule-history.json', [...rows, { cycle, at: new Date().toISOString(), result: 'needs_user_action', missing: gap.missingCapabilities, message }].slice(-30));
+        return { complete: false, cycle, filesChanged, needsUserAction: true, message: message || 'Rule needs your configuration before it can continue.', gap };
+      }
+      const nextPlan = diagnosis;
+      if (!Array.isArray(nextPlan.files) || !nextPlan.files.length) {
+        return { complete: false, cycle, filesChanged, stopped: true, message: `⚠ Rule stopped: no safe verified change was proposed for ${gap.missingCapabilities.join(', ')}.`, gap };
+      }
+      if (String(nextPlan.risk || 'high').toLowerCase() !== 'low') {
+        return { complete: false, cycle, filesChanged, needsUserAction: true, message: `🧭 Rule reached a ${String(nextPlan.risk || 'higher')} risk step. Please review the proposed change before continuing.`, plan: nextPlan, gap };
+      }
+      const applied = await applyUpgrade({ project, projects, snapshots, plan: nextPlan, request, approved: true });
+      filesChanged += applied.files.length;
+      await projects.saveMetadata(project, 'upgrade-rule-history.json', [...rows, { cycle, at: new Date().toISOString(), result: 'verified', files: applied.files, missingBefore: gap.missingCapabilities, verification: applied.verification }].slice(-30));
+    }
+
+    const source = projects.sourceDir(project.slug);
+    const gap = capabilityGap(rule, await readRuleContext(source, rule));
+    return { complete: gap.complete, cycle: maxCycles, filesChanged, stopped: !gap.complete, gap, message: gap.complete ? 'Rule acceptance is complete.' : `Rule stopped after ${maxCycles} verified cycles. Remaining: ${gap.missingCapabilities.join(', ')}.` };
+  }
+
+  async function readRuleContext(source, rule) {
+    const files = await listFiles(source);
+    const selected = files.filter((f) => /package\.json|Dockerfile|compose|config|server|app|index|public|route|api|readme/i.test(f)).slice(0, 50);
+    const chunks = [];
+    for (const rel of selected) {
+      const text = await fs.readFile(path.join(source, rel), 'utf8').catch(() => '');
+      if (text) chunks.push(`FILE ${rel}\n${text.slice(0, 9000)}`);
+    }
+    return chunks.join('\n\n').slice(0, 120000);
+  }
 
   jobs.on('create_app', async (job, { emit }) => {
     const idea = String(job.payload.idea || '').trim();
@@ -504,6 +590,59 @@ export function registerPipeline(app) {
     return pushed;
   });
 
+  async function verifyContainerImageBeforePublish(project, source, emit) {
+    const status = typeof runner.status === 'function' ? runner.status() : {};
+    if (!status?.containerSandboxConfigured) {
+      emit('container-preflight', 'done', 'ℹ Docker image preflight is not available in this Builder environment; GitHub Actions remains the final image gate.');
+      return { ok: true, skipped: true, blocking: false };
+    }
+
+    const runOnce = async () => runner.runPodmanApp({
+      sourcePath: source,
+      projectSlug: project.slug,
+      timeout: Math.min(Number(cfg.limits.sandboxTimeoutSec || 180), 300),
+      keepRunning: false,
+    });
+
+    emit('container-preflight', 'running', 'Testing the exact Docker runtime locally before GitHub upload…');
+    let result = await runOnce();
+    if (result?.status === 'passed') {
+      emit('container-preflight', 'done', '✓ Docker image build + container start + HTTP check passed before GitHub upload.');
+      return { ok: true, result };
+    }
+
+    const logs = `${result?.error || ''}\n${result?.logs || ''}`;
+    const history = await projects.readMetadata(project, 'dare-history.json', []);
+    const checkpoint = await snapshots.create(project, 'before-container-preflight-repair').catch(() => null);
+    emit('container-preflight', 'running', '⚠ Local Docker preflight failed. Inspecting the concrete image/runtime evidence before any repair…');
+    const dare = await runDare({
+      sourceDir: source,
+      logs,
+      extra: { message: 'SOLOHOST_CONTAINER_PREFLIGHT' },
+      history: Array.isArray(history) ? history : [],
+    });
+    await projects.saveMetadata(project, 'dare-history.json', (dare.history || []).slice(-20));
+
+    if (!dare.ok || !(dare.changed || []).length || dare.stopped) {
+      if (checkpoint?.id) await snapshots.restore(project, checkpoint.id).catch(() => {});
+      const reason = dare.reason || result?.error || 'The container did not start successfully.';
+      emit('container-preflight', 'failed', `✗ Docker preflight blocked release. ${String(reason).slice(0, 420)}`);
+      return { ok: false, blocking: true, message: reason, result, dare };
+    }
+
+    emit('container-preflight', 'running', `🔧 Applied deterministic repair ${dare.ruleId || 'runtime rule'} to ${dare.files?.join(', ') || 'the affected file'}; rebuilding the container once…`);
+    const repaired = await runOnce();
+    if (repaired?.status === 'passed') {
+      emit('container-preflight', 'done', `✓ Docker preflight passed after ${dare.ruleId || 'deterministic'} repair. GitHub upload may continue.`);
+      return { ok: true, repaired: true, result: repaired, dare };
+    }
+
+    if (checkpoint?.id) await snapshots.restore(project, checkpoint.id).catch(() => {});
+    const finalEvidence = `${repaired?.error || ''}\n${repaired?.logs || ''}`.trim();
+    emit('container-preflight', 'failed', `✗ The deterministic Docker repair did not verify. Source was rolled back; GitHub upload is blocked.\n${finalEvidence.slice(-1200)}`);
+    return { ok: false, blocking: true, message: `The local Docker image still fails after one verified repair attempt. ${finalEvidence.slice(-900)}`, result: repaired, dare, rolledBack: true };
+  }
+
   async function runRelease(project, payload, emit) {
     emit('validate', 'running', '✓ App generated — validating project files…');
     const tests = await projects.readMetadata(project, 'test-plan.json', {});
@@ -537,13 +676,20 @@ export function registerPipeline(app) {
     if (!verifyOnlyEarly) {
       const releaseDareHistory = await projects.readMetadata(project, 'dare-history.json', []);
       const releaseDareCheckpoint = await snapshots.create(project, 'before-release-runtime-preflight').catch(() => null);
-      releaseDare = await runDare({
-        sourceDir: source,
-        logs: `${runtime.error || ''}\n${runtime.logs || ''}`,
-        extra: { message: 'SOLOHOST_RELEASE_PREFLIGHT' },
-        history: Array.isArray(releaseDareHistory) ? releaseDareHistory : [],
-      });
-      await projects.saveMetadata(project, 'dare-history.json', (releaseDare.history || []).slice(-20));
+      let dareHistory = Array.isArray(releaseDareHistory) ? releaseDareHistory : [];
+      releaseDare = { ok: false, stopped: false, alreadyFixed: false };
+      for (let preflightCycle = 0; preflightCycle < 3; preflightCycle += 1) {
+        releaseDare = await runDare({
+          sourceDir: source,
+          logs: `${runtime.error || ''}\n${runtime.logs || ''}`,
+          extra: { message: 'SOLOHOST_RELEASE_PREFLIGHT' },
+          history: dareHistory,
+        });
+        dareHistory = Array.isArray(releaseDare.history) ? releaseDare.history : dareHistory;
+        if (!(releaseDare.ok && (releaseDare.changed || []).length)) break;
+        emit('validate', 'running', `SoloHost preflight repair ${preflightCycle + 1}/3: ${releaseDare.ruleId || 'deterministic rule'}…`);
+      }
+      await projects.saveMetadata(project, 'dare-history.json', dareHistory.slice(-20));
       if (releaseDare.ok && (releaseDare.changed || []).length) {
         emit('validate', 'running', `SoloHost runtime preflight repaired ${releaseDare.files.join(', ') || 'the runtime contract'}; rechecking before publish…`);
         const preflightStatic = await runStaticTests(source);
@@ -562,6 +708,17 @@ export function registerPipeline(app) {
         emit('validate', 'done', 'Runtime contract repair already ran. Continuing with the current source instead of repeating the same patch.');
       }
     }
+    // Prevent predictable GitHub image failures before uploading source whenever the
+    // protected Container Sandbox is available. Native Preview is intentionally not
+    // treated as a Docker image test: Dockerfile dependency/runtime failures can be
+    // invisible to a perfectly healthy native preview.
+    if (!verifyOnlyEarly) {
+      const containerPreflight = await verifyContainerImageBeforePublish(project, source, emit);
+      if (!containerPreflight.ok && containerPreflight.blocking) {
+        throw new Error(`RELEASE_CONTAINER_PREFLIGHT_FAILED\n${containerPreflight.message}`);
+      }
+    }
+
     const previewFresh = runtime.status === 'passed' && runtime.health === true;
     if (tests.nodeResult?.status === 'failed' && !previewFresh) {
       throw new Error('Release blocked: the latest saved verification still has a failed runtime test. Tap Run first so the live preview can refresh the test report.');

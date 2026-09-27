@@ -7,6 +7,7 @@ import { runStaticTests, runNodeTests } from '../testing/engine.js';
 import { runDare } from '../dare/engine.js';
 import { findMissingNodeModules } from '../projects/deps-fix.js';
 import { writeGeneratedFiles } from '../projects/generator.js';
+import { parseRule, capabilityGap, formatRuleStatus } from './rules.js';
 
 const MAX_SAFE_REPAIRS = 2;
 const PROTECTED = /^(?:\.env(?:\.|$)|.*\/(?:\.env(?:\.|$)|id_rsa(?:\.|$)|private[_-]?key(?:\.|$)))/i;
@@ -88,14 +89,52 @@ export async function inspectUpgrade({ project, projects, snapshots, log }) {
   return { baseline, knowledge, issues: refreshed.issues, safeRepairs, ready: true };
 }
 
-export async function diagnoseUpgradeRequest({ project, projects, ai, request }) {
+export async function diagnoseUpgradeRequest({ project, projects, ai, request, ruleText = '' }) {
   const sourceDir = projects.sourceDir(project.slug);
   const knowledge = await projects.readMetadata(project, 'upgrade-knowledge.json', {});
   const baseline = await projects.readMetadata(project, 'upgrade-baseline.json', {});
-  const relevant = await relevantContext(sourceDir, request);
-  const prompt = `UPGRADE WORKSHOP — EXISTING APP ONLY\n\nPreserve the existing application. Do not redesign or regenerate it.\n\nAPP KNOWLEDGE MAP:\n${JSON.stringify(knowledge)}\n\nBASELINE:\n${JSON.stringify(baseline)}\n\nUSER REQUEST:\n${String(request).trim()}\n\nRELEVANT SOURCE EVIDENCE:\n${relevant}\n\nReturn JSON only with:\n{\n  "root_cause": "evidence-based diagnosis",\n  "recommendation": "smallest effective upgrade",\n  "risk": "low|medium|high",\n  "files": [{"path":"relative/file","content":"complete replacement content"}],\n  "expected_result": "verifiable result",\n  "verification": ["checks"],\n  "alternatives": [{"name":"...","risk":"...","scope":"..."}]\n}\nRules: do not invent facts; do not propose dependency-wide upgrades; do not modify secrets, credentials, database schema, auth, payment, wallet, or Docker architecture unless explicitly required and marked high risk.`;
+  const parsed = parseRule(ruleText || (/RULE_NAME|REQUIRED CAPABILITIES|REQUIRED_CAPABILITIES/i.test(request || '') ? request : ''));
+  const relevant = await relevantContext(sourceDir, `${request}\n${parsed.valid ? parsed.requiredCapabilities.join(' ') : ''}`);
+  const gap = parsed.valid ? capabilityGap(parsed, relevant) : null;
+  if (ruleText && !parsed.valid) throw new Error(parsed.error);
+  if (parsed.valid) await projects.saveMetadata(project, 'upgrade-rule.json', { rule: parsed, gap, loadedAt: new Date().toISOString() });
+  const prompt = `UPGRADE WORKSHOP — EXISTING APP ONLY
+
+Preserve the existing application. Do not redesign or regenerate it.
+
+APP KNOWLEDGE MAP:
+${JSON.stringify(knowledge)}
+
+BASELINE:
+${JSON.stringify(baseline)}
+
+RULE:
+${parsed.valid ? JSON.stringify({ name: parsed.name, goal: parsed.goal, required: parsed.requiredCapabilities, missing: gap?.missingCapabilities || [], secrets: parsed.secrets, phases: parsed.phases, questions: parsed.questions, functionalAcceptance: parsed.functionalTests, stopConditions: parsed.stopConditions, maxCycles: parsed.maxCycles }) : 'No structured rule. Treat the user text as a normal upgrade request.'}
+
+USER REQUEST:
+${String(request).trim()}
+
+RELEVANT SOURCE EVIDENCE:
+${relevant}
+
+Return JSON only with:
+{
+  "root_cause": "evidence-based diagnosis",
+  "recommendation": "smallest effective upgrade",
+  "risk": "low|medium|high",
+  "files": [{"path":"relative/file","content":"complete replacement content"}],
+  "expected_result": "verifiable result",
+  "verification": ["checks"],
+  "missing_capabilities": [],
+  "needs_user_action": "",
+  "user_questions": [{"id":"...","prompt":"...","required":true,"options":[]}],
+  "next_phase": "rule phase name",
+  "completion": false,
+  "alternatives": [{"name":"...","risk":"...","scope":"..."}]
+}
+Rules: do not invent facts; do not propose dependency-wide upgrades; do not modify secrets, credentials, database schema, auth, payment, wallet, or Docker architecture unless explicitly required and marked high risk. If the rule lists required secrets, set needs_user_action instead of writing secrets into source.`;
   const result = await ai.completeJson({ task: 'UPGRADE_WORKSHOP', system: 'You are the Upgrade Workshop. Inspect first, diagnose from evidence, recommend the smallest effective change, and preserve the existing app.', prompt, projectId: project.id });
-  return result.json || {};
+  return { ...(result.json || {}), rule: parsed.valid ? parsed : null, gap, ruleStatus: parsed.valid ? formatRuleStatus(parsed, gap) : '' };
 }
 
 export async function applyUpgrade({ project, projects, snapshots, plan, request, approved = false }) {

@@ -131,6 +131,8 @@ async function preflightScan(sourceDir) {
   if (wf) return wf;
   const sourceBuild = await forcedSourceBuildPreflight(sourceDir);
   if (sourceBuild) return sourceBuild;
+  const npmPolicy = await npmLockfilePreflight(sourceDir);
+  if (npmPolicy) return npmPolicy;
   return null;
 }
 
@@ -228,6 +230,12 @@ async function applyAction(sourceDir, action, history) {
   if (action.repair === 'sqlite-dir' && action.dir) {
     await fs.mkdir(path.join(sourceDir, action.dir), { recursive: true });
     return report({ ok: true, fingerprint: 'SQLITE_DIRECTORY_MISSING', layer: 'RUNTIME_ERROR', ruleId: 'SQLITE_DIRECTORY_MISSING', files: [`${action.dir}/`], reason: `Created the missing SQLite directory ${action.dir}/.`, next: 'CONTINUE', history });
+  }
+
+  if (action.repair === 'npm-ci' && action.file) {
+    const result = await npmLockfileRepair(sourceDir);
+    if (!result?.ok) return report({ ok: false, fingerprint: 'NPM_INSTALL_LOCKFILE_POLICY', layer: 'DOCKERFILE_ERROR', ruleId: 'NPM_INSTALL_LOCKFILE_POLICY', reason: result?.reason || 'Could not apply npm ci policy.', next: 'AI', history });
+    return report({ ok: true, fingerprint: 'NPM_INSTALL_LOCKFILE_POLICY', layer: 'DOCKERFILE_ERROR', ruleId: 'NPM_INSTALL_LOCKFILE_POLICY', files: ['Dockerfile'], reason: result.reason, next: 'CONTINUE', history });
   }
 
   if (action.repair === 'strip-source-build' && action.file) {
@@ -341,6 +349,38 @@ async function localhostBind(sourceDir) {
 
 
 
+async function npmLockfilePreflight(sourceDir) {
+  const lock = await fs.access(path.join(sourceDir, 'package-lock.json')).then(() => true).catch(() => false);
+  if (!lock) return null;
+  const df = await fs.readFile(path.join(sourceDir, 'Dockerfile'), 'utf8').catch(() => '');
+  if (!df) return null;
+  const installLines = [...df.matchAll(/^RUN\s+([^\n]*npm\s+(?:install|ci)\b[^\n]*)$/gmi)].map((m) => m[1]);
+  for (const line of installLines) {
+    if (/npm\s+install\b/i.test(line) && !/--(?:package-lock-only|ignore-scripts)/i.test(line) && !/npm\s+install\s+[^\n]*--build-from-source/i.test(line)) {
+      return {
+        ruleId: 'NPM_INSTALL_LOCKFILE_POLICY',
+        fingerprint: 'NPM_INSTALL_LOCKFILE_POLICY',
+        layer: 'DOCKERFILE_ERROR',
+        risk: 'SAFE',
+        repair: 'npm-ci',
+        file: 'Dockerfile',
+        reason: 'A package-lock.json is present, but the Dockerfile uses npm install. Use the lockfile deterministically during image creation.',
+      };
+    }
+  }
+  return null;
+}
+
+async function npmLockfileRepair(sourceDir) {
+  const full = path.join(sourceDir, 'Dockerfile');
+  const text = await fs.readFile(full, 'utf8').catch(() => '');
+  if (!text) return null;
+  const next = text.replace(/npm\s+install\b(?!\s+--(?:package-lock-only|ignore-scripts))/gi, (m) => 'npm ci');
+  if (next === text) return { ruleId: 'NPM_INSTALL_LOCKFILE_POLICY', fingerprint: 'NPM_INSTALL_LOCKFILE_POLICY', layer: 'DOCKERFILE_ERROR', risk: 'SAFE', reason: 'The Dockerfile already uses a deterministic npm install mode.', next: 'CONTINUE' };
+  await fs.writeFile(full, next);
+  return { ruleId: 'NPM_INSTALL_LOCKFILE_POLICY', fingerprint: 'NPM_INSTALL_LOCKFILE_POLICY', layer: 'DOCKERFILE_ERROR', risk: 'SAFE', files: ['Dockerfile'], ok: true, reason: 'Changed Docker image dependency installation from npm install to npm ci because package-lock.json is present.', next: 'CONTINUE' };
+}
+
 async function forcedSourceBuildPreflight(sourceDir) {
   const files = await listFiles(sourceDir);
   const targets = files.filter((rel) => /(^|\/)(Dockerfile|.*\.(ya?ml|sh|json))$/.test(rel) && !rel.startsWith('node_modules/'));
@@ -366,6 +406,7 @@ async function stripForcedSourceBuild(sourceDir, file) {
   const text = await fs.readFile(full, 'utf8');
   const next = text
     .replace(/\s*--build-from-source(?:=\S+)?/gi, '')
+    .replace(/\s*--[a-z0-9_-]+-binary-host-mirror=\S+/gi, '')
     .replace(/npm\s+ci\s+--build-from-source/gi, 'npm ci')
     .replace(/npm\s+install\s+--build-from-source/gi, 'npm install');
   if (next === text) throw new Error('Forced source-build flag was not found.');
