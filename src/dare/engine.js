@@ -129,6 +129,8 @@ async function preflightScan(sourceDir) {
   if (bind) return bind;
   const wf = await workflowPackagesWrite(sourceDir);
   if (wf) return wf;
+  const sourceBuild = await forcedSourceBuildPreflight(sourceDir);
+  if (sourceBuild) return sourceBuild;
   return null;
 }
 
@@ -166,6 +168,10 @@ async function matchRule(sourceDir, fp, logs) {
   }
   if (fp === 'NPM_LOCKFILE_OUT_OF_SYNC') {
     return { ruleId: 'NPM_LOCKFILE_OUT_OF_SYNC', risk: 'MEDIUM', repair: 'lockfile', reason: 'The package manifest and lockfile are out of sync.' };
+  }
+  if (/build-from-source/i.test(logs)) {
+    const sourceBuild = await forcedSourceBuildPreflight(sourceDir);
+    if (sourceBuild) return sourceBuild;
   }
   return null;
 }
@@ -222,6 +228,16 @@ async function applyAction(sourceDir, action, history) {
   if (action.repair === 'sqlite-dir' && action.dir) {
     await fs.mkdir(path.join(sourceDir, action.dir), { recursive: true });
     return report({ ok: true, fingerprint: 'SQLITE_DIRECTORY_MISSING', layer: 'RUNTIME_ERROR', ruleId: 'SQLITE_DIRECTORY_MISSING', files: [`${action.dir}/`], reason: `Created the missing SQLite directory ${action.dir}/.`, next: 'CONTINUE', history });
+  }
+
+  if (action.repair === 'strip-source-build' && action.file) {
+    await stripForcedSourceBuild(sourceDir, action.file);
+    return report({
+      ok: true, fingerprint: 'NATIVE_SOURCE_BUILD_FORCED', layer: 'DEPENDENCY_ERROR',
+      ruleId: 'NATIVE_SOURCE_BUILD_FORCED', files: [action.file],
+      reason: 'Removed an unnecessary --build-from-source flag so native packages can use prebuilds.',
+      next: 'CONTINUE', history,
+    });
   }
 
   if (action.repair === 'workflow-packages') {
@@ -323,6 +339,38 @@ async function localhostBind(sourceDir) {
   return null;
 }
 
+
+
+async function forcedSourceBuildPreflight(sourceDir) {
+  const files = await listFiles(sourceDir);
+  const targets = files.filter((rel) => /(^|\/)(Dockerfile|.*\.(ya?ml|sh|json))$/.test(rel) && !rel.startsWith('node_modules/'));
+  for (const rel of targets) {
+    const text = await fs.readFile(path.join(sourceDir, rel), 'utf8').catch(() => '');
+    if (/--build-from-source(?:=|\s|$)/i.test(text)) {
+      return {
+        ruleId: 'NATIVE_SOURCE_BUILD_FORCED',
+        fingerprint: 'NATIVE_SOURCE_BUILD_FORCED',
+        layer: 'DEPENDENCY_ERROR',
+        risk: 'SAFE',
+        repair: 'strip-source-build',
+        file: rel,
+        reason: `${rel} forces npm --build-from-source, which commonly breaks SoloHost/GitHub native builds.`,
+      };
+    }
+  }
+  return null;
+}
+
+async function stripForcedSourceBuild(sourceDir, file) {
+  const full = path.join(sourceDir, file);
+  const text = await fs.readFile(full, 'utf8');
+  const next = text
+    .replace(/\s*--build-from-source(?:=\S+)?/gi, '')
+    .replace(/npm\s+ci\s+--build-from-source/gi, 'npm ci')
+    .replace(/npm\s+install\s+--build-from-source/gi, 'npm install');
+  if (next === text) throw new Error('Forced source-build flag was not found.');
+  await fs.writeFile(full, next);
+}
 
 function dockerfilePreparesWritablePath(df, target) {
   const text = String(df || '');

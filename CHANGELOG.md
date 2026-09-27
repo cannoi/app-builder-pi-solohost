@@ -1,3 +1,9 @@
+## 1.4.52
+
+- Settings sheet scrolls on every screen size; fields are no longer hidden or clipped.
+- Preflight strips unnecessary npm --build-from-source before publish.
+- Run failures try one DARE fast-fix then automatically retry the same Run.
+
 ## 1.4.51
 
 - Diagnose is automatic on preview/runtime failure; the Diagnose quick action is removed.

@@ -202,3 +202,15 @@ test('native compile logs are not treated as a missing package.json dependency',
   assert.equal(pkg.dependencies['better-sqlite3'], '11.0.0');
   await fs.rm(dir, { recursive: true, force: true });
 });
+
+test('DARE removes forced npm --build-from-source before publish', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'paf-dare-srcbuild-'));
+  await fs.writeFile(path.join(dir, 'Dockerfile'), 'FROM node:22-alpine\nRUN npm ci --build-from-source\nCMD ["node","server.js"]\n');
+  await fs.writeFile(path.join(dir, 'package.json'), JSON.stringify({ name: 'x', dependencies: { sqlite3: '5.1.7' } }));
+  const r = await runDare({ sourceDir: dir, extra: { message: 'SOLOHOST_RELEASE_PREFLIGHT' } });
+  assert.equal(r.ok, true);
+  assert.equal(r.ruleId, 'NATIVE_SOURCE_BUILD_FORCED');
+  const df = await fs.readFile(path.join(dir, 'Dockerfile'), 'utf8');
+  assert.doesNotMatch(df, /build-from-source/);
+  await fs.rm(dir, { recursive: true, force: true });
+});

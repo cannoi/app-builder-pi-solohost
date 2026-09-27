@@ -350,7 +350,22 @@ export function registerPipeline(app) {
     emit('run', 'running', 'Starting a safe local preview…');
     projects.setStatus(project, 'BUILDING');
     const sourcePath = projects.sourceDir(project.slug);
-    const result = await runner.runApp({ sourcePath, projectSlug: project.slug, timeout: cfg.limits.sandboxTimeoutSec, keepRunning: true });
+    let result = await runner.runApp({ sourcePath, projectSlug: project.slug, timeout: cfg.limits.sandboxTimeoutSec, keepRunning: true });
+    if (result.status !== 'passed') {
+      emit('run', 'running', '🔧 Recovering…');
+      const history = await projects.readMetadata(project, 'dare-history.json', []);
+      const dare = await runDare({
+        sourceDir: sourcePath,
+        logs: `${result.error || ''}\n${result.logs || ''}`,
+        extra: { message: 'RUN_RECOVERY' },
+        history: Array.isArray(history) ? history : [],
+      });
+      await projects.saveMetadata(project, 'dare-history.json', (dare.history || []).slice(-20));
+      if (dare.ok && (dare.changed || []).length && !dare.stopped) {
+        emit('run', 'running', '✅ Fixed — Continuing…');
+        result = await runner.runApp({ sourcePath, projectSlug: project.slug, timeout: cfg.limits.sandboxTimeoutSec, keepRunning: true });
+      }
+    }
     const publicBase = String(process.env.PREVIEW_PUBLIC_BASE_URL || '').replace(/\/$/, '');
     const publicUiUrl = publicBase ? `${publicBase}/preview/${encodeURIComponent(project.slug)}/` : `/preview/${encodeURIComponent(project.slug)}/`;
     const runtime = { ...result, image: null, imageFile: null, publicUiUrl, lastSeenAt: new Date().toISOString(), nextSteps: result.status === 'passed' ? ['Open the preview', 'Improve with AI if needed', 'Publish when ready'] : ['Fix the reported issue', 'Run again'], updatedAt: new Date().toISOString() };

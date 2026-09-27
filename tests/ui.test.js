@@ -173,3 +173,9 @@ test('Diagnose is internal and Advisor lives in Settings', () => {
   assert.match(html, /AI Advisor/);
   assert.match(html, /advisorRun/);
 });
+
+test('settings sheet remains scrollable so fields are not clipped', () => {
+  const css = fs.readFileSync(new URL('../public/styles.css', import.meta.url), 'utf8');
+  assert.match(css, /#settings \.sheet\{[^}]*overflow:\s*auto/);
+  assert.doesNotMatch(css, /max-height:740px\)\{#settings \.compactInfo\{display:none/);
+});
