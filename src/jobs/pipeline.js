@@ -468,13 +468,27 @@ export function registerPipeline(app) {
       if (result.runtime?.status === 'passed' || (result.tested?.staticResult?.status === 'passed' && result.tested?.nodeResult?.status !== 'failed' && result.tested?.scan?.critical === 0)) {
         await projects.saveMetadata(project, 'action-guard.json', null);
       }
+      if ((result.files || []).length) {
+        const pendingRelease = await projects.readMetadata(project, 'release-pending.json', null);
+        if (pendingRelease && typeof pendingRelease === 'object') {
+          await projects.saveMetadata(project, 'release-pending.json', {
+            ...pendingRelease,
+            status: 'needs_republish',
+            localChangedAt: new Date().toISOString(),
+          });
+        }
+      }
       await projects.updateWorkPlan(project, {
         stepId: plan.steps[0].id,
         step: { status: 'done', files: result.files || [], result: result.explanation || 'Change verified.' },
         reports: [{ action: 'improve', status: 'done', files: result.files || [], explanation: result.explanation || '' }],
       });
       const finished = await projects.finishWorkPlan(project, 'done', 'Change was checked after the patch. The checkpoint remains available for rollback.');
-      return { ...result, workPlan: finished };
+      return {
+        ...result,
+        workPlan: finished,
+        next: result.next || 'Tap ▶ Run to verify the repair, then tap 🚀 Publish. Publish uploads the repaired files (overwrite). Do not use Re-check until the new source is on GitHub.',
+      };
     } catch (err) {
       await projects.updateWorkPlan(project, {
         stepId: plan.steps[0].id,
@@ -530,15 +544,11 @@ export function registerPipeline(app) {
     if (runtime.status !== 'passed' || runtime.health !== true) throw new Error('Release blocked: run the app successfully before publishing. Tap Run first.');
 
     const pendingEarly = await projects.readMetadata(project, 'release-pending.json', null);
+    // Check image / Re-check only. A normal Publish tap always uploads local source.
     const verifyOnlyEarly = Boolean(pendingEarly?.githubUrl)
       && payload.existingAction !== 'overwrite'
       && payload.forcePublish !== true
-      && (
-        payload.verifyImage === true
-        || payload.recheck === true
-        || pendingEarly.status === 'workflow_failed'
-        || pendingEarly.status === 'waiting_image'
-      );
+      && (payload.verifyImage === true || payload.recheck === true);
 
     // SoloHost runtime contract preflight runs before the first GitHub publication.
     // Check-image / re-check must not re-apply the same Dockerfile contract or the
@@ -602,12 +612,7 @@ export function registerPipeline(app) {
     const verifyOnly = Boolean(pending?.githubUrl)
       && payload.existingAction !== 'overwrite'
       && payload.forcePublish !== true
-      && (
-        payload.verifyImage === true
-        || payload.recheck === true
-        || pending.status === 'workflow_failed'
-        || pending.status === 'waiting_image'
-      );
+      && (payload.verifyImage === true || payload.recheck === true);
     if (verifyOnly) {
       githubUrl = pending.githubUrl;
       githubPublish = { ok: true, verified: true, owner: pending.owner, repo: pending.repo, url: pending.githubUrl, sha: pending.sha };
@@ -622,7 +627,7 @@ export function registerPipeline(app) {
         emit,
         runtimeOk: runtime.health === true && runtime.status === 'passed',
         repoName: payload.repoName || pending?.repo || project.slug,
-        existingAction: payload.existingAction || (pending?.repo ? 'overwrite' : 'confirm'),
+        existingAction: payload.existingAction || (pending?.repo || payload.forcePublish ? 'overwrite' : 'confirm'),
       });
       githubUrl = githubPublish.ok && githubPublish.verified ? githubPublish.url : null;
       if (githubPublish.code === 'REPO_EXISTS') {

@@ -1,3 +1,8 @@
+## 1.4.59
+
+- Manual Publish always uploads local source (overwrite). Re-check / Check image stay verify-only.
+- Diagnose & Fix marks pending GHCR checks stale and asks Run then Publish so repaired files are not left only on disk.
+
 ## 1.4.58
 
 - GHCR container crash on Alpine + native modules (better-sqlite3) switches Dockerfile to Debian before rewriting Actions.

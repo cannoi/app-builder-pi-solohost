@@ -448,7 +448,17 @@ async function quick(action, extraPayload = {}) {
   setBusy(true, `${actionText(action)}…`);
   try {
     let r;
-    if (action === 'publish') r = await api(`/api/projects/${state.projectId}/release`, { method: 'POST', body: JSON.stringify({ approved: true, confirm: true, push: true, ...extraPayload }) });
+    if (action === 'publish') {
+      const checkOnly = extraPayload.verifyImage === true || extraPayload.recheck === true;
+      r = await api(`/api/projects/${state.projectId}/release`, { method: 'POST', body: JSON.stringify({
+        approved: true,
+        confirm: true,
+        push: true,
+        forcePublish: checkOnly ? false : true,
+        existingAction: extraPayload.existingAction || (checkOnly ? undefined : 'overwrite'),
+        ...extraPayload,
+      }) });
+    }
     else if (action === 'improve' || action === 'edit') {
       const kind = action === 'edit' ? 'SAFE EDIT' : 'SAFE UPGRADE';
       const request = await askSafeAction(kind);
