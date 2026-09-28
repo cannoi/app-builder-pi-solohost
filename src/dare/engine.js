@@ -135,6 +135,8 @@ async function preflightScan(sourceDir) {
   if (rootUi) return rootUi;
   const syntax = await syntaxCrashPreflight(sourceDir);
   if (syntax) return syntax;
+  const alpine = await alpineNativeModulePreflight(sourceDir);
+  if (alpine) return alpine;
   return null;
 }
 
@@ -166,6 +168,10 @@ async function matchRule(sourceDir, fp, logs) {
   }
   if (fp === 'DOCKER_CONTAINER_CRASH' && /cannot find module|module not found/i.test(logs)) {
     return { ruleId: 'NODE_MODULE_MISSING', risk: 'SAFE', repair: 'deps', reason: 'Container crashed because a Node package is missing.' };
+  }
+  if (fp === 'DOCKER_CONTAINER_CRASH' || /container exited before smoke|did not become reachable/i.test(logs)) {
+    const alpine = await alpineNativeModulePreflight(sourceDir);
+    if (alpine) return alpine;
   }
   if (fp === 'NODE_ENGINE_MISMATCH') {
     return await nodeEngineRepair(sourceDir, logs);
@@ -235,6 +241,11 @@ async function applyAction(sourceDir, action, history) {
   if (action.repair === 'bind-all' && action.file) {
     await patchListenBind(path.join(sourceDir, action.file));
     return report({ ok: true, fingerprint: 'DOCKER_LOCALHOST_BIND', layer: 'CONTAINER_ERROR', ruleId: 'DOCKER_LOCALHOST_BIND', files: [action.file], reason: 'HTTP server now listens on 0.0.0.0 so the container can be reached.', next: 'CONTINUE', history });
+  }
+
+  if (action.repair === 'debian-native-base' && action.file) {
+    await patchAlpineNativeBase(path.join(sourceDir, action.file));
+    return report({ ok: true, fingerprint: 'ALPINE_NATIVE_MODULE', layer: 'DEPENDENCY_ERROR', ruleId: 'ALPINE_NATIVE_MODULE', files: [action.file], reason: 'Switched the Docker base off Alpine so native modules such as better-sqlite3 can start in GHCR.', next: 'CONTINUE', history });
   }
 
   if (action.repair === 'static-root' && action.file) {
@@ -715,6 +726,38 @@ async function syntaxCrashPreflight(sourceDir) {
     }
   }
   return null;
+}
+
+
+const NATIVE_PKGS = /better-sqlite3|sqlite3|\bbcrypt\b|\bsharp\b|\bcanvas\b/;
+
+async function alpineNativeModulePreflight(sourceDir) {
+  const pkg = JSON.parse(await fs.readFile(path.join(sourceDir, 'package.json'), 'utf8').catch(() => 'null'));
+  const deps = { ...(pkg?.dependencies || {}), ...(pkg?.optionalDependencies || {}) };
+  const native = Object.keys(deps).filter((name) => NATIVE_PKGS.test(name));
+  if (!native.length) return null;
+  const dockerFile = path.join(sourceDir, 'Dockerfile');
+  const text = await fs.readFile(dockerFile, 'utf8').catch(() => '');
+  if (!text) return null;
+  if (!/FROM\s+node:\S*alpine/i.test(text)) return null;
+  return {
+    ruleId: 'ALPINE_NATIVE_MODULE',
+    fingerprint: 'ALPINE_NATIVE_MODULE',
+    layer: 'DEPENDENCY_ERROR',
+    risk: 'SAFE',
+    repair: 'debian-native-base',
+    file: 'Dockerfile',
+    reason: `Native module ${native.join(', ')} on node:alpine usually crashes the GHCR container before HTTP is ready.`,
+  };
+}
+
+async function patchAlpineNativeBase(file) {
+  let text = await fs.readFile(file, 'utf8');
+  text = text.replace(/FROM\s+node:(\d+)[^\s]*alpine[^\s]*/gi, 'FROM node:$1-bookworm-slim');
+  if (!/mkdir -p ['\"]?\/app\/data/.test(text)) {
+    text = text.replace(/^(WORKDIR\s+\/app\s*)$/m, "$1\nRUN mkdir -p /app/data && chown -R node:node /app/data || true");
+  }
+  await fs.writeFile(file, text);
 }
 
 export function formatDareReport(result) {

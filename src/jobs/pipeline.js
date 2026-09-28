@@ -834,6 +834,11 @@ export function registerPipeline(app) {
       if (dare.userAction || dare.stopped) {
         return { ok: false, reason: dare.reason, dare, userAction: dare.userAction };
       }
+      const crashLayer = /DOCKER_CONTAINER_CRASH|ALPINE_NATIVE_MODULE|NODE_SYNTAX_ERROR|container exited before smoke|did not become reachable/i.test(`${classified.code || ''} ${classified.title || ''} ${diagnostics.logTail || ''}`);
+      if (crashLayer) {
+        emit('repair', 'done', 'GHCR smoke failed because the app container died. Builder will not rewrite GitHub Actions for this. Fix the app start/Dockerfile, then tap Re-check build.');
+        return { ok: false, reason: 'App container crashed in GHCR. Workflow rewrite skipped.', classified, dare };
+      }
     } catch (err) {
       if (dareCheckpoint?.id) await snapshots.restore(project, dareCheckpoint.id).catch(() => {});
       emit('repair', 'failed', String(err.message || err).slice(0, 240));

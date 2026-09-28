@@ -1,3 +1,8 @@
+## 1.4.58
+
+- GHCR container crash on Alpine + native modules (better-sqlite3) switches Dockerfile to Debian before rewriting Actions.
+- Workflow auto-repair is skipped when the app process dies; preview-pass is not treated as GHCR-pass.
+
 ## 1.4.57
 
 - Preview bar explains limited preview and how to real-test via Run ZIP or Unlisted SoloHost.

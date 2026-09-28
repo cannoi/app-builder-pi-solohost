@@ -134,6 +134,9 @@ export function classifyLogs(logs = '') {
     const target = t.match(/(?:mkdir|open|write|rename|unlink)[^'\"]*['\"]([^'\"]+)['\"]/i)?.[1] || '';
     return { code: 'runtime_filesystem_permission', title: `Runtime filesystem permission denied${target ? ` at ${target}` : ''}.`, hint: 'The container user cannot write the required runtime path. Inspect the Dockerfile USER/WORKDIR and patch only the concrete writable directory; do not chmod the whole image.' };
   }
+  if (/better-sqlite3|sqlite3|node-gyp|invalid ELF header|bindings file/i.test(t)) {
+    return { code: 'alpine_native_module', title: 'Native module failed inside the GHCR image.', hint: 'Do not rewrite GitHub Actions. Use a Debian Node image or a pure-JS database. Preview can pass while GHCR Alpine crashes.' };
+  }
   if (/container did not become reachable/i.test(t) && /running on port\s+(\d+)/i.test(t)) {
     const port = t.match(/running on port\s+(\d+)/i)?.[1] || 'the app port';
     return { code: 'workflow_port_mismatch', title: `The GitHub smoke test did not reach the app port (${port}).`, hint: `The app reports port ${port}. The old smoke test can miss valid ports; regenerate the Builder workflow and retry. Do not change the app just to satisfy a wrong CI port.` };

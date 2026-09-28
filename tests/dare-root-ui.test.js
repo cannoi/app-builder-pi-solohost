@@ -22,3 +22,15 @@ test('DARE serves public/index.html when Express has no static root', async () =
   assert.match(server, /express\.static/);
   assert.match(server, /sendFile/);
 });
+
+test('Alpine + better-sqlite3 is repaired to a Debian Node base', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'paf-alpine-'));
+  await fs.writeFile(path.join(dir, 'package.json'), JSON.stringify({ name: 'bm', scripts: { start: 'node server.js' }, dependencies: { express: '4.19.2', 'better-sqlite3': '11.0.0' } }));
+  await fs.writeFile(path.join(dir, 'server.js'), "require('express')().listen(8080,'0.0.0.0');\n");
+  await fs.writeFile(path.join(dir, 'Dockerfile'), 'FROM node:18-alpine\nWORKDIR /app\nCOPY package.json ./\nRUN npm install --production\nCOPY . .\nCMD ["npm","start"]\n');
+  const result = await runDare({ sourceDir: dir, logs: 'Container exited before smoke test passed.', extra: {}, history: [] });
+  const docker = await fs.readFile(path.join(dir, 'Dockerfile'), 'utf8');
+  assert.equal(result.ok, true);
+  assert.match(docker, /bookworm-slim/);
+  assert.doesNotMatch(docker, /alpine/);
+});
