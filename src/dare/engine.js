@@ -131,6 +131,8 @@ async function preflightScan(sourceDir) {
   if (wf) return wf;
   const sourceBuild = await forcedSourceBuildPreflight(sourceDir);
   if (sourceBuild) return sourceBuild;
+  const rootUi = await missingRootUiPreflight(sourceDir);
+  if (rootUi) return rootUi;
   return null;
 }
 
@@ -172,6 +174,10 @@ async function matchRule(sourceDir, fp, logs) {
   if (/build-from-source/i.test(logs)) {
     const sourceBuild = await forcedSourceBuildPreflight(sourceDir);
     if (sourceBuild) return sourceBuild;
+  }
+  if (fp === 'MISSING_ROOT_UI' || fp === 'HTTP_404' || /cannot get \//i.test(logs)) {
+    const rootUi = await missingRootUiPreflight(sourceDir);
+    if (rootUi) return rootUi;
   }
   return null;
 }
@@ -223,6 +229,11 @@ async function applyAction(sourceDir, action, history) {
   if (action.repair === 'bind-all' && action.file) {
     await patchListenBind(path.join(sourceDir, action.file));
     return report({ ok: true, fingerprint: 'DOCKER_LOCALHOST_BIND', layer: 'CONTAINER_ERROR', ruleId: 'DOCKER_LOCALHOST_BIND', files: [action.file], reason: 'HTTP server now listens on 0.0.0.0 so the container can be reached.', next: 'CONTINUE', history });
+  }
+
+  if (action.repair === 'static-root' && action.file) {
+    await patchExpressStaticRoot(path.join(sourceDir, action.file), action.publicDir || 'public');
+    return report({ ok: true, fingerprint: 'MISSING_ROOT_UI', layer: 'SOURCE_ERROR', ruleId: 'MISSING_ROOT_UI', files: [action.file], reason: 'Root URL now serves public/index.html instead of Cannot GET /.', next: 'CONTINUE', history });
   }
 
   if (action.repair === 'sqlite-dir' && action.dir) {
@@ -630,6 +641,51 @@ function report(row) {
     unexpected: row.unexpected || [],
     sourceHash: row.sourceHash || manifestHash(row.before || {}),
   };
+}
+
+
+async function missingRootUiPreflight(sourceDir) {
+  const files = await listFiles(sourceDir).catch(() => []);
+  const hasPublicIndex = files.some((f) => /(^|\/)public\/index\.html$/i.test(f));
+  const hasRootIndex = files.some((f) => /^index\.html$/i.test(f));
+  if (!hasPublicIndex && !hasRootIndex) return null;
+  const servers = files.filter((f) => /(^|\/)(server|app|index)\.(js|mjs|cjs)$/i.test(f) && !f.includes('node_modules/') && !f.startsWith('public/'));
+  for (const rel of servers) {
+    const text = await fs.readFile(path.join(sourceDir, rel), 'utf8').catch(() => '');
+    if (!/\bexpress\s*\(/.test(text) && !/from ['"]express['"]/.test(text) && !/require\(['"]express['"]\)/.test(text)) continue;
+    const servesStatic = /express\.static\s*\(/.test(text) || /sendFile\s*\(/.test(text);
+    const hasRoot = /(?:app|router)\.(?:get|use)\s*\(\s*['"]\/['"]/.test(text);
+    if (servesStatic && hasRoot) continue;
+    if (servesStatic && /express\.static/.test(text)) continue;
+    return {
+      ruleId: 'MISSING_ROOT_UI',
+      fingerprint: 'MISSING_ROOT_UI',
+      layer: 'SOURCE_ERROR',
+      risk: 'SAFE',
+      repair: 'static-root',
+      file: rel,
+      publicDir: hasPublicIndex ? 'public' : '.',
+      reason: 'The server does not serve the UI on /. SoloHost will show Cannot GET / or a blank page.',
+    };
+  }
+  return null;
+}
+
+async function patchExpressStaticRoot(file, publicDir = 'public') {
+  let text = await fs.readFile(file, 'utf8');
+  if (/express\.static/.test(text) && /sendFile/.test(text)) return;
+  const esm = /\bimport\s+/.test(text) && !/\brequire\s*\(/.test(text);
+  const snippet = esm
+    ? `\nimport path from 'node:path';\nimport { fileURLToPath } from 'node:url';\nconst __pafDir = path.dirname(fileURLToPath(import.meta.url));\napp.use(express.static(path.join(__pafDir, '${publicDir}')));\napp.get('/', (_req, res) => res.sendFile(path.join(__pafDir, '${publicDir}', 'index.html')));\n`
+    : `\nconst path = require('path');\napp.use(express.static(require('path').join(__dirname, '${publicDir}')));\napp.get('/', (_req, res) => res.sendFile(require('path').join(__dirname, '${publicDir}', 'index.html')));\n`;
+  if (/const app = express\s*\(\s*\)/.test(text)) {
+    text = text.replace(/const app = express\s*\(\s*\)\s*;?/, (m) => `${m}${snippet}`);
+  } else if (/app\.listen\s*\(/.test(text)) {
+    text = text.replace(/app\.listen\s*\(/, `${snippet}app.listen(`);
+  } else {
+    text += snippet;
+  }
+  await fs.writeFile(file, text);
 }
 
 export function formatDareReport(result) {

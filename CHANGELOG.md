@@ -1,3 +1,8 @@
+## 1.4.56
+
+- DARE repairs Express apps that do not serve public/ on /, the cause of Cannot GET / and blank SoloHost screens.
+- Bundled AI Meeting Assistant Rule for upgrading cannoi/ai-meeting-assistant.
+
 ## 1.4.55
 
 - Rule engine loops 20–100 cycles and stops early when goals are met or the user must act.
