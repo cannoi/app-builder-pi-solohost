@@ -1,5 +1,5 @@
 const $ = (id) => document.getElementById(id);
-const state = { projectId: null, projects: [], busy: false, jobId: null, poll: null, pollFailures: 0, seenEvents: 0, files: [], settings: null, pollInFlight: false, pollInFlightJobId: null, watchSeq: 0 };
+const state = { projectId: null, projects: [], busy: false, jobId: null, poll: null, pollFailures: 0, seenEvents: 0, files: [], settings: null, pollInFlight: false, pollInFlightJobId: null, watchSeq: 0, lastNotice: '' };
 
 async function api(url, options = {}) {
   const r = await fetch(url, { headers: { 'Content-Type': 'application/json', ...(options.headers || {}) }, ...options });
@@ -12,10 +12,27 @@ async function api(url, options = {}) {
   }
   return data;
 }
+function compactNotice(text) {
+  const raw = String(text || '').replace(/\s+/g, ' ').trim();
+  if (/container exited before smoke/i.test(raw)) return 'GHCR: the container exited before HTTP was ready. Copy this: Container exited before smoke test passed.';
+  if (/did not become reachable/i.test(raw) || /cannot reach the web service/i.test(raw)) return 'GHCR: image built, but the app did not accept HTTP in time. Check startup crash and listen port.';
+  if (/assignment to constant variable/i.test(raw)) return 'Builder hit an internal error while retrying the same GitHub fix. No extra app files were changed.';
+  if (raw.length > 280 && /GitHub Actions failed/i.test(raw)) return 'GHCR: GitHub Actions smoke test failed. The image built, then the container died or did not listen. Copy the one-line Actions error, not this whole chat.';
+  return String(text || '');
+}
+function shouldSkipNotice(text) {
+  const key = compactNotice(text).slice(0, 180);
+  if (!key) return true;
+  if (state.lastNotice === key) return true;
+  state.lastNotice = key;
+  return false;
+}
 function add(role, text, meta = {}) {
   if (!text) return;
+  const textOut = role === 'user' ? text : compactNotice(text);
+  if (role !== 'user' && shouldSkipNotice(textOut)) return;
   const stick = chatNearBottom();
-  const el = document.createElement('div'); el.className = `msg ${role}`; el.textContent = text;
+  const el = document.createElement('div'); el.className = `msg ${role}`; el.textContent = role === 'user' ? text : compactNotice(text);
   if (meta.small) { const s = document.createElement('span'); s.className = 'small'; s.textContent = meta.small; el.appendChild(s); }
   if (role === 'ai' && !meta.noTools) attachReplyTools(el);
   $('chat').appendChild(el); if (stick) $('chat').scrollTop = $('chat').scrollHeight; else maybeJump();
@@ -78,7 +95,9 @@ async function downloadScript(kind) {
   } catch (e) { add('ai', e.message); }
 }
 function event(stage, status, message) {
-  const el = document.createElement('div'); el.className = `event ${status}`; el.textContent = `${status === 'done' ? '✓' : status === 'failed' ? '⚠' : '•'} ${message}`;
+  const shown = compactNotice(message);
+  if (shouldSkipNotice(`${status}:${shown}`)) return;
+  const el = document.createElement('div'); el.className = `event ${status}`; el.textContent = `${status === 'done' ? '✓' : status === 'failed' ? '⚠' : '•'} ${shown}`;
   $('chat').appendChild(el); if (chatNearBottom()) $('chat').scrollTop = $('chat').scrollHeight; else maybeJump();
 }
 function toast(message) { add('system', message); }
@@ -675,6 +694,7 @@ function summarizeResult(result, status) {
   }
   if (runtime?.status === 'passed' && (runtime.previewPath || runtime.url || runtime.publicUiUrl)) {
     addLink('Open the test UI', runtime.publicUiUrl || runtime.previewPath || runtime.url, runtime.publicUiUrl || runtime.previewPath || runtime.url);
+    add('ai', 'Preview is limited: main page only, most buttons off, no Internet. For a real test use 📦 Run ZIP on your PC, or Publish and add it in SoloHost as Unlisted.');
   }
   if (Array.isArray(result.downloads)) {
     result.downloads.forEach((d) => addLink(

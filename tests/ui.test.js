@@ -179,3 +179,16 @@ test('settings sheet remains scrollable so fields are not clipped', () => {
   assert.match(css, /#settings \.sheet\{[^}]*overflow:\s*auto/);
   assert.doesNotMatch(css, /max-height:740px\)\{#settings \.compactInfo\{display:none/);
 });
+
+test('preview chrome explains limited preview and real-test options', () => {
+  const js = fs.readFileSync(new URL('../src/preview.js', import.meta.url), 'utf8');
+  assert.match(js, /Limited preview/);
+  assert.match(js, /Run ZIP/);
+  assert.match(js, /Unlisted/);
+});
+
+test('chat compacting collapses repeated GHCR smoke errors', () => {
+  const js = fs.readFileSync(new URL('../public/app.js', import.meta.url), 'utf8');
+  assert.match(js, /function compactNotice/);
+  assert.match(js, /shouldSkipNotice/);
+});

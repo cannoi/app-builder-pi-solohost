@@ -84,9 +84,11 @@ function chromePage(project) {
 html,body{margin:0;height:100%;background:#0e1116;color:#e8eef6;font:600 13px system-ui,sans-serif}
 #bar{position:fixed;top:0;left:0;right:0;z-index:2147483647;display:flex;align-items:center;gap:10px;padding:8px 12px;background:#0e1116;border-bottom:1px solid #293241}
 #bar a{color:#8b7cff;text-decoration:none;font-weight:700}
-iframe{position:fixed;top:38px;left:0;right:0;bottom:0;width:100%;height:calc(100% - 38px);border:0;background:#fff}
+iframe{position:fixed;top:72px;left:0;right:0;bottom:0;width:100%;height:calc(100% - 72px);border:0;background:#fff}
+#note{position:fixed;top:38px;left:0;right:0;z-index:2147483647;padding:6px 12px;background:#161b22;color:#c9d1d9;font:500 12px/1.35 system-ui,sans-serif;border-bottom:1px solid #293241}
 </style></head><body>
-<div id="bar"><a href="${home}">← Back to Builder</a><span style="opacity:.55">Test preview</span></div>
+<div id="bar"><a href="${home}">← Back to Builder</a><span style="opacity:.55">Limited preview</span></div>
+<div id="note">This preview shows the main page only. Most buttons and Internet calls will not work here. For a real test: Back → 📦 Run ZIP on your PC, or Publish and add the app in SoloHost as Unlisted.</div>
 <iframe id="app" src="${frame}" title="App preview"></iframe>
 <script>
 (function(){

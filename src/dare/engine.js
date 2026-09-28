@@ -133,6 +133,8 @@ async function preflightScan(sourceDir) {
   if (sourceBuild) return sourceBuild;
   const rootUi = await missingRootUiPreflight(sourceDir);
   if (rootUi) return rootUi;
+  const syntax = await syntaxCrashPreflight(sourceDir);
+  if (syntax) return syntax;
   return null;
 }
 
@@ -178,6 +180,10 @@ async function matchRule(sourceDir, fp, logs) {
   if (fp === 'MISSING_ROOT_UI' || fp === 'HTTP_404' || /cannot get \//i.test(logs)) {
     const rootUi = await missingRootUiPreflight(sourceDir);
     if (rootUi) return rootUi;
+  }
+  if (fp === 'NODE_SYNTAX_ERROR' || /container exited before smoke/i.test(logs)) {
+    const syntax = await syntaxCrashPreflight(sourceDir);
+    if (syntax) return syntax;
   }
   return null;
 }
@@ -686,6 +692,29 @@ async function patchExpressStaticRoot(file, publicDir = 'public') {
     text += snippet;
   }
   await fs.writeFile(file, text);
+}
+
+
+async function syntaxCrashPreflight(sourceDir) {
+  const files = await listFiles(sourceDir).catch(() => []);
+  const targets = files.filter((f) => /\.(cjs|mjs|js)$/i.test(f) && !f.includes('node_modules/') && !f.startsWith('public/'));
+  for (const rel of targets.slice(0, 40)) {
+    try {
+      await execFileAsync('node', ['--check', path.join(sourceDir, rel)], { timeout: 8000 });
+    } catch (err) {
+      const detail = String(err.stderr || err.stdout || err.message || '').slice(0, 400);
+      return {
+        ruleId: 'NODE_SYNTAX_ERROR',
+        fingerprint: 'NODE_SYNTAX_ERROR',
+        layer: 'SOURCE_ERROR',
+        risk: 'UNSAFE',
+        next: 'AI',
+        file: rel,
+        reason: `The container will exit on start because ${rel} has a syntax error. ${detail}`.trim(),
+      };
+    }
+  }
+  return null;
 }
 
 export function formatDareReport(result) {

@@ -1,3 +1,9 @@
+## 1.4.57
+
+- Preview bar explains limited preview and how to real-test via Run ZIP or Unlisted SoloHost.
+- Chat shows a GHCR/Actions error once, compacted, so it can be copied to an external AI.
+- DARE preflight runs node --check so syntax crashes like status(400.json) are caught before GitHub smoke.
+
 ## 1.4.56
 
 - DARE repairs Express apps that do not serve public/ on /, the cause of Cannot GET / and blank SoloHost screens.

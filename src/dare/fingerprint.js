@@ -61,6 +61,8 @@ export function fingerprintError(text = '') {
   if (/node(?:\.js)?\s+version|unsupported engine|requires node|engine.*node/i.test(t)) return 'NODE_ENGINE_MISMATCH';
   if (/\b(?:ERR_REQUIRE_ESM|require\(\).*ES module|module.*commonjs|cannot use import statement outside a module)\b/i.test(t)) return 'NODE_ESM_CJS_MISMATCH';
 
+  if (/syntaxerror|unexpected token|missing \)/i.test(t) && /\.js/.test(t)) return 'NODE_SYNTAX_ERROR';
+  if (/container exited before smoke/i.test(t)) return 'DOCKER_CONTAINER_CRASH';
   if (/cannot get \//i.test(t) || /cannot get ['\"]\/['\"]/i.test(t)) return 'MISSING_ROOT_UI';
   if (/http 404|status code 404/i.test(t)) return 'HTTP_404';
   if (/http 5\d\d|status code 5/i.test(t)) return 'HTTP_5XX';
