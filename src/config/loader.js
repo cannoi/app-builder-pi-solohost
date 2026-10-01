@@ -54,6 +54,6 @@ export function publicConfig(cfg) {
     engine: { provider: cfg.runtime?.podman?.apiUrl ? 'podman-api' : 'native-preview', mode: cfg.runtime?.mode || 'auto', configured: true, containerSandbox: Boolean(cfg.runtime?.podman?.apiUrl), dockerSocket: false },
     ai: { provider: cfg.ai.provider, mode: cfg.ai.mode, geminiConfigured: Boolean(cfg.ai.geminiKey), deepseekConfigured: Boolean(cfg.ai.deepseekKey), deepseekModel: cfg.ai.deepseekModel },
     github: { configured: Boolean(cfg.github.token && cfg.github.owner), owner: cfg.github.owner || null },
-    feedbackHub: { configured: Boolean(cfg.feedbackHub?.url), url: cfg.feedbackHub?.url || '', appId: cfg.feedbackHub?.appId || 'app-builder-pi-solohost' },
+    feedbackHub: { configured: true },
   };
 }

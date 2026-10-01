@@ -15,7 +15,10 @@ test('config loads without crashing when optional keys are missing', () => {
   assert.equal(cfg.ai.deepseekModel, 'deepseek-v4-flash');
   assert.equal(cfg.docker, undefined);
   assert.equal(cfg.feedbackHub.appId, 'app-builder-pi-solohost');
-  assert.equal(publicConfig(cfg).feedbackHub.configured, false);
+  assert.equal(publicConfig(cfg).feedbackHub.configured, true);
+  assert.deepEqual(publicConfig(cfg).feedbackHub, { configured: true });
+  assert.equal('url' in publicConfig(cfg).feedbackHub, false);
+  assert.equal('appId' in publicConfig(cfg).feedbackHub, false);
   const pub = publicConfig(cfg);
   assert.equal(typeof pub.ai.geminiConfigured, 'boolean');
   const v = validateConfig(cfg);

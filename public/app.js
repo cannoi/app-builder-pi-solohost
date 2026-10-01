@@ -1,4 +1,7 @@
 const $ = (id) => document.getElementById(id);
+const FEEDBACK_HUB_URL = 'http://14.176.78.46:8090';
+const FEEDBACK_APP_ID = 'app-builder-pi-solohost';
+const FEEDBACK_APP_NAME = 'App Builder — Pi SoloHost';
 const state = { projectId: null, projects: [], busy: false, jobId: null, poll: null, pollFailures: 0, seenEvents: 0, files: [], settings: null, feedbackHub: null, feedbackSnapshot: null, feedbackSync: null, pollInFlight: false, pollInFlightJobId: null, watchSeq: 0, lastNotice: '' };
 
 async function api(url, options = {}) {
@@ -933,8 +936,6 @@ async function loadSettings() {
   try {
     state.settings = await api('/api/settings');
     $('setGhOwner').value = state.settings.github?.owner || '';
-    if ($('feedbackHubUrl')) $('feedbackHubUrl').value = state.settings.feedbackHub?.url || '';
-    if ($('feedbackAppId')) $('feedbackAppId').value = state.settings.feedbackHub?.appId || 'app-builder-pi-solohost';
     await initFeedbackHub();
     $('settingsState').textContent = '';
     await loadHub();
@@ -942,7 +943,7 @@ async function loadSettings() {
 }
 async function saveSettings() {
   try {
-    await api('/api/settings', { method: 'POST', body: JSON.stringify({ GITHUB_TOKEN: $('setGhToken').value, GITHUB_OWNER: $('setGhOwner').value, FEEDBACK_HUB_URL: $('feedbackHubUrl')?.value || '', FEEDBACK_APP_ID: $('feedbackAppId')?.value || 'app-builder-pi-solohost', setupComplete: true }) });
+    await api('/api/settings', { method: 'POST', body: JSON.stringify({ GITHUB_TOKEN: $('setGhToken').value, GITHUB_OWNER: $('setGhOwner').value, setupComplete: true }) });
     $('setGhToken').value = '';
     $('settingsState').textContent = 'Saved.';
     await loadStatus(); await loadHub();
@@ -1026,8 +1027,8 @@ $('chat').addEventListener('click', (e) => { const b = e.target.closest('[data-c
 
 async function initFeedbackHub() {
   if (!window.SHFH) return;
-  const hubUrl = String(state.settings?.feedbackHub?.url || 'http://14.176.78.46:8090').replace(/\/$/, '');
-  const appId = state.settings?.feedbackHub?.appId || 'app-builder-pi-solohost';
+  const hubUrl = FEEDBACK_HUB_URL;
+  const appId = FEEDBACK_APP_ID;
   if (!hubUrl) { state.feedbackHub = null; updateFeedbackBadge(0); return; }
   try {
     state.feedbackHub = window.SHFH.create({ hubUrl, ingestToken: '', appId, appName: 'App Builder — Pi SoloHost', version: state.settings?.version || '1.4.59', platform: 'solohost', locale: state.settings?.locale || 'en' });
@@ -1068,6 +1069,35 @@ async function openFeedback() {
   if (state.feedbackHub) for (const n of notices) await state.feedbackHub.markRead(n.id).catch(() => {});
   updateFeedbackBadge(0);
 }
+async function sendFeedbackHub() {
+  const message = String($('feedbackMessage')?.value || '').trim();
+  if (!message) { add('ai', 'Please enter your feedback first.'); return; }
+  const type = $('feedbackType')?.value || 'improvement';
+  const btn = $('sendFeedback');
+  if (btn) { btn.disabled = true; btn.textContent = 'Sending…'; }
+  try {
+    if (!state.feedbackHub) await initFeedbackHub();
+    if (!state.feedbackHub) throw new Error('Feedback Hub is unavailable.');
+    const result = await state.feedbackHub.sendFeedback({ type, message });
+    if (result?.ok) {
+      $('feedbackMessage').value = '';
+      add('system', 'Feedback sent. Thank you.');
+      await syncFeedbackHub();
+      return;
+    }
+    if (result?.queued) {
+      $('feedbackMessage').value = '';
+      add('system', 'Feedback saved. It will be sent when the Hub is reachable.');
+      return;
+    }
+    throw new Error(result?.error || 'Feedback could not be sent.');
+  } catch (err) {
+    add('ai', 'Feedback Hub is unavailable. You can open the official Feedback form directly.');
+    window.open(FEEDBACK_HUB_URL + '/feedback', '_blank', 'noopener');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Send feedback'; }
+  }
+}
 
 function openSupport() {
   $('supportModal').hidden = false;
@@ -1093,7 +1123,7 @@ function bindSupport() {
 }
 bindSupport();
 $('closeFeedback') && ($('closeFeedback').onclick = () => { $('feedbackModal').hidden = true; });
-$('feedbackFrame') && ($('feedbackFrame').src = 'http://14.176.78.46:8090/feedback');
+$('sendFeedback') && ($('sendFeedback').onclick = sendFeedbackHub);
 
 Promise.all([loadStatus(), loadProjects(), loadSettings()]).then(async () => {
   const id = savedProjectId();

@@ -72,19 +72,32 @@ test('Feedback Hub integration is optional and never embeds an ingest token', ()
   const js = fs.readFileSync(new URL('../public/app.js', import.meta.url), 'utf8');
   assert.match(html, /id="feedbackBtn"/);
   assert.match(html, /id="feedbackBadge"/);
-  assert.match(html, /id="feedbackHubUrl"/);
   assert.match(js, /SHFH\.create/);
   assert.match(js, /ingestToken:\s*''/);
   assert.doesNotMatch(js, /cannoi_[A-Za-z0-9]{20,}/);
 });
 
-test('Feedback opens the real Feedback Hub form directly', () => {
+test('Feedback send uses the Hub SDK and official form fallback', () => {
+  const js = fs.readFileSync(new URL('../public/app.js', import.meta.url), 'utf8');
+  const routes = fs.readFileSync(new URL('../src/api/routes.js', import.meta.url), 'utf8');
+  assert.match(js, /state\.feedbackHub\.sendFeedback\(\{ type, message \}\)/);
+  assert.doesNotMatch(js, /\/api\/feedback\/submit/);
+  assert.match(js, /window\.open\(FEEDBACK_HUB_URL \+ '\/feedback'/);
+  assert.match(routes, /\/api\/feedback/);
+});
+
+
+test('Feedback Hub client keeps Hub identity internal and sends directly through SDK', () => {
   const html = fs.readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
   const js = fs.readFileSync(new URL('../public/app.js', import.meta.url), 'utf8');
-  const formUrl = 'http://14.176.78.46:8090/feedback';
-  assert.match(html, /id="feedbackFrame"/);
-  assert.match(html, new RegExp(formUrl.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
-  assert.match(html, /target="_blank"/);
-  assert.doesNotMatch(js, /function sendFeedbackHub/);
-  assert.match(js, /feedbackFrame/);
+  const routes = fs.readFileSync(new URL('../src/api/routes.js', import.meta.url), 'utf8');
+  assert.doesNotMatch(html, /id="feedbackHubUrl"/);
+  assert.doesNotMatch(html, /id="feedbackAppId"/);
+  assert.match(js, /const FEEDBACK_HUB_URL\s*=\s*['"]http:\/\/14\.176\.78\.46:8090['"]/);
+  assert.match(js, /const FEEDBACK_APP_ID\s*=\s*['"]app-builder-pi-solohost['"]/);
+  assert.match(js, /state\.feedbackHub\.sendFeedback\(\{ type, message \}\)/);
+  assert.doesNotMatch(js, /api\/feedback\/submit/);
+  assert.doesNotMatch(html, /name="password"|id="feedbackPassword"/i);
+  assert.match(js, /ingestToken:\s*''/);
+  assert.doesNotMatch(js, /cannoi_[A-Za-z0-9]{20,}/);
 });

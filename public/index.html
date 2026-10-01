@@ -243,16 +243,21 @@
 </div>
 
   </div>
-  <!-- FEEDBACK MODAL: use the real Feedback Hub form directly -->
+  <!-- FEEDBACK MODAL -->
   <div id="feedbackModal" class="modal" hidden>
-    <div class="sheet feedbackSheet">
+    <div class="sheet">
       <div class="sheetHead">
         <h2>💬 Feedback</h2>
         <button id="closeFeedback" class="iconBtn" type="button">✕</button>
       </div>
-      <p class="info">This is the official Feedback Hub form. Submit directly to the Hub.</p>
-      <iframe id="feedbackFrame" title="SoloHost Feedback Hub" src="http://14.176.78.46:8090/feedback" loading="lazy" referrerpolicy="no-referrer" class="feedbackFrame"></iframe>
-      <a class="primary wide feedbackOpenLink" href="http://14.176.78.46:8090/feedback" target="_blank" rel="noopener">Open full form ↗</a>
+      <p class="info">Send a bug, idea, or improvement. Feedback is queued locally if the Hub is temporarily offline.</p>
+      <label class="feedbackField">Type
+        <select id="feedbackType"><option value="bug">Bug</option><option value="improvement" selected>Improvement</option><option value="question">Question</option></select>
+      </label>
+      <label class="feedbackField">Message
+        <textarea id="feedbackMessage" rows="5" placeholder="Tell us what happened…"></textarea>
+      </label>
+      <button id="sendFeedback" class="primary wide" type="button">Send feedback</button>
       <div id="feedbackNotices" class="info compactInfo" hidden></div>
     </div>
   </div>
@@ -318,16 +323,6 @@
     </div>
 
     <label>
-      Feedback Hub URL
-      <input id="feedbackHubUrl" type="text" value="http://14.176.78.46:8090" placeholder="http://SOLOHOST-IP:8090">
-    </label>
-
-    <label>
-      Feedback App ID
-      <input id="feedbackAppId" type="text" value="app-builder-pi-solohost" autocomplete="off">
-    </label>
-
-    <label>
       GitHub owner
       <input
         id="setGhOwner"
@@ -379,7 +374,7 @@
 
 </div>
 
-  </div>  <script src="/shfh-client.js?v=2.2"></script><script src="/app.js?v=1.4.59"></script><img
+  </div>  <script src="/shfh-client.js?v=2.2"></script><script src="/app.js?v=feedback-direct-1"></script><img
 class="paf-made-by"
 src="/made-by.png"
 alt="Made with App Builder — Pi SoloHost">
