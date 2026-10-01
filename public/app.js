@@ -1026,7 +1026,7 @@ $('chat').addEventListener('click', (e) => { const b = e.target.closest('[data-c
 
 async function initFeedbackHub() {
   if (!window.SHFH) return;
-  const hubUrl = String(state.settings?.feedbackHub?.url || '').replace(/\/$/, '');
+  const hubUrl = String(state.settings?.feedbackHub?.url || 'http://14.176.78.46:8090').replace(/\/$/, '');
   const appId = state.settings?.feedbackHub?.appId || 'app-builder-pi-solohost';
   if (!hubUrl) { state.feedbackHub = null; updateFeedbackBadge(0); return; }
   try {
@@ -1070,15 +1070,42 @@ async function openFeedback() {
 }
 async function sendFeedbackHub() {
   const message = String($('feedbackMessage')?.value || '').trim();
-  if (!message) return;
-  if (!state.feedbackHub) { add('ai', 'Feedback Hub is not configured yet. Open Settings and add the Hub URL.'); return; }
+  if (!message) { add('ai', 'Please enter your feedback first.'); return; }
   const type = $('feedbackType')?.value || 'improvement';
-  const result = await state.feedbackHub.sendFeedback({ type, message });
-  if (result?.ok || result?.queued) {
-    $('feedbackMessage').value = '';
-    add('system', result.queued ? 'Feedback queued. It will be sent when the Hub is reachable.' : 'Feedback sent. Thank you.');
-    await syncFeedbackHub();
-  } else add('ai', result?.error || 'Feedback could not be sent.');
+  const btn = $('sendFeedback');
+  if (btn) { btn.disabled = true; btn.textContent = 'Sending…'; }
+  try {
+    const result = await api('/api/feedback/submit', {
+      method: 'POST',
+      body: JSON.stringify({
+        type,
+        message,
+        anonymousId: state.feedbackHub?.anonymousId || '',
+        installedAt: state.feedbackHub?.installedAt || '',
+        locale: state.settings?.locale || 'en',
+      }),
+    });
+    if (result?.ok) {
+      $('feedbackMessage').value = '';
+      add('system', 'Feedback sent. Thank you.');
+      await syncFeedbackHub();
+      return;
+    }
+    throw new Error(result?.error || 'Feedback could not be sent.');
+  } catch (err) {
+    if (state.feedbackHub) {
+      const queued = await state.feedbackHub.sendFeedback({ type, message });
+      if (queued?.queued) {
+        $('feedbackMessage').value = '';
+        add('system', 'Feedback saved. It will be sent when the Hub is reachable.');
+        return;
+      }
+    }
+    add('ai', 'Feedback could not be sent. You can open the Feedback form directly.');
+    window.open('http://14.176.78.46:8090/feedback', '_blank', 'noopener');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Send feedback'; }
+  }
 }
 
 function openSupport() {

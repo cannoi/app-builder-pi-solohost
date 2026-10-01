@@ -77,3 +77,14 @@ test('Feedback Hub integration is optional and never embeds an ingest token', ()
   assert.match(js, /ingestToken:\s*''/);
   assert.doesNotMatch(js, /cannoi_[A-Za-z0-9]{20,}/);
 });
+
+test('Feedback send has a same-origin server proxy and direct form fallback', () => {
+  const html = fs.readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
+  const js = fs.readFileSync(new URL('../public/app.js', import.meta.url), 'utf8');
+  const routes = fs.readFileSync(new URL('../src/api/routes.js', import.meta.url), 'utf8');
+  assert.match(html, /value="http:\/\/14\.176\.78\.46:8090"/);
+  assert.match(js, /\/api\/feedback\/submit/);
+  assert.match(js, /window\.open\('http:\/\/14\.176\.78\.46:8090\/feedback'/);
+  assert.match(routes, /r\.post\('\/api\/feedback\/submit'/);
+  assert.match(routes, /\/api\/feedback/);
+});
