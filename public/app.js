@@ -1025,13 +1025,31 @@ $('chat').addEventListener('scroll', maybeJump);
 setBusy(false, 'Ready');
 $('chat').addEventListener('click', (e) => { const b = e.target.closest('[data-container]'); if (b) inspectNamedContainer(b.dataset.container); });
 
+async function loadFeedbackConfig() {
+  try {
+    const cfg = await api('/api/shfh-config');
+    if (cfg && cfg.enabled !== false) state.feedbackConfig = cfg;
+  } catch {
+    state.feedbackConfig = { hubUrl: FEEDBACK_HUB_URL, appId: FEEDBACK_APP_ID, appName: FEEDBACK_APP_NAME, ingestToken: '', formUrl: FEEDBACK_HUB_URL + '/feedback', version: '1.4.61', platform: 'solohost', enabled: true };
+  }
+  return state.feedbackConfig;
+}
 async function initFeedbackHub() {
   if (!window.SHFH) return;
-  const hubUrl = FEEDBACK_HUB_URL;
-  const appId = FEEDBACK_APP_ID;
-  if (!hubUrl) { state.feedbackHub = null; updateFeedbackBadge(0); return; }
+  const cfg = state.feedbackConfig || await loadFeedbackConfig();
+  const hubUrl = cfg?.hubUrl || FEEDBACK_HUB_URL;
+  const appId = cfg?.appId || FEEDBACK_APP_ID;
+  if (!hubUrl || !appId || cfg?.enabled === false) { state.feedbackHub = null; updateFeedbackBadge(0); return; }
   try {
-    state.feedbackHub = window.SHFH.create({ hubUrl, ingestToken: '', appId, appName: 'App Builder — Pi SoloHost', version: state.settings?.version || '1.4.59', platform: 'solohost', locale: state.settings?.locale || 'en' });
+    state.feedbackHub = window.SHFH.create({
+      hubUrl,
+      ingestToken: cfg.ingestToken || '',
+      appId,
+      appName: cfg.appName || FEEDBACK_APP_NAME,
+      version: cfg.version || state.settings?.version || '1.4.61',
+      platform: cfg.platform || 'solohost',
+      locale: state.settings?.locale || 'en',
+    });
     await syncFeedbackHub();
     if (!state.feedbackSync) state.feedbackSync = setInterval(syncFeedbackHub, 60000);
     state.feedbackSync.unref?.();
@@ -1075,10 +1093,20 @@ async function sendFeedbackHub() {
   const type = $('feedbackType')?.value || 'improvement';
   const btn = $('sendFeedback');
   if (btn) { btn.disabled = true; btn.textContent = 'Sending…'; }
+  const cfg = state.feedbackConfig || await loadFeedbackConfig();
+  const formUrl = cfg?.formUrl || (FEEDBACK_HUB_URL + '/feedback');
   try {
     if (!state.feedbackHub) await initFeedbackHub();
-    if (!state.feedbackHub) throw new Error('Feedback Hub is unavailable.');
-    const result = await state.feedbackHub.sendFeedback({ type, message });
+    let result = null;
+    if (state.feedbackHub) result = await state.feedbackHub.sendFeedback({ type, message });
+    if (!result?.ok) {
+      result = await api('/api/feedback/submit', { method: 'POST', body: JSON.stringify({
+        type, message,
+        anonymousId: state.feedbackHub?.anonymousId || '',
+        installedAt: state.feedbackHub?.installedAt || '',
+        locale: state.settings?.locale || 'en',
+      }) });
+    }
     if (result?.ok) {
       $('feedbackMessage').value = '';
       add('system', 'Feedback sent. Thank you.');
@@ -1092,8 +1120,8 @@ async function sendFeedbackHub() {
     }
     throw new Error(result?.error || 'Feedback could not be sent.');
   } catch (err) {
-    add('ai', 'Feedback Hub is unavailable. You can open the official Feedback form directly.');
-    window.open(FEEDBACK_HUB_URL + '/feedback', '_blank', 'noopener');
+    add('ai', 'Feedback Hub is unavailable. Opening the official form.');
+    window.open(formUrl, '_blank', 'noopener');
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = 'Send feedback'; }
   }
@@ -1125,7 +1153,8 @@ bindSupport();
 $('closeFeedback') && ($('closeFeedback').onclick = () => { $('feedbackModal').hidden = true; });
 $('sendFeedback') && ($('sendFeedback').onclick = sendFeedbackHub);
 
-Promise.all([loadStatus(), loadProjects(), loadSettings()]).then(async () => {
+Promise.all([loadStatus(), loadProjects(), loadSettings(), loadFeedbackConfig()]).then(async () => {
+  await initFeedbackHub();
   const id = savedProjectId();
   if (id && state.projects.some((p) => p.id === id)) await openProject(id, false);
   else if (state.projects[0]?.id) await openProject(state.projects[0].id, false);

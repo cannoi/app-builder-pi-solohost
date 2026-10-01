@@ -124,6 +124,23 @@ export function registerRoutes(r, app) {
     res.json({ ok: true, applied, discovery, status: { ...publicConfig(cfg), ai: { ...publicConfig(cfg).ai, geminiModel: ai.status().geminiModel } } });
   });
 
+
+  r.get('/api/shfh-config', (_req, res) => {
+    const hub = cfg.feedbackHub || {};
+    const hubUrl = String(hub.url || 'http://14.176.78.46:8090').replace(/\/$/, '');
+    res.json({
+      hubId: hub.hubId || 'FH-CANNOI-0905428801SH',
+      hubUrl,
+      formUrl: hubUrl + '/feedback',
+      ingestToken: hub.ingestToken || '',
+      appId: hub.appId || 'app-builder-pi-solohost',
+      appName: hub.appName || 'App Builder — Pi SoloHost',
+      version: cfg.version,
+      platform: 'solohost',
+      enabled: hub.enabled !== false,
+    });
+  });
+
   r.post('/api/feedback/submit', async (req, res) => {
     const hubUrl = String(cfg.feedbackHub?.url || 'http://14.176.78.46:8090').replace(/\/$/, '');
     if (!hubUrl) return res.status(503).json({ ok: false, error: 'Feedback Hub is not configured.' });
@@ -149,7 +166,7 @@ export function registerRoutes(r, app) {
       const timer = setTimeout(() => controller.abort(), 12000);
       const upstream = await fetch(hubUrl + '/api/feedback', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json', ...(cfg.feedbackHub?.ingestToken ? { Authorization: 'Bearer ' + cfg.feedbackHub.ingestToken } : {}) },
         body: JSON.stringify(payload),
         signal: controller.signal,
       });

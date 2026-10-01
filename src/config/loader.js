@@ -9,10 +9,14 @@ export function loadConfig() {
     logLevel: process.env.LOG_LEVEL || 'info',
     locale: process.env.APP_LOCALE || 'en',
     feedbackHub: {
-      url: String(process.env.FEEDBACK_HUB_URL || '').replace(/\/$/, ''),
-      appId: process.env.FEEDBACK_APP_ID || 'app-builder-pi-solohost',
+      hubId: process.env.SHFH_HUB_ID || 'FH-CANNOI-0905428801SH',
+      url: String(process.env.SHFH_HUB_URL || process.env.FEEDBACK_HUB_URL || 'http://14.176.78.46:8090').replace(/\/$/, ''),
+      appId: process.env.SHFH_APP_ID || process.env.FEEDBACK_APP_ID || 'app-builder-pi-solohost',
+      appName: process.env.SHFH_APP_NAME || 'App Builder — Pi SoloHost',
+      ingestToken: process.env.SHFH_INGEST_TOKEN || 'cannoi_7Kp9xV2mQ8rN4tY6cL3wA5zD1eF0uH9',
+      enabled: process.env.SHFH_ENABLED !== '0',
     },
-    version: '1.4.59',
+    version: '1.4.61',
     runtime: {
       mode: process.env.PREVIEW_MODE || 'auto',
       podman: { apiUrl: process.env.PODMAN_API_URL || process.env.SANDBOX_PODMAN_API_URL || process.env.CONTAINER_SANDBOX_PODMAN_API_URL || '' },
