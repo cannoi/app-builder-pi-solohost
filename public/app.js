@@ -1068,45 +1068,6 @@ async function openFeedback() {
   if (state.feedbackHub) for (const n of notices) await state.feedbackHub.markRead(n.id).catch(() => {});
   updateFeedbackBadge(0);
 }
-async function sendFeedbackHub() {
-  const message = String($('feedbackMessage')?.value || '').trim();
-  if (!message) { add('ai', 'Please enter your feedback first.'); return; }
-  const type = $('feedbackType')?.value || 'improvement';
-  const btn = $('sendFeedback');
-  if (btn) { btn.disabled = true; btn.textContent = 'Sending…'; }
-  try {
-    const result = await api('/api/feedback/submit', {
-      method: 'POST',
-      body: JSON.stringify({
-        type,
-        message,
-        anonymousId: state.feedbackHub?.anonymousId || '',
-        installedAt: state.feedbackHub?.installedAt || '',
-        locale: state.settings?.locale || 'en',
-      }),
-    });
-    if (result?.ok) {
-      $('feedbackMessage').value = '';
-      add('system', 'Feedback sent. Thank you.');
-      await syncFeedbackHub();
-      return;
-    }
-    throw new Error(result?.error || 'Feedback could not be sent.');
-  } catch (err) {
-    if (state.feedbackHub) {
-      const queued = await state.feedbackHub.sendFeedback({ type, message });
-      if (queued?.queued) {
-        $('feedbackMessage').value = '';
-        add('system', 'Feedback saved. It will be sent when the Hub is reachable.');
-        return;
-      }
-    }
-    add('ai', 'Feedback could not be sent. You can open the Feedback form directly.');
-    window.open('http://14.176.78.46:8090/feedback', '_blank', 'noopener');
-  } finally {
-    if (btn) { btn.disabled = false; btn.textContent = 'Send feedback'; }
-  }
-}
 
 function openSupport() {
   $('supportModal').hidden = false;
@@ -1132,7 +1093,7 @@ function bindSupport() {
 }
 bindSupport();
 $('closeFeedback') && ($('closeFeedback').onclick = () => { $('feedbackModal').hidden = true; });
-$('sendFeedback') && ($('sendFeedback').onclick = sendFeedbackHub);
+$('feedbackFrame') && ($('feedbackFrame').src = 'http://14.176.78.46:8090/feedback');
 
 Promise.all([loadStatus(), loadProjects(), loadSettings()]).then(async () => {
   const id = savedProjectId();

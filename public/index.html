@@ -243,21 +243,16 @@
 </div>
 
   </div>
-  <!-- FEEDBACK MODAL -->
+  <!-- FEEDBACK MODAL: use the real Feedback Hub form directly -->
   <div id="feedbackModal" class="modal" hidden>
-    <div class="sheet">
+    <div class="sheet feedbackSheet">
       <div class="sheetHead">
         <h2>💬 Feedback</h2>
         <button id="closeFeedback" class="iconBtn" type="button">✕</button>
       </div>
-      <p class="info">Send a bug, idea, or improvement. Feedback is queued locally if the Hub is temporarily offline.</p>
-      <label class="feedbackField">Type
-        <select id="feedbackType"><option value="bug">Bug</option><option value="improvement" selected>Improvement</option><option value="question">Question</option></select>
-      </label>
-      <label class="feedbackField">Message
-        <textarea id="feedbackMessage" rows="5" placeholder="Tell us what happened…"></textarea>
-      </label>
-      <button id="sendFeedback" class="primary wide" type="button">Send feedback</button>
+      <p class="info">This is the official Feedback Hub form. Submit directly to the Hub.</p>
+      <iframe id="feedbackFrame" title="SoloHost Feedback Hub" src="http://14.176.78.46:8090/feedback" loading="lazy" referrerpolicy="no-referrer" class="feedbackFrame"></iframe>
+      <a class="primary wide feedbackOpenLink" href="http://14.176.78.46:8090/feedback" target="_blank" rel="noopener">Open full form ↗</a>
       <div id="feedbackNotices" class="info compactInfo" hidden></div>
     </div>
   </div>
