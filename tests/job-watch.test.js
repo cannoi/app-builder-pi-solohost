@@ -17,8 +17,17 @@ test('watching a recovered or duplicate job restores the visible busy state', ()
   assert.match(source, /if \(e\.jobId\) \{[\s\S]*watch\(e\.jobId\);/);
 });
 
+test('refreshing a project asks the authoritative current-job endpoint before falling back to activity history', () => {
+  const open = source.indexOf('async function openProject');
+  const end = source.indexOf('async function sendMessage', open);
+  const block = source.slice(open, end);
+  assert.match(block, /api\(\`\/api\/jobs\/current\?projectId=/);
+  assert.match(block, /watch\(currentJob\.jobId/);
+});
+
 test('opening a project with a running job resumes its watcher', () => {
-  assert.match(source, /const running = activity\.items\?\.find\(\(x\) => x\.running\);/);
+  assert.match(source, /const currentJob = await api/);
+  assert.match(source, /const running = !currentJob\?\.active \? activity\.items\?\.find\(\(x\) => x\.running\) : null;/);
   assert.match(source, /if \(running\) \{[\s\S]*watch\(running\.id\);/);
 });
 
@@ -46,4 +55,11 @@ test('step-level done events must not finish the whole job', () => {
   const queue = fs.readFileSync(new URL('../src/jobs/queue.js', import.meta.url), 'utf8');
   assert.match(queue, /Event status "done" means a step finished/);
   assert.match(queue, /const terminal = current && /);
+});
+
+test('active jobs keep a persisted heartbeat during long-running handlers', () => {
+  const queue = fs.readFileSync(new URL('../src/jobs/queue.js', import.meta.url), 'utf8');
+  assert.match(queue, /const heartbeat = setInterval/);
+  assert.match(queue, /UPDATE jobs SET updated_at/);
+  assert.match(queue, /clearInterval\(heartbeat\)/);
 });

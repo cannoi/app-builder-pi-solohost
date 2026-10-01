@@ -9,11 +9,13 @@ import { isSafeRelPath } from '../src/utils/fsx.js';
 
 test('config loads without crashing when optional keys are missing', () => {
   const cfg = loadConfig();
-  assert.equal(cfg.version, '1.4.46');
+  assert.equal(cfg.version, '1.4.59');
   assert.equal(cfg.runtime.mode, 'auto');
   assert.equal(cfg.ai.provider, 'deepseek');
   assert.equal(cfg.ai.deepseekModel, 'deepseek-v4-flash');
   assert.equal(cfg.docker, undefined);
+  assert.equal(cfg.feedbackHub.appId, 'app-builder-pi-solohost');
+  assert.equal(publicConfig(cfg).feedbackHub.configured, false);
   const pub = publicConfig(cfg);
   assert.equal(typeof pub.ai.geminiConfigured, 'boolean');
   const v = validateConfig(cfg);

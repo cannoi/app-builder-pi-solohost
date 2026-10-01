@@ -66,3 +66,14 @@ test('hub stores a selected model pair without AUTO/PROVIDER/MANUAL modes', () =
   assert.equal(state.mode, 'SELECTED');
   assert.deepEqual(state.preferredModels, ['gemini-a', 'deepseek-b']);
 });
+
+test('Feedback Hub integration is optional and never embeds an ingest token', () => {
+  const html = fs.readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
+  const js = fs.readFileSync(new URL('../public/app.js', import.meta.url), 'utf8');
+  assert.match(html, /id="feedbackBtn"/);
+  assert.match(html, /id="feedbackBadge"/);
+  assert.match(html, /id="feedbackHubUrl"/);
+  assert.match(js, /SHFH\.create/);
+  assert.match(js, /ingestToken:\s*''/);
+  assert.doesNotMatch(js, /cannoi_[A-Za-z0-9]{20,}/);
+});

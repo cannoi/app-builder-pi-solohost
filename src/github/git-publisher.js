@@ -6,6 +6,7 @@ import path from 'node:path';
 import { listFiles } from '../utils/fsx.js';
 import { scanProject } from '../security/scanner.js';
 import { createOctokit, redactGitError } from './octokit-client.js';
+import { prepareReleaseContract } from '../release/preflight.js';
 
 const exec = promisify(execFile);
 const LFS_BYTES = 50 * 1024 * 1024;
@@ -172,6 +173,9 @@ export async function publishWithGit({ token, repoName, sourceDir, version = '0.
     const { octokit, login } = await authenticateGitHub(token);
     const owner = login;
     const name = safeRepoName(repoName);
+    step('preflight', 'Preparing only missing SoloHost release files…');
+    const preflight = await prepareReleaseContract({ sourceDir, owner, repo: name, version, project: { slug: name } });
+    if (preflight.changed.length) step('preflight', `✓ Added ${preflight.changed.join(', ')} without overwriting existing app files.`);
     step('validating', 'Validating…');
     const validation = await validateReleaseProject(sourceDir);
     report.files = validation.files.length;

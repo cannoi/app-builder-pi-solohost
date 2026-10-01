@@ -39,7 +39,7 @@ function professionalBlurb(project) {
   return `${project.name}: ${short}${idea.length > 140 ? '…' : ''}`;
 }
 
-async function detectContainerPort(sourceDir) {
+export async function detectContainerPort(sourceDir) {
   const files = [];
   const add = async (name) => { const text = await fs.readFile(path.join(sourceDir, name), 'utf8').catch(() => ''); if (text) files.push(text); };
   await add('Dockerfile');

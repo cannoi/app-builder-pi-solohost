@@ -8,6 +8,10 @@ export function loadConfig() {
     templatesDir: process.env.TEMPLATES_DIR || './templates',
     logLevel: process.env.LOG_LEVEL || 'info',
     locale: process.env.APP_LOCALE || 'en',
+    feedbackHub: {
+      url: String(process.env.FEEDBACK_HUB_URL || '').replace(/\/$/, ''),
+      appId: process.env.FEEDBACK_APP_ID || 'app-builder-pi-solohost',
+    },
     version: '1.4.59',
     runtime: {
       mode: process.env.PREVIEW_MODE || 'auto',
@@ -50,5 +54,6 @@ export function publicConfig(cfg) {
     engine: { provider: cfg.runtime?.podman?.apiUrl ? 'podman-api' : 'native-preview', mode: cfg.runtime?.mode || 'auto', configured: true, containerSandbox: Boolean(cfg.runtime?.podman?.apiUrl), dockerSocket: false },
     ai: { provider: cfg.ai.provider, mode: cfg.ai.mode, geminiConfigured: Boolean(cfg.ai.geminiKey), deepseekConfigured: Boolean(cfg.ai.deepseekKey), deepseekModel: cfg.ai.deepseekModel },
     github: { configured: Boolean(cfg.github.token && cfg.github.owner), owner: cfg.github.owner || null },
+    feedbackHub: { configured: Boolean(cfg.feedbackHub?.url), url: cfg.feedbackHub?.url || '', appId: cfg.feedbackHub?.appId || 'app-builder-pi-solohost' },
   };
 }

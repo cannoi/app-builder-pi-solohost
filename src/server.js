@@ -103,6 +103,8 @@ function hydrateSecrets(cfg, db) {
   if (saved.DEEPSEEK_MODEL) { process.env.DEEPSEEK_MODEL = normalizeDeepSeekModel(saved.DEEPSEEK_MODEL); cfg.ai.deepseekModel = normalizeDeepSeekModel(saved.DEEPSEEK_MODEL); }
   if (saved.GITHUB_TOKEN) { process.env.GITHUB_TOKEN = saved.GITHUB_TOKEN; cfg.github.token = saved.GITHUB_TOKEN; }
   if (saved.GITHUB_OWNER) { process.env.GITHUB_OWNER = saved.GITHUB_OWNER; cfg.github.owner = saved.GITHUB_OWNER; }
+  if (saved.FEEDBACK_HUB_URL) { process.env.FEEDBACK_HUB_URL = saved.FEEDBACK_HUB_URL; cfg.feedbackHub.url = String(saved.FEEDBACK_HUB_URL).replace(/\/$/, ''); }
+  if (saved.FEEDBACK_APP_ID) { process.env.FEEDBACK_APP_ID = saved.FEEDBACK_APP_ID; cfg.feedbackHub.appId = String(saved.FEEDBACK_APP_ID); }
   const podmanUrl = saved.PODMAN_API_URL || saved.SANDBOX_PODMAN_API_URL || saved.CONTAINER_SANDBOX_PODMAN_API_URL || '';
   if (podmanUrl) { process.env.PODMAN_API_URL = podmanUrl; cfg.runtime.podman.apiUrl = podmanUrl; }
 }

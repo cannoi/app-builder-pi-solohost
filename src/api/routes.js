@@ -75,7 +75,7 @@ export function registerRoutes(r, app) {
 
   r.post('/api/settings', async (req, res) => {
     const body = req.body || {};
-    const allowed = ['AI_PROVIDER', 'AI_MODE', 'GEMINI_API_KEY', 'GEMINI_MODEL', 'DEEPSEEK_API_KEY', 'DEEPSEEK_MODEL', 'GITHUB_TOKEN', 'GITHUB_OWNER', 'APP_LOCALE', 'PODMAN_API_URL', 'SANDBOX_PODMAN_API_URL', 'CONTAINER_SANDBOX_PODMAN_API_URL'];
+    const allowed = ['AI_PROVIDER', 'AI_MODE', 'GEMINI_API_KEY', 'GEMINI_MODEL', 'DEEPSEEK_API_KEY', 'DEEPSEEK_MODEL', 'GITHUB_TOKEN', 'GITHUB_OWNER', 'APP_LOCALE', 'PODMAN_API_URL', 'SANDBOX_PODMAN_API_URL', 'CONTAINER_SANDBOX_PODMAN_API_URL', 'FEEDBACK_HUB_URL', 'FEEDBACK_APP_ID'];
     const applied = [];
     const stored = db.setting('runtimeSecrets', {}) || {};
     const oldGeminiKey = stored.GEMINI_API_KEY || cfg.ai.geminiKey || '';
@@ -84,6 +84,13 @@ export function registerRoutes(r, app) {
     const oldDeepseekModel = String(cfg.ai.deepseekModel || '');
     for (const key of allowed) {
       // Empty secret fields mean "keep the existing value", not "erase it".
+      // Non-secret Feedback Hub settings are allowed to be cleared explicitly.
+      if ((key === 'FEEDBACK_HUB_URL' || key === 'FEEDBACK_APP_ID') && body[key] != null && String(body[key]).trim() === '') {
+        delete process.env[key];
+        delete stored[key];
+        applied.push(key);
+        continue;
+      }
       if (body[key] != null && String(body[key]) !== '') {
         process.env[key] = String(body[key]);
         stored[key] = process.env[key];
@@ -104,6 +111,8 @@ export function registerRoutes(r, app) {
     cfg.github.token = process.env.GITHUB_TOKEN || cfg.github.token;
     cfg.github.owner = process.env.GITHUB_OWNER || cfg.github.owner;
     cfg.runtime.podman.apiUrl = process.env.PODMAN_API_URL || process.env.SANDBOX_PODMAN_API_URL || process.env.CONTAINER_SANDBOX_PODMAN_API_URL || cfg.runtime.podman.apiUrl || '';
+    cfg.feedbackHub.url = String(process.env.FEEDBACK_HUB_URL || cfg.feedbackHub.url || '').replace(/\/$/, '');
+    cfg.feedbackHub.appId = String(process.env.FEEDBACK_APP_ID || cfg.feedbackHub.appId || 'app-builder-pi-solohost');
     runner.configurePodman?.(cfg.runtime.podman.apiUrl);
     ai.refresh();
 

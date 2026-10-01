@@ -1,5 +1,5 @@
 const $ = (id) => document.getElementById(id);
-const state = { projectId: null, projects: [], busy: false, jobId: null, poll: null, pollFailures: 0, seenEvents: 0, files: [], settings: null, pollInFlight: false, pollInFlightJobId: null, watchSeq: 0, lastNotice: '' };
+const state = { projectId: null, projects: [], busy: false, jobId: null, poll: null, pollFailures: 0, seenEvents: 0, files: [], settings: null, feedbackHub: null, feedbackSnapshot: null, feedbackSync: null, pollInFlight: false, pollInFlightJobId: null, watchSeq: 0, lastNotice: '' };
 
 async function api(url, options = {}) {
   const r = await fetch(url, { headers: { 'Content-Type': 'application/json', ...(options.headers || {}) }, ...options });
@@ -225,8 +225,15 @@ async function openProject(id, announce = true) {
   const p = await api(`/api/projects/${id}`);
   if (announce) $('chat').innerHTML = '';
   const recent = Array.isArray(p.releases) ? p.releases : [];
+  // Refresh/reconnect must use the authoritative current-job endpoint first. The
+  // activity list is historical and can lag while a long Publish is still running.
+  const currentJob = await api(`/api/jobs/current?projectId=${encodeURIComponent(id)}`).catch(() => null);
+  if (currentJob?.active && currentJob.jobId) {
+    add('system', `↻ ${currentJob.type || 'action'} is still running · ${currentJob.stage || 'working'}`);
+    watch(currentJob.jobId);
+  }
   const activity = await api(`/api/activity?projectId=${encodeURIComponent(id)}`).catch(() => ({items:[]}));
-  const running = activity.items?.find((x) => x.running);
+  const running = !currentJob?.active ? activity.items?.find((x) => x.running) : null;
   if (running) { add('system', `↻ ${running.type} is still running · ${running.stage || 'working'}`); watch(running.id); }
   const last = activity.items?.find((x) => !x.running);
   if (last?.status === 'failed' && last.error) add('system', `⚠ Last issue: ${String(last.error).split('\n')[0].slice(0, 220)}`);
@@ -423,6 +430,7 @@ async function startSandboxDemo() {
 async function quick(action, extraPayload = {}) {
   if (state.busy) return;
   if (action === 'support') return openSupport();
+  if (action === 'feedback') return openFeedback();
   if (action === 'script-run') return downloadScript('run');
   if (action === 'script-github') return downloadScript('github');
   if (action === 'docker') return inspectDocker();
@@ -925,13 +933,16 @@ async function loadSettings() {
   try {
     state.settings = await api('/api/settings');
     $('setGhOwner').value = state.settings.github?.owner || '';
+    if ($('feedbackHubUrl')) $('feedbackHubUrl').value = state.settings.feedbackHub?.url || '';
+    if ($('feedbackAppId')) $('feedbackAppId').value = state.settings.feedbackHub?.appId || 'app-builder-pi-solohost';
+    await initFeedbackHub();
     $('settingsState').textContent = '';
     await loadHub();
   } catch {}
 }
 async function saveSettings() {
   try {
-    await api('/api/settings', { method: 'POST', body: JSON.stringify({ GITHUB_TOKEN: $('setGhToken').value, GITHUB_OWNER: $('setGhOwner').value, setupComplete: true }) });
+    await api('/api/settings', { method: 'POST', body: JSON.stringify({ GITHUB_TOKEN: $('setGhToken').value, GITHUB_OWNER: $('setGhOwner').value, FEEDBACK_HUB_URL: $('feedbackHubUrl')?.value || '', FEEDBACK_APP_ID: $('feedbackAppId')?.value || 'app-builder-pi-solohost', setupComplete: true }) });
     $('setGhToken').value = '';
     $('settingsState').textContent = 'Saved.';
     await loadStatus(); await loadHub();
@@ -1013,6 +1024,63 @@ $('chat').addEventListener('scroll', maybeJump);
 setBusy(false, 'Ready');
 $('chat').addEventListener('click', (e) => { const b = e.target.closest('[data-container]'); if (b) inspectNamedContainer(b.dataset.container); });
 
+async function initFeedbackHub() {
+  if (!window.SHFH) return;
+  const hubUrl = String(state.settings?.feedbackHub?.url || '').replace(/\/$/, '');
+  const appId = state.settings?.feedbackHub?.appId || 'app-builder-pi-solohost';
+  if (!hubUrl) { state.feedbackHub = null; updateFeedbackBadge(0); return; }
+  try {
+    state.feedbackHub = window.SHFH.create({ hubUrl, ingestToken: '', appId, appName: 'App Builder — Pi SoloHost', version: state.settings?.version || '1.4.59', platform: 'solohost', locale: state.settings?.locale || 'en' });
+    await syncFeedbackHub();
+    if (!state.feedbackSync) state.feedbackSync = setInterval(syncFeedbackHub, 60000);
+    state.feedbackSync.unref?.();
+  } catch {
+    state.feedbackHub = null;
+    updateFeedbackBadge(0);
+  }
+}
+async function syncFeedbackHub() {
+  if (!state.feedbackHub) return;
+  try {
+    const snap = await state.feedbackHub.sync();
+    state.feedbackSnapshot = snap;
+    updateFeedbackBadge((snap.notices || []).length);
+  } catch {}
+}
+function updateFeedbackBadge(count) {
+  const badge = $('feedbackBadge');
+  if (!badge) return;
+  const n = Math.max(0, Number(count) || 0);
+  badge.hidden = n === 0;
+  badge.textContent = n > 99 ? '99+' : String(n);
+}
+async function openFeedback() {
+  const modal = $('feedbackModal');
+  if (!modal) return;
+  modal.hidden = false;
+  await syncFeedbackHub();
+  const notices = state.feedbackSnapshot?.notices || [];
+  const box = $('feedbackNotices');
+  if (box) {
+    box.hidden = !notices.length;
+    box.textContent = notices.length ? notices.map((n) => `🔔 ${n.title || 'Feedback update'}\n${n.body || ''}`).join('\n\n') : '';
+  }
+  if (state.feedbackHub) for (const n of notices) await state.feedbackHub.markRead(n.id).catch(() => {});
+  updateFeedbackBadge(0);
+}
+async function sendFeedbackHub() {
+  const message = String($('feedbackMessage')?.value || '').trim();
+  if (!message) return;
+  if (!state.feedbackHub) { add('ai', 'Feedback Hub is not configured yet. Open Settings and add the Hub URL.'); return; }
+  const type = $('feedbackType')?.value || 'improvement';
+  const result = await state.feedbackHub.sendFeedback({ type, message });
+  if (result?.ok || result?.queued) {
+    $('feedbackMessage').value = '';
+    add('system', result.queued ? 'Feedback queued. It will be sent when the Hub is reachable.' : 'Feedback sent. Thank you.');
+    await syncFeedbackHub();
+  } else add('ai', result?.error || 'Feedback could not be sent.');
+}
+
 function openSupport() {
   $('supportModal').hidden = false;
   add('ai', 'Thank you for supporting App Builder — Pi SoloHost. Choose Pi Wallet or MB Bank, copy the details, and send what you can.');
@@ -1036,6 +1104,8 @@ function bindSupport() {
   });
 }
 bindSupport();
+$('closeFeedback') && ($('closeFeedback').onclick = () => { $('feedbackModal').hidden = true; });
+$('sendFeedback') && ($('sendFeedback').onclick = sendFeedbackHub);
 
 Promise.all([loadStatus(), loadProjects(), loadSettings()]).then(async () => {
   const id = savedProjectId();

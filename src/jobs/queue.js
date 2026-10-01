@@ -61,9 +61,10 @@ export class JobQueue {
     const current = this.db.get('SELECT status FROM jobs WHERE id = ?', jobId);
     const terminal = current && ['done', 'failed', 'cancelled'].includes(current.status);
     if (!terminal) {
+      const nextStatus = status === 'queued' ? 'queued' : 'running';
       this.db.run(
         'UPDATE jobs SET stage=?, status=?, updated_at=? WHERE id=?',
-        stage, 'running', new Date().toISOString(), jobId,
+        stage, nextStatus, new Date().toISOString(), jobId,
       );
     }
   }
@@ -148,6 +149,16 @@ export class JobQueue {
     }
     this.active.add(job.id);
     this.emit(job.id, job.stage || 'running', 'running', 'Working…');
+    // Long Publish/Upgrade jobs may spend minutes waiting on GitHub Actions. Keep
+    // the persisted owner alive so refresh/reconnect can always recover the same job
+    // instead of treating a quiet job as lost or starting a duplicate.
+    const heartbeat = setInterval(() => {
+      const current = this.db.get('SELECT status FROM jobs WHERE id = ?', job.id);
+      if (current && ['queued', 'running'].includes(current.status)) {
+        this.db.run('UPDATE jobs SET updated_at=? WHERE id=?', new Date().toISOString(), job.id);
+      }
+    }, 5000);
+    heartbeat.unref?.();
     try {
       const result = await handler(job, {
         emit: (stage, status, message) => this.emit(job.id, stage, status, message),
@@ -159,6 +170,7 @@ export class JobQueue {
       this.fail(job.id, err.message);
       if (this.history && job.payload?.projectId) Promise.resolve(this.history({ ...job, error: err.message }, 'failed')).catch(() => {});
     } finally {
+      clearInterval(heartbeat);
       this.active.delete(job.id);
     }
   }

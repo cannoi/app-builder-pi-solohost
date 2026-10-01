@@ -179,6 +179,39 @@ test('empty generated project is rejected before GitHub upload', async () => {
   assert.match(result.errors.join(' '), /empty|Dockerfile|source/i);
 });
 
+test('release preflight creates a minimal Dockerfile only for a provable Node start script', async () => {
+  const { prepareReleaseContract } = await import('../src/release/preflight.js');
+  const root = '/tmp/paf-release-preflight-dockerfile';
+  fs.rmSync(root, { recursive: true, force: true });
+  fs.mkdirSync(root, { recursive: true });
+  fs.writeFileSync(`${root}/package.json`, JSON.stringify({ name: 'demo', scripts: { start: 'node server.js' }, main: 'server.js' }));
+  const result = await prepareReleaseContract({ sourceDir: root, owner: 'cannoi', repo: 'demo', version: '1.2.3' });
+  assert.equal(result.ok, true);
+  assert.equal(result.changed.includes('Dockerfile'), true);
+  assert.match(fs.readFileSync(`${root}/Dockerfile`, 'utf8'), /FROM node:24-alpine/);
+  assert.match(fs.readFileSync(`${root}/Dockerfile`, 'utf8'), /CMD \[\"sh\",\"-lc\",\"node server\.js\"\]/);
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+test('release preflight creates missing SoloHost compose without overwriting existing app files', async () => {
+  const { prepareReleaseContract } = await import('../src/release/preflight.js');
+  const root = '/tmp/paf-release-preflight-compose';
+  fs.rmSync(root, { recursive: true, force: true });
+  fs.mkdirSync(root, { recursive: true });
+  fs.writeFileSync(`${root}/Dockerfile`, 'FROM node:24-alpine\nEXPOSE 8080\n');
+  fs.writeFileSync(`${root}/package.json`, JSON.stringify({ name: 'demo', scripts: { start: 'node server.js' } }));
+  const result = await prepareReleaseContract({ sourceDir: root, owner: 'cannoi', repo: 'demo', version: '1.2.3', project: { slug: 'demo', name: 'Demo', idea: 'Demo app' } });
+  assert.equal(result.ok, true);
+  assert.equal(result.changed.includes('docker-compose.yml'), true);
+  const compose = fs.readFileSync(`${root}/docker-compose.yml`, 'utf8');
+  assert.match(compose, /ghcr\.io\/cannoi\/demo:1\.2\.3/);
+  assert.match(compose, /127\.0\.0\.1:18080:8080/);
+  const second = await prepareReleaseContract({ sourceDir: root, owner: 'cannoi', repo: 'demo', version: '9.9.9', project: { slug: 'demo' } });
+  assert.equal(second.changed.length, 0);
+  assert.match(fs.readFileSync(`${root}/docker-compose.yml`, 'utf8'), /demo:1\.2\.3/);
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
 test('GitHub publisher validates required SoloHost files', async () => {
   const { validateReleaseProject } = await import('../src/github/git-publisher.js');
   const root = '/tmp/paf-validate-release';
