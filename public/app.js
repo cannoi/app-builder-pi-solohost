@@ -1,8 +1,7 @@
 const $ = (id) => document.getElementById(id);
-const FEEDBACK_HUB_URL = 'http://14.176.78.46:8090';
 const FEEDBACK_APP_ID = 'app-builder-pi-solohost';
 const FEEDBACK_APP_NAME = 'App Builder — Pi SoloHost';
-const state = { projectId: null, projects: [], busy: false, jobId: null, poll: null, pollFailures: 0, seenEvents: 0, files: [], settings: null, feedbackHub: null, feedbackSnapshot: null, feedbackSync: null, pollInFlight: false, pollInFlightJobId: null, watchSeq: 0, lastNotice: '' };
+const state = { projectId: null, projects: [], busy: false, jobId: null, poll: null, pollFailures: 0, seenEvents: 0, files: [], settings: null, feedbackConfig: null, feedbackHub: null, feedbackSnapshot: null, feedbackSync: null, pollInFlight: false, pollInFlightJobId: null, watchSeq: 0, lastNotice: '' };
 
 async function api(url, options = {}) {
   const r = await fetch(url, { headers: { 'Content-Type': 'application/json', ...(options.headers || {}) }, ...options });
@@ -411,7 +410,7 @@ async function startUpgrade() {
   } catch (e) { handleJobActionError(e); }
 }
 async function askUpgradeRequest() {
-  const request = await askSafeAction('UPGRADE WORKSHOP', 'Describe the upgrade, or attach a Rule file (.rule .yaml .json .md).');
+  const request = await askUpgradeChoice();
   if (!request) return;
   setBusy(true, 'Working toward your requested upgrade…');
   try {
@@ -419,9 +418,46 @@ async function askUpgradeRequest() {
     for (const file of request.files || []) {
       if (/\.(rule|ya?ml|json|md)$/i.test(file.name || '')) ruleText += `${await file.text()}\n`;
     }
-    const r = await api(`/api/projects/${state.projectId}/upgrade/request`, { method: 'POST', body: JSON.stringify({ request: request.text, ruleText }) });
+    const r = await api(`/api/projects/${state.projectId}/upgrade/request`, { method: 'POST', body: JSON.stringify({ request: request.text, ruleText, modulePack: request.modulePack || '' }) });
     watch(r.jobId);
   } catch (e) { handleJobActionError(e); }
+}
+function askUpgradeChoice() {
+  return new Promise((resolve) => {
+    const wrap = document.createElement('div'); wrap.className = 'modal';
+    wrap.innerHTML = `<div class="sheet"><div class="sheetHead"><h2>UPGRADE</h2><button class="iconBtn" type="button">✕</button></div><p class="info">Choose a module or describe a focused upgrade. Module installation is checkpointed and rolled back if verification fails.</p><div class="actionCard"><button type="button" data-pack="ai">✦ Add AI App Kernel</button><button type="button" data-pack="feedback">💬 Add Feedback Hub</button></div><textarea rows="4" style="width:100%;box-sizing:border-box" placeholder="Or describe the upgrade…"></textarea><div class="inputRow" style="margin-top:10px"><button type="button" class="attach modalAttach" title="Attach Rule files">📎</button><input class="modalFiles" type="file" multiple hidden accept=".zip,.txt,.md,.json,.yaml,.yml,.rule,.js,.ts,.html,.css"><span class="modalFileNames muted">No files</span></div><div class="actionCard"><button class="primary wide" type="button">Send</button></div></div>`;
+    document.body.appendChild(wrap);
+    const input = wrap.querySelector('textarea');
+    const fileInput = wrap.querySelector('.modalFiles');
+    const close = () => { wrap.remove(); resolve(null); };
+    wrap.querySelector('.iconBtn').onclick = close;
+    wrap.querySelector('.modalAttach').onclick = () => fileInput.click();
+    fileInput.onchange = () => {
+      const files = Array.from(fileInput.files || []);
+      wrap.querySelector('.modalFileNames').textContent = files.length ? files.map((file) => `📎 ${file.name}`).join(' · ') : 'No files';
+    };
+    wrap.querySelectorAll('[data-pack]').forEach((button) => {
+      button.onclick = () => {
+        const modulePack = button.dataset.pack;
+        wrap.remove();
+        resolve({
+          modulePack,
+          text: modulePack === 'feedback'
+            ? 'Integrate Feedback. Ask an authorized operator for Hub URL, Hub ID, and ingest token at runtime; never bake or persist these values.'
+            : 'Integrate the supplied AI App Kernel using the existing app authorization and database.',
+          files: [],
+        });
+      };
+    });
+    wrap.querySelector('.primary').onclick = () => {
+      const files = Array.from(fileInput.files || []);
+      const text = input.value.trim();
+      if (!text && !files.length) { input.focus(); return; }
+      wrap.remove();
+      resolve({ text: text || 'Apply the attached Rule to this app.', files, modulePack: '' });
+    };
+    input.focus();
+  });
 }
 function renderUpgradeBaseline(result) {
   const health = result.baseline?.health?.status || result.knowledge?.runtime?.status || 'HEALTHY';
@@ -1065,23 +1101,28 @@ $('chat').addEventListener('click', (e) => { const b = e.target.closest('[data-c
 async function loadFeedbackConfig() {
   try {
     const cfg = await api('/api/shfh-config');
-    if (cfg && cfg.enabled !== false) state.feedbackConfig = cfg;
+    state.feedbackConfig = cfg && cfg.enabled !== false ? cfg : null;
   } catch {
-    state.feedbackConfig = { hubUrl: FEEDBACK_HUB_URL, appId: FEEDBACK_APP_ID, appName: FEEDBACK_APP_NAME, ingestToken: '', formUrl: FEEDBACK_HUB_URL + '/feedback', version: '1.4.61', platform: 'solohost', enabled: true };
+    state.feedbackConfig = null;
   }
   return state.feedbackConfig;
 }
 async function initFeedbackHub() {
-  if (!window.SHFH) return;
   const cfg = state.feedbackConfig || await loadFeedbackConfig();
-  const hubUrl = cfg?.hubUrl || FEEDBACK_HUB_URL;
-  const appId = cfg?.appId || FEEDBACK_APP_ID;
-  if (!hubUrl || !appId || cfg?.enabled === false) { state.feedbackHub = null; updateFeedbackBadge(0); return; }
+  const hubUrl = String($('feedbackHubUrl')?.value || '').trim();
+  const hubId = String($('feedbackHubId')?.value || '').trim();
+  const ingestToken = String($('feedbackIngestToken')?.value || '').trim();
+  if (!window.SHFH || !cfg || !hubUrl || !hubId || !ingestToken) {
+    state.feedbackHub = null;
+    updateFeedbackBadge(0);
+    return false;
+  }
   try {
     state.feedbackHub = window.SHFH.create({
       hubUrl,
-      ingestToken: cfg.ingestToken || '',
-      appId,
+      hubId,
+      ingestToken,
+      appId: cfg.appId || FEEDBACK_APP_ID,
       appName: cfg.appName || FEEDBACK_APP_NAME,
       version: cfg.version || state.settings?.version || '1.4.61',
       platform: cfg.platform || 'solohost',
@@ -1090,9 +1131,11 @@ async function initFeedbackHub() {
     await syncFeedbackHub();
     if (!state.feedbackSync) state.feedbackSync = setInterval(syncFeedbackHub, 60000);
     state.feedbackSync.unref?.();
+    return true;
   } catch {
     state.feedbackHub = null;
     updateFeedbackBadge(0);
+    return false;
   }
 }
 async function syncFeedbackHub() {
@@ -1113,16 +1156,15 @@ function updateFeedbackBadge(count) {
 async function openFeedback() {
   const modal = $('feedbackModal');
   if (!modal) return;
-  modal.hidden = false;
-  await syncFeedbackHub();
-  const notices = state.feedbackSnapshot?.notices || [];
-  const box = $('feedbackNotices');
-  if (box) {
-    box.hidden = !notices.length;
-    box.textContent = notices.length ? notices.map((n) => `🔔 ${n.title || 'Feedback update'}\n${n.body || ''}`).join('\n\n') : '';
-  }
-  if (state.feedbackHub) for (const n of notices) await state.feedbackHub.markRead(n.id).catch(() => {});
+  if (state.feedbackSync) clearInterval(state.feedbackSync);
+  state.feedbackSync = null;
+  state.feedbackHub = null;
+  state.feedbackSnapshot = null;
+  $('feedbackHubUrl').value = '';
+  $('feedbackHubId').value = '';
+  $('feedbackIngestToken').value = '';
   updateFeedbackBadge(0);
+  modal.hidden = false;
 }
 async function sendFeedbackHub() {
   const message = String($('feedbackMessage')?.value || '').trim();
@@ -1131,19 +1173,28 @@ async function sendFeedbackHub() {
   const btn = $('sendFeedback');
   if (btn) { btn.disabled = true; btn.textContent = 'Sending…'; }
   const cfg = state.feedbackConfig || await loadFeedbackConfig();
-  const formUrl = cfg?.formUrl || (FEEDBACK_HUB_URL + '/feedback');
+  let formUrl = '';
   try {
-    if (!state.feedbackHub) await initFeedbackHub();
-    let result = null;
-    if (state.feedbackHub) result = await state.feedbackHub.sendFeedback({ type, message });
-    if (!result?.ok) {
-      result = await api('/api/feedback/submit', { method: 'POST', body: JSON.stringify({
-        type, message,
-        anonymousId: state.feedbackHub?.anonymousId || '',
-        installedAt: state.feedbackHub?.installedAt || '',
-        locale: state.settings?.locale || 'en',
-      }) });
+    const hubUrl = String($('feedbackHubUrl')?.value || '').trim();
+    const hubId = String($('feedbackHubId')?.value || '').trim();
+    if (!hubUrl || !hubId || !$('feedbackIngestToken')?.value.trim()) {
+      throw new Error('Enter the Hub URL, Hub ID, and ingest token for this session.');
     }
+    const parsedHub = new URL(hubUrl);
+    if (parsedHub.protocol !== 'https:' || parsedHub.username || parsedHub.password || parsedHub.search || parsedHub.hash || parsedHub.pathname !== '/') {
+      throw new Error('Use an HTTPS Hub origin without credentials, a path, query parameters, or a fragment.');
+    }
+    formUrl = new URL('/feedback', parsedHub).href;
+    if (!cfg || cfg.enabled === false) throw new Error('Feedback configuration is unavailable.');
+    if (!state.feedbackHub && !await initFeedbackHub()) throw new Error('Feedback Hub could not be initialized. Check the Hub details.');
+    const notices = state.feedbackSnapshot?.notices || [];
+    const box = $('feedbackNotices');
+    if (box) {
+      box.hidden = !notices.length;
+      box.textContent = notices.length ? notices.map((n) => `🔔 ${n.title || 'Feedback update'}\n${n.body || ''}`).join('\n\n') : '';
+    }
+    for (const notice of notices) await state.feedbackHub.markRead(notice.id).catch(() => {});
+    const result = await state.feedbackHub.sendFeedback({ type, message });
     if (result?.ok) {
       $('feedbackMessage').value = '';
       add('system', 'Feedback sent. Thank you.');
@@ -1157,8 +1208,8 @@ async function sendFeedbackHub() {
     }
     throw new Error(result?.error || 'Feedback could not be sent.');
   } catch (err) {
-    add('ai', 'Feedback Hub is unavailable. Opening the official form.');
-    window.open(formUrl, '_blank', 'noopener');
+    add('ai', err.message || 'Feedback Hub is unavailable.');
+    if (formUrl) window.open(formUrl, '_blank', 'noopener');
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = 'Send feedback'; }
   }
@@ -1187,7 +1238,19 @@ function bindSupport() {
   });
 }
 bindSupport();
-$('closeFeedback') && ($('closeFeedback').onclick = () => { $('feedbackModal').hidden = true; });
+$('closeFeedback') && ($('closeFeedback').onclick = () => {
+  $('feedbackModal').hidden = true;
+  if (state.feedbackSync) clearInterval(state.feedbackSync);
+  state.feedbackSync = null;
+  state.feedbackHub = null;
+  state.feedbackSnapshot = null;
+  $('feedbackHubUrl').value = '';
+  $('feedbackHubId').value = '';
+  $('feedbackIngestToken').value = '';
+  $('feedbackMessage').value = '';
+  $('feedbackNotices').hidden = true;
+  $('feedbackNotices').textContent = '';
+});
 $('sendFeedback') && ($('sendFeedback').onclick = sendFeedbackHub);
 $('signOut') && ($('signOut').onclick = async () => {
   try {

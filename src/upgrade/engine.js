@@ -621,7 +621,7 @@ export async function executeUpgradeRequest({ project, projects, snapshots, ai, 
   return terminal('ROLLED_BACK', { projectId: project.id, status: 'stopped', verificationFailure, brief }, verificationFailure || {});
 }
 
-export async function runRuleUpgrade({ project, projects, snapshots, ai, request = '', ruleText = '', emit = () => {}, validateRuntime = null, jobId = null }) {
+export async function runRuleUpgrade({ project, projects, snapshots, ai, request = '', ruleText = '', emit = () => {}, validateRuntime = null, jobId = null, moduleStage = null }) {
   const parsed = parseRule(ruleText || request);
   if (!parsed.valid) throw new Error(parsed.error);
 
@@ -630,6 +630,13 @@ export async function runRuleUpgrade({ project, projects, snapshots, ai, request
   const execution = normalizeExecution(parsed.execution);
   const sourceDir = projects.sourceDir(project.slug);
   const operation = createRepairOperation({ jobId, projectId: project.id, kind: 'rule-upgrade', request: redactAiContext(request) });
+  if (moduleStage) operation.module_install = {
+    pack: moduleStage.pack,
+    snapshot_id: moduleStage.snapshotId,
+    workspace_hash_before: moduleStage.beforeHash,
+    workspace_hash_after: moduleStage.afterHash,
+    changed_files: [...moduleStage.changedFiles],
+  };
   operation.workspace_hash_before = await sourceFingerprint(sourceDir);
   const initialBaseline = await projects.readMetadata(project, 'upgrade-baseline.json', {});
   operation.github_source = initialBaseline.githubSource ? {

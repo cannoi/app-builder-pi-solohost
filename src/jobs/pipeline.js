@@ -1,4 +1,5 @@
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { SYSTEM, ideaPrompt, planPrompt, codePrompt, patchPrompt, reviewPrompt, chatPrompt, builderChatPrompt, descriptionPrompt } from '../ai/prompts.js';
 import { localAnalysis, localPlan, writeGeneratedFiles, scaffoldFromTemplate, writeGithubWorkflow } from '../projects/generator.js';
 import { importZipBuffer } from '../projects/importer.js';
@@ -28,6 +29,7 @@ import { diagnoseProject, buildAdvisorReport } from '../diagnose/project.js';
 import { refreshProjectBrain, rememberFailedRepair, wasRepairTried } from '../diagnose/brain.js';
 import { sourceFingerprint, sourceManifest, diffSourceManifest, verificationMatchesSource } from '../projects/source-version.js';
 import { isProtectedFilePath } from '../security/policy.js';
+import { stageUpgradeModule, rollbackUpgradeModule } from '../upgrade/module-staging.js';
 
 // Safety net only — does not change what inspectUpgrade does on the happy path.
 // Without this, a slow/unusual imported repo (e.g. a hung install/test step)
@@ -166,14 +168,116 @@ export function registerPipeline(app) {
     });
     emit('baseline', 'done', `Baseline created from ${syncedSource.owner}/${syncedSource.repo}@${syncedSource.commitSha?.slice(0, 12) || 'latest'}.`);
     projects.setStatus(project, 'UPGRADE_DIAGNOSING');
+    const pack = job.payload.modulePack === 'ai' || job.payload.modulePack === 'feedback' ? job.payload.modulePack : '';
+    let moduleStage = null;
     const ruleText = String(job.payload.ruleText || '').trim();
+    const moduleRule = pack
+      ? await fs.readFile(path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../modules/rules', pack === 'ai' ? 'ai-kernel.md' : 'feedback.md'), 'utf8')
+      : '';
+    if (pack) {
+      try {
+        moduleStage = await stageUpgradeModule({
+          project,
+          sourceDir: projects.sourceDir(project.slug),
+          snapshots,
+          modulesRoot: path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../modules'),
+          pack,
+          jobId: job.id,
+          emit,
+        });
+      } catch (err) {
+        const sourceDir = projects.sourceDir(project.slug);
+        const afterHash = await sourceFingerprint(sourceDir);
+        const stageEvidence = err.moduleStage || { pack, afterHash, proposedFiles: [], changedFiles: [], rollbackVerified: false };
+        const operation = createRepairOperation({ jobId: job.id, projectId: project.id, kind: 'module-install', request: `Install ${pack} module` });
+        operation.workspace_hash_before = stageEvidence.beforeHash || afterHash;
+        operation.workspace_hash_after = afterHash;
+        operation.fingerprint = `MODULE_STAGE:${pack}:${operation.workspace_hash_before}`;
+        operation.fingerprint_history.push({ cycle: 1, source: 'MODULE_STAGE', fingerprint: operation.fingerprint, workspace_hash: operation.workspace_hash_before });
+        operation.proposed_files = stageEvidence.proposedFiles || [];
+        operation.actual_changed_files = [];
+        operation.module_install = {
+          pack,
+          snapshot_id: stageEvidence.snapshotId || null,
+          changed_files: stageEvidence.changedFiles || [],
+          rollback_verified: stageEvidence.rollbackVerified === true,
+        };
+        const terminalState = err.code === 'PATCH_PROTECTED_FILE' ? 'BLOCKED'
+          : err.code === 'NEEDS_USER_ACTION' ? 'NEEDS_USER_ACTION'
+            : stageEvidence.rollbackVerified ? 'ROLLED_BACK' : 'FAILED';
+        transitionRepairOperation(operation, 'PREFLIGHT', { workspace_hash: operation.workspace_hash_before, proposed_files: operation.proposed_files });
+        transitionRepairOperation(operation, err.code === 'PATCH_PROTECTED_FILE' ? 'REJECT_PATCH' : 'SAFETY_CHECK', {
+          fingerprint: operation.fingerprint,
+          rollback_verified: stageEvidence.rollbackVerified === true,
+        });
+        finishRepairOperation(operation, terminalState, {
+          fingerprint: operation.fingerprint,
+          workspace_hash_after: afterHash,
+          error: redactAiContext(String(err.message || err)).slice(0, 1200),
+          rollback: { verified: stageEvidence.rollbackVerified === true, expected_hash: operation.workspace_hash_before, restored_hash: afterHash },
+        });
+        await persistRepairOperation(projects, project, operation);
+        await projects.saveMetadata(project, 'upgrade-module-staging.json', {
+          ...stageEvidence,
+          terminalState,
+          error: redactAiContext(String(err.message || err)).slice(0, 1200),
+        });
+        if (terminalState === 'NEEDS_USER_ACTION' || terminalState === 'BLOCKED') {
+          const needsUserAction = terminalState === 'NEEDS_USER_ACTION' ? String(err.message || err) : '';
+          projects.setStatus(project, terminalState === 'NEEDS_USER_ACTION' ? 'UPGRADE_WAITING_INPUT' : 'FAILED');
+          return {
+            projectId: project.id,
+            status: terminalState === 'NEEDS_USER_ACTION' ? 'needs_user_action' : 'blocked',
+            terminalState,
+            operationId: operation.operation_id,
+            needsUserAction,
+            brief: terminalState === 'NEEDS_USER_ACTION'
+              ? `⏸ Module staging needs your action: ${needsUserAction}`
+              : `⛔ Module staging was blocked: ${String(err.message || err)}`,
+          };
+        }
+        throw err;
+      }
+    }
     const pastedRule = /RULE_NAME|REQUIRED CAPABILITIES|REQUIRED_CAPABILITIES/i.test(String(job.payload.request || ''));
     // A Rule is an execution contract, not a one-shot AI prompt. When a Rule is
     // supplied, the Builder owns planning, task ordering, checkpoints, verification
     // and re-planning. There is intentionally no Apply Upgrade gate for safe steps.
-    if (ruleText || pastedRule) {
-      const result = await runRuleUpgrade({ project, projects, snapshots, ai, request: job.payload.request, ruleText: ruleText || job.payload.request, emit, validateRuntime: (target) => runProject(projects.get(target.id), emit), jobId: job.id });
-      projects.setStatus(projects.get(project.id), result.needsUserAction ? 'UPGRADE_WAITING_INPUT' : (result.status === 'completed' ? 'UPGRADE_READY' : 'UPGRADE_READY'));
+    if (ruleText || moduleRule || pastedRule) {
+      let result;
+      try {
+        result = await runRuleUpgrade({
+          project, projects, snapshots, ai,
+          request: job.payload.request,
+          ruleText: ruleText || moduleRule || job.payload.request,
+          emit,
+          validateRuntime: (target) => runProject(projects.get(target.id), emit),
+          jobId: job.id,
+          moduleStage,
+        });
+      } catch (err) {
+        if (moduleStage) {
+          const stageResult = await rollbackUpgradeModule({
+            project, sourceDir: projects.sourceDir(project.slug), snapshots, stage: moduleStage, reason: String(err.message || err),
+          });
+          await projects.saveMetadata(project, 'upgrade-module-staging.json', stageResult);
+        }
+        throw err;
+      }
+      if (moduleStage) {
+        const stageResult = result.terminalState === 'DONE'
+          ? { ...moduleStage, terminalState: 'DONE' }
+          : await rollbackUpgradeModule({
+            project, sourceDir: projects.sourceDir(project.slug), snapshots, stage: moduleStage, reason: result.terminalState || result.status,
+          });
+        result.moduleStage = stageResult;
+        await projects.saveMetadata(project, 'upgrade-module-staging.json', stageResult);
+      }
+      projects.setStatus(projects.get(project.id), result.needsUserAction
+        ? 'UPGRADE_WAITING_INPUT'
+        : result.terminalState === 'DONE' || result.terminalState === 'NO_CHANGE'
+          ? 'UPGRADE_READY'
+          : 'FAILED');
       return result;
     }
     const result = await executeUpgradeRequest({

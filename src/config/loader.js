@@ -12,11 +12,8 @@ export function loadConfig() {
       accessPassword: process.env.BUILDER_ACCESS_PASSWORD || '',
     },
     feedbackHub: {
-      hubId: process.env.SHFH_HUB_ID || 'FH-CANNOI-0905428801SH',
-      url: String(process.env.SHFH_HUB_URL || process.env.FEEDBACK_HUB_URL || 'http://14.176.78.46:8090').replace(/\/$/, ''),
       appId: process.env.SHFH_APP_ID || process.env.FEEDBACK_APP_ID || 'app-builder-pi-solohost',
       appName: process.env.SHFH_APP_NAME || 'App Builder — Pi SoloHost',
-      ingestToken: process.env.SHFH_INGEST_TOKEN || 'cannoi_7Kp9xV2mQ8rN4tY6cL3wA5zD1eF0uH9',
       enabled: process.env.SHFH_ENABLED !== '0',
     },
     version: '1.4.61',
@@ -61,6 +58,6 @@ export function publicConfig(cfg) {
     engine: { provider: cfg.runtime?.podman?.apiUrl ? 'podman-api' : 'native-preview', mode: cfg.runtime?.mode || 'auto', configured: true, containerSandbox: Boolean(cfg.runtime?.podman?.apiUrl), dockerSocket: false },
     ai: { provider: cfg.ai.provider, mode: cfg.ai.mode, geminiConfigured: Boolean(cfg.ai.geminiKey), deepseekConfigured: Boolean(cfg.ai.deepseekKey), deepseekModel: cfg.ai.deepseekModel },
     github: { configured: Boolean(cfg.github.token && cfg.github.owner), owner: cfg.github.owner || null },
-    feedbackHub: { configured: true },
+    feedbackHub: { configured: false },
   };
 }

@@ -85,17 +85,17 @@ export function registerRoutes(r, app) {
 
   r.post('/api/settings', async (req, res) => {
     const body = req.body || {};
-    const allowed = ['AI_PROVIDER', 'AI_MODE', 'GEMINI_API_KEY', 'GEMINI_MODEL', 'DEEPSEEK_API_KEY', 'DEEPSEEK_MODEL', 'GITHUB_TOKEN', 'GITHUB_OWNER', 'APP_LOCALE', 'PODMAN_API_URL', 'SANDBOX_PODMAN_API_URL', 'CONTAINER_SANDBOX_PODMAN_API_URL', 'FEEDBACK_HUB_URL', 'FEEDBACK_APP_ID'];
+    const allowed = ['AI_PROVIDER', 'AI_MODE', 'GEMINI_API_KEY', 'GEMINI_MODEL', 'DEEPSEEK_API_KEY', 'DEEPSEEK_MODEL', 'GITHUB_TOKEN', 'GITHUB_OWNER', 'APP_LOCALE', 'PODMAN_API_URL', 'SANDBOX_PODMAN_API_URL', 'CONTAINER_SANDBOX_PODMAN_API_URL', 'FEEDBACK_APP_ID'];
     const applied = [];
     const stored = db.setting('runtimeSecrets', {}) || {};
+    for (const key of ['FEEDBACK_HUB_URL', 'SHFH_HUB_URL', 'SHFH_HUB_ID', 'SHFH_INGEST_TOKEN']) delete stored[key];
     const oldGeminiKey = stored.GEMINI_API_KEY || cfg.ai.geminiKey || '';
     const oldProvider = String(cfg.ai.provider || 'deepseek').toLowerCase();
     const oldGeminiModel = String(cfg.ai.geminiModel || '');
     const oldDeepseekModel = String(cfg.ai.deepseekModel || '');
     for (const key of allowed) {
       // Empty secret fields mean "keep the existing value", not "erase it".
-      // Non-secret Feedback Hub settings are allowed to be cleared explicitly.
-      if ((key === 'FEEDBACK_HUB_URL' || key === 'FEEDBACK_APP_ID') && body[key] != null && String(body[key]).trim() === '') {
+      if (key === 'FEEDBACK_APP_ID' && body[key] != null && String(body[key]).trim() === '') {
         delete process.env[key];
         delete stored[key];
         applied.push(key);
@@ -121,7 +121,6 @@ export function registerRoutes(r, app) {
     cfg.github.token = process.env.GITHUB_TOKEN || cfg.github.token;
     cfg.github.owner = process.env.GITHUB_OWNER || cfg.github.owner;
     cfg.runtime.podman.apiUrl = process.env.PODMAN_API_URL || process.env.SANDBOX_PODMAN_API_URL || process.env.CONTAINER_SANDBOX_PODMAN_API_URL || cfg.runtime.podman.apiUrl || '';
-    cfg.feedbackHub.url = String(process.env.FEEDBACK_HUB_URL || cfg.feedbackHub.url || '').replace(/\/$/, '');
     cfg.feedbackHub.appId = String(process.env.FEEDBACK_APP_ID || cfg.feedbackHub.appId || 'app-builder-pi-solohost');
     runner.configurePodman?.(cfg.runtime.podman.apiUrl);
     ai.refresh();
@@ -137,58 +136,13 @@ export function registerRoutes(r, app) {
 
   r.get('/api/shfh-config', (_req, res) => {
     const hub = cfg.feedbackHub || {};
-    const hubUrl = String(hub.url || 'http://14.176.78.46:8090').replace(/\/$/, '');
     res.json({
-      hubId: hub.hubId || 'FH-CANNOI-0905428801SH',
-      hubUrl,
-      formUrl: hubUrl + '/feedback',
-      ingestToken: hub.ingestToken || '',
       appId: hub.appId || 'app-builder-pi-solohost',
       appName: hub.appName || 'App Builder — Pi SoloHost',
       version: cfg.version,
       platform: 'solohost',
       enabled: hub.enabled !== false,
     });
-  });
-
-  r.post('/api/feedback/submit', async (req, res) => {
-    const hubUrl = String(cfg.feedbackHub?.url || 'http://14.176.78.46:8090').replace(/\/$/, '');
-    if (!hubUrl) return res.status(503).json({ ok: false, error: 'Feedback Hub is not configured.' });
-    const message = String(req.body?.message || '').trim();
-    if (!message) return res.status(400).json({ ok: false, error: 'Feedback message is required.' });
-    const type = ['bug', 'improvement', 'question'].includes(String(req.body?.type)) ? String(req.body.type) : 'improvement';
-    const payload = {
-      schema_version: '2.2',
-      app_id: cfg.feedbackHub.appId || 'app-builder-pi-solohost',
-      app_name: 'App Builder — Pi SoloHost',
-      version: cfg.version,
-      platform: 'solohost',
-      anonymous_id: String(req.body?.anonymousId || ''),
-      installed_at: String(req.body?.installedAt || ''),
-      locale: String(req.body?.locale || cfg.locale || 'en'),
-      event: 'feedback',
-      type,
-      rating: Number(req.body?.rating) || 0,
-      message,
-    };
-    try {
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 12000);
-      const upstream = await fetch(hubUrl + '/api/feedback', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Accept: 'application/json', ...(cfg.feedbackHub?.ingestToken ? { Authorization: 'Bearer ' + cfg.feedbackHub.ingestToken } : {}) },
-        body: JSON.stringify(payload),
-        signal: controller.signal,
-      });
-      clearTimeout(timer);
-      const text = await upstream.text();
-      let data = {};
-      try { data = JSON.parse(text); } catch {}
-      if (!upstream.ok) return res.status(502).json({ ok: false, error: data.error || ('Feedback Hub HTTP ' + upstream.status) });
-      return res.json({ ok: true, upstream: data });
-    } catch (err) {
-      return res.status(502).json({ ok: false, error: err?.name === 'AbortError' ? 'Feedback Hub timeout.' : 'Feedback Hub is unreachable.' });
-    }
   });
 
   r.get('/api/ai/hub', (_req, res) => {
@@ -496,8 +450,18 @@ export function registerRoutes(r, app) {
     if (!ensureFree(p.id, res)) return;
     const request = String(req.body?.request || '').trim();
     const ruleText = String(req.body?.ruleText || '').trim();
-    if (!request && !ruleText) return res.status(400).json({ error: 'Tell me what you want to improve, or attach a Rule file.' });
-    const job = jobs.enqueue({ type: 'upgrade_request', projectId: p.id, payload: { projectId: p.id, request: request || 'Apply the attached Rule to this existing app.', ruleText } });
+    const modulePack = req.body?.modulePack === 'ai' || req.body?.modulePack === 'feedback' ? req.body.modulePack : '';
+    if (!request && !ruleText && !modulePack) return res.status(400).json({ error: 'Tell me what you want to improve, or attach a Rule file.' });
+    const moduleRequest = modulePack === 'ai'
+      ? 'Integrate the supplied AI App Kernel using the existing app authorization and database.'
+      : modulePack === 'feedback'
+        ? 'Integrate Feedback. Ask an authorized operator for Hub URL, Hub ID, and ingest token at runtime; never bake or persist these values.'
+        : '';
+    const job = jobs.enqueue({
+      type: 'upgrade_request',
+      projectId: p.id,
+      payload: { projectId: p.id, request: request || moduleRequest || 'Apply the attached Rule to this existing app.', ruleText, modulePack },
+    });
     setImmediate(() => jobs.kick(job));
     res.status(202).json({ jobId: job.id, message: 'Upgrade diagnosis started.' });
   });

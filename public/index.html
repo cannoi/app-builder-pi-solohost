@@ -260,7 +260,16 @@
         <h2>💬 Feedback</h2>
         <button id="closeFeedback" class="iconBtn" type="button">✕</button>
       </div>
-      <p class="info">Send a bug, idea, or improvement. Feedback is queued locally if the Hub is temporarily offline.</p>
+      <p class="info">Enter the Hub details each time you open Feedback. They are kept only in this page session and are not saved.</p>
+      <label class="feedbackField">Hub URL
+        <input id="feedbackHubUrl" type="url" inputmode="url" autocomplete="off" placeholder="https://feedback.example.com">
+      </label>
+      <label class="feedbackField">Hub ID
+        <input id="feedbackHubId" type="text" autocomplete="off" placeholder="Hub ID">
+      </label>
+      <label class="feedbackField">Ingest token
+        <input id="feedbackIngestToken" type="password" autocomplete="off" placeholder="Client ingest token">
+      </label>
       <label class="feedbackField">Type
         <select id="feedbackType"><option value="bug">Bug</option><option value="improvement" selected>Improvement</option><option value="question">Question</option></select>
       </label>

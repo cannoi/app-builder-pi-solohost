@@ -67,38 +67,57 @@ test('hub stores a selected model pair without AUTO/PROVIDER/MANUAL modes', () =
   assert.deepEqual(state.preferredModels, ['gemini-a', 'deepseek-b']);
 });
 
-test('Feedback Hub integration is optional and never embeds an ingest token', () => {
+test('Feedback Hub credentials are requested per session and never baked into the Builder', () => {
   const html = fs.readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
   const js = fs.readFileSync(new URL('../public/app.js', import.meta.url), 'utf8');
+  const routes = fs.readFileSync(new URL('../src/api/routes.js', import.meta.url), 'utf8');
+  const config = fs.readFileSync(new URL('../src/config/loader.js', import.meta.url), 'utf8');
+  const server = fs.readFileSync(new URL('../src/server.js', import.meta.url), 'utf8');
   assert.match(html, /id="feedbackBtn"/);
   assert.match(html, /id="feedbackBadge"/);
+  assert.match(html, /id="feedbackHubUrl"/);
+  assert.match(html, /id="feedbackHubId"/);
+  assert.match(html, /id="feedbackIngestToken" type="password"/);
   assert.match(js, /SHFH\.create/);
-  assert.match(js, /ingestToken:\s*''/);
+  assert.match(js, /Enter the Hub URL, Hub ID, and ingest token for this session/);
+  assert.match(js, /feedbackIngestToken'\)\.value\s*=\s*''/);
+  assert.doesNotMatch(routes, /r\.post\('\/api\/feedback\/submit'/);
+  assert.doesNotMatch(routes + config + js + html, /14\.176\.78\.46|FH-CANNOI-0905428801SH|cannoi_[A-Za-z0-9]{20,}/);
+  assert.doesNotMatch(config, /FEEDBACK_HUB_URL|SHFH_HUB_URL|SHFH_HUB_ID|SHFH_INGEST_TOKEN/);
+  assert.doesNotMatch(routes, /process\.env\.FEEDBACK_HUB_URL|hub\.url|hub\.hubId|hub\.ingestToken/);
+  assert.match(routes, /SHFH_INGEST_TOKEN/);
+  assert.match(server, /retiredFeedbackKeys/);
+  assert.match(server, /retiredFeedbackKeys/);
+  assert.match(server, /delete saved\[key\]/);
   assert.doesNotMatch(js, /cannoi_[A-Za-z0-9]{20,}/);
 });
 
-test('Feedback send uses the Hub SDK, server fallback, and official form fallback', () => {
+test('Feedback uses the SDK directly and opens only the operator-entered official form as fallback', () => {
   const js = fs.readFileSync(new URL('../public/app.js', import.meta.url), 'utf8');
-  const routes = fs.readFileSync(new URL('../src/api/routes.js', import.meta.url), 'utf8');
+  const sdk = fs.readFileSync(new URL('../modules/feedback/shfh-client.js', import.meta.url), 'utf8');
+  const publicSdk = fs.readFileSync(new URL('../public/shfh-client.js', import.meta.url), 'utf8');
   assert.match(js, /state\.feedbackHub\.sendFeedback\(\{ type, message \}\)/);
-  assert.match(js, /api\('\/api\/feedback\/submit'/);
   assert.match(js, /window\.open\(formUrl, '_blank', 'noopener'\)/);
-  assert.match(routes, /r\.post\('\/api\/feedback\/submit'/);
+  assert.match(js, /parsedHub\.protocol !== 'https:'/);
+  assert.match(sdk, /headers\.Authorization = "Bearer " \+ ingestToken/);
+  assert.match(sdk, /hub_id: hubId/);
+  assert.doesNotMatch(sdk, /license:\s*\{/);
+  assert.doesNotMatch(sdk, /[?&]key=/);
+  assert.equal(publicSdk, sdk);
 });
 
-
-test('Feedback Hub client keeps Hub identity internal and sends directly through SDK', () => {
+test('Feedback Hub config endpoint returns metadata only and runtime form is reset on each open', () => {
   const html = fs.readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
   const js = fs.readFileSync(new URL('../public/app.js', import.meta.url), 'utf8');
   const routes = fs.readFileSync(new URL('../src/api/routes.js', import.meta.url), 'utf8');
-  assert.doesNotMatch(html, /id="feedbackHubUrl"/);
-  assert.doesNotMatch(html, /id="feedbackAppId"/);
-  assert.match(js, /const FEEDBACK_HUB_URL\s*=\s*['"]http:\/\/14\.176\.78\.46:8090['"]/);
+  assert.match(html, /id="feedbackHubUrl"/);
+  assert.match(html, /id="feedbackHubId"/);
+  assert.match(html, /id="feedbackIngestToken"/);
   assert.match(js, /const FEEDBACK_APP_ID\s*=\s*['"]app-builder-pi-solohost['"]/);
   assert.match(js, /state\.feedbackHub\.sendFeedback\(\{ type, message \}\)/);
-  assert.match(js, /api\('\/api\/feedback\/submit'/);
-  assert.match(routes, /r\.post\('\/api\/feedback\/submit'/);
-  assert.doesNotMatch(html, /name="password"|id="feedbackPassword"/i);
-  assert.match(js, /ingestToken:\s*''/);
+  assert.match(routes, /r\.get\('\/api\/shfh-config'/);
+  assert.doesNotMatch(routes, /hub\.url|hub\.hubId|hub\.ingestToken/);
+  assert.doesNotMatch(routes, /r\.post\('\/api\/feedback\/submit'/);
+  assert.match(js, /state\.feedbackHub = null;\s*state\.feedbackSnapshot = null;\s*\$\('feedbackHubUrl'\)\.value = ''/);
   assert.doesNotMatch(js, /cannoi_[A-Za-z0-9]{20,}/);
 });
