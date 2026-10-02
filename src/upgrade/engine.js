@@ -3,24 +3,22 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { listFiles, readJson } from '../utils/fsx.js';
 import { scanProject } from '../security/scanner.js';
-import { runStaticTests, runNodeTests } from '../testing/engine.js';
+import { runStaticTests, runNodeTests, runSyntaxChecks } from '../testing/engine.js';
 import { runDare } from '../dare/engine.js';
 import { findMissingNodeModules } from '../projects/deps-fix.js';
 import { writeGeneratedFiles } from '../projects/generator.js';
 import { sourceFingerprint } from '../projects/source-version.js';
 import { parseRule, capabilityGap, formatRuleStatus, buildRuleTasks, normalizeExecution } from './rules.js';
+import { languageInstruction } from '../ai/language.js';
 
 const MAX_SAFE_REPAIRS = 2;
+const MAX_AI_REPAIRS = 2;
 const PROTECTED = /^(?:\.env(?:\.|$)|.*\/(?:\.env(?:\.|$)|id_rsa(?:\.|$)|private[_-]?key(?:\.|$)))/i;
 
 export async function inspectUpgrade({ project, projects, snapshots, log }) {
   const sourceDir = projects.sourceDir(project.slug);
-  const before = await fileManifest(sourceDir);
-  const stack = await discoverStack(sourceDir);
-  const security = await scanProject(sourceDir);
-  const staticResult = await runStaticTests(sourceDir);
-  const nodeResult = await runNodeTests(sourceDir, 45000);
-  const issues = classifyIssues({ stack, security, staticResult, nodeResult });
+  let state = await inspectState(sourceDir);
+  const stack = state.stack;
 
   const safeRepairs = [];
   let repairHistory = await projects.readMetadata(project, 'upgrade-repair-history.json', []);
@@ -30,6 +28,7 @@ export async function inspectUpgrade({ project, projects, snapshots, log }) {
     // and still crash at startup on SoloHost (for example EACCES /app/data).
     const candidate = await hasDeterministicCandidate(sourceDir);
     if (!candidate && attempt > 0) break;
+    const repairBefore = await fileManifest(sourceDir);
     const checkpoint = await snapshots.create(project, `before-upgrade-safe-${attempt + 1}`);
     const repair = await runDare({
       sourceDir,
@@ -42,44 +41,49 @@ export async function inspectUpgrade({ project, projects, snapshots, log }) {
       break;
     }
     const after = await fileManifest(sourceDir);
-    const changed = diffManifest(before, after);
+    const changed = diffManifest(repairBefore, after);
+    if (!changed.length) break;
     const allowed = new Set((repair.files || []).map(normalize));
     const unexpected = changed.filter((f) => !allowed.has(normalize(f)));
     if (unexpected.length) {
       await snapshots.restore(project, checkpoint.id);
       throw new Error(`Upgrade safety check stopped: unexpected files changed: ${unexpected.join(', ')}`);
     }
-    const afterStatic = await runStaticTests(sourceDir);
-    const afterNode = await runNodeTests(sourceDir, 45000);
-    const afterSecurity = await scanProject(sourceDir);
-    if (score(afterStatic, afterNode, afterSecurity) > score(staticResult, nodeResult, security)) {
+    const afterState = await inspectState(sourceDir, {
+      installDependencies: dependencyManifestChanged(repairBefore, after),
+    });
+    const regression = verificationRegressed(verificationSummary(state), verificationSummary(afterState));
+    if (regression.length) {
+      log?.warn?.('Upgrade deterministic repair regressed verification', { regression, before: verificationSummary(state), after: verificationSummary(afterState) });
       await snapshots.restore(project, checkpoint.id);
       break;
     }
     const entry = {
       at: new Date().toISOString(), fingerprint: repair.fingerprint, ruleId: repair.ruleId,
       files: repair.files || [], reason: repair.reason, checkpointId: checkpoint.id,
-      beforeHash: manifestHash(before), afterHash: manifestHash(after),
+      beforeHash: manifestHash(repairBefore), afterHash: manifestHash(after),
     };
     repairHistory = [...repairHistory, entry].slice(-20);
     safeRepairs.push(entry);
+    state = afterState;
     // Re-run DARE against the new source state. History prevents a repeat patch.
   }
 
   await projects.saveMetadata(project, 'upgrade-repair-history.json', repairHistory);
   const after = await fileManifest(sourceDir);
-  const refreshed = await inspectState(sourceDir);
-  const knowledge = buildKnowledgeMap(project, stack, refreshed, after, safeRepairs);
+  state.health.fileCount = after.length;
+  const knowledge = buildKnowledgeMap(project, stack, state, after, safeRepairs);
   const baseline = {
     createdAt: new Date().toISOString(),
     sourceHash: manifestHash(after),
     fileCount: after.length,
     stack,
-    health: refreshed.health,
-    security: summarizeSecurity(refreshed.security),
-    knownIssues: refreshed.issues,
+    health: state.health,
+    security: summarizeSecurity(state.security),
+    knownIssues: state.issues,
     safeRepairs,
-    evidence: { static: refreshed.staticResult.status, node: refreshed.nodeResult.status },
+    verification: verificationSummary(state),
+    evidence: { static: state.staticResult.status, node: state.nodeResult.status, syntax: state.syntaxResult.status },
   };
   await projects.saveMetadata(project, 'upgrade-knowledge.json', knowledge);
   await projects.saveMetadata(project, 'upgrade-baseline.json', baseline);
@@ -87,10 +91,10 @@ export async function inspectUpgrade({ project, projects, snapshots, log }) {
     kind: 'inspect', at: baseline.createdAt, result: 'baseline-created', safeRepairs,
   });
   log?.info?.('Upgrade baseline created', { project: project.slug, files: after.length, safeRepairs: safeRepairs.length });
-  return { baseline, knowledge, issues: refreshed.issues, safeRepairs, ready: true };
+  return { baseline, knowledge, issues: state.issues, safeRepairs, ready: true };
 }
 
-export async function diagnoseUpgradeRequest({ project, projects, ai, request, ruleText = '', taskBrief = null }) {
+export async function diagnoseUpgradeRequest({ project, projects, ai, request, ruleText = '', taskBrief = null, verificationFailure = null }) {
   const sourceDir = projects.sourceDir(project.slug);
   const knowledge = await projects.readMetadata(project, 'upgrade-knowledge.json', {});
   const baseline = await projects.readMetadata(project, 'upgrade-baseline.json', {});
@@ -99,7 +103,8 @@ export async function diagnoseUpgradeRequest({ project, projects, ai, request, r
   const gap = parsed.valid ? capabilityGap(parsed, relevant) : null;
   if (ruleText && !taskBrief && !parsed.valid) throw new Error(parsed.error);
   if (parsed.valid) await projects.saveMetadata(project, 'upgrade-rule.json', { rule: parsed, gap, loadedAt: new Date().toISOString() });
-  const prompt = taskBrief ? `ONE BUILDER TASK ONLY
+  const prompt = taskBrief ? `${languageInstruction(request)}
+ONE BUILDER TASK ONLY
 
 Do not receive or invent a full Rule. Complete only this assigned task.
 
@@ -119,7 +124,8 @@ Return JSON only with:
   "expected_result": "verifiable result",
   "verification": ["checks"],
   "needs_user_action": ""
-}` : `UPGRADE WORKSHOP — EXISTING APP ONLY
+}` : `${languageInstruction(request)}
+UPGRADE WORKSHOP — EXISTING APP ONLY
 
 Preserve the existing application. Do not redesign or regenerate it.
 
@@ -129,11 +135,20 @@ ${JSON.stringify(knowledge)}
 BASELINE:
 ${JSON.stringify(baseline)}
 
+EXISTING CHECK FINDINGS:
+${JSON.stringify(baseline.verification || baseline.knownIssues || {})}
+
 RULE:
 ${parsed.valid ? JSON.stringify({ name: parsed.name, goal: parsed.goal, required: parsed.requiredCapabilities, missing: gap?.missingCapabilities || [], secrets: parsed.secrets }) : 'No structured rule. Treat the user text as a normal upgrade request.'}
 
 USER REQUEST:
 ${String(request).trim()}
+
+${verificationFailure ? `${verificationFailure.sourceChanged
+  ? 'PROJECT SOURCE CHANGED WHILE THE PLAN WAS BEING PREPARED; no patch was written.'
+  : 'LAST PATCH DID NOT VERIFY (it was rolled back):'}
+${JSON.stringify(verificationFailure)}
+Diagnose this evidence and produce a fresh, smallest effective plan. Do not repeat a failed patch or hide/disable the failing checks.` : ''}
 
 RELEVANT SOURCE EVIDENCE:
 ${relevant}
@@ -146,66 +161,88 @@ Return JSON only with:
   "files": [{"path":"relative/file","content":"complete replacement content"}],
   "expected_result": "verifiable result",
   "verification": ["checks"],
+  "completion_message": "short verified-result message in the user's language",
   "missing_capabilities": [],
   "needs_user_action": "",
   "alternatives": [{"name":"...","risk":"...","scope":"..."}]
 }
-Rules: do not invent facts; do not propose dependency-wide upgrades; do not modify secrets, credentials, database schema, auth, payment, wallet, or Docker architecture unless explicitly required and marked high risk. If the rule lists required secrets, set needs_user_action instead of writing secrets into source.`;
+Rules: achieve the user's requested outcome, not merely describe a repair. Also fix confirmed pre-existing syntax, test, and security findings when safe and within the request's scope. Do not invent facts; do not propose dependency-wide upgrades; do not modify secrets, credentials, database schema, auth, payment, wallet, or Docker architecture unless explicitly required and marked high risk. Keep the patch limited to files needed for the request or confirmed findings, and preserve all unrelated behavior. If a required credential, destructive action, or decision cannot be safely inferred, set needs_user_action instead of guessing.`;
   const result = await ai.completeJson({ task: 'UPGRADE_WORKSHOP', system: 'You are the Upgrade Workshop. Inspect first, diagnose from evidence, recommend the smallest effective change, and preserve the existing app.', prompt, projectId: project.id });
   return { ...(result.json || {}), rule: parsed.valid ? parsed : null, gap, ruleStatus: parsed.valid ? formatRuleStatus(parsed, gap) : '' };
 }
 
 export async function applyUpgrade({ project, projects, snapshots, plan, request, approved = false, ruleExecution = false }) {
   const risk = String(plan?.risk || 'high').toLowerCase();
-  // Rule execution may auto-apply proven low/medium-risk patches. High-risk work
-  // always stops for a real user decision. Normal chat upgrades keep the existing
-  // approval gate.
+  // Explicitly requested autonomous upgrades pass approved=true. Direct callers
+  // without that user intent still need an explicit confirmation for risky work.
   if (risk === 'high' && !approved) throw new Error('NEEDS_USER_ACTION: High-risk upgrade needs an explicit review.');
   if (!ruleExecution && risk !== 'low' && risk !== 'medium' && !approved) throw new Error('NEEDS_USER_ACTION: Upgrade plan is not low risk. Review and approve the change before applying it.');
   if (!ruleExecution && risk === 'medium' && !approved) throw new Error('NEEDS_USER_ACTION: Medium-risk upgrade needs your Apply confirmation.');
   if (ruleExecution && risk === 'medium' && plan?.needs_user_action) throw new Error(`NEEDS_USER_ACTION: ${plan.needs_user_action}`);
-  const files = Array.isArray(plan.files) ? plan.files.filter((f) => f && f.path && typeof f.content === 'string') : [];
+  const files = Array.isArray(plan.files)
+    ? plan.files.filter((f) => f && f.path && typeof f.content === 'string').map((f) => ({ ...f, path: normalize(f.path) }))
+    : [];
   if (!files.length) throw new Error('Upgrade plan contains no file changes.');
   if (files.length > 8) throw new Error('Upgrade scope is too large for an automatic minimal patch.');
   const sourceDir = projects.sourceDir(project.slug);
   const before = await fileManifest(sourceDir);
+  const baseline = await projects.readMetadata(project, 'upgrade-baseline.json', {});
+  if (baseline?.sourceHash && baseline.sourceHash !== manifestHash(before)) {
+    const err = new Error('Upgrade baseline is stale because project files changed after inspection.');
+    err.code = 'UPGRADE_BASELINE_STALE';
+    throw err;
+  }
   const paths = new Set();
   for (const f of files) {
     const rel = normalize(f.path);
-    if (!rel || rel.startsWith('/') || rel.includes('..') || PROTECTED.test(rel)) throw new Error(`Upgrade attempted to modify a protected or unsafe file: ${rel}`);
+    if (!rel || rel.startsWith('/') || /^[a-z]:\//i.test(rel) || rel.split('/').includes('..') || rel.includes('\0') || PROTECTED.test(rel)) throw new Error(`Upgrade attempted to modify a protected or unsafe file: ${rel}`);
     if (Buffer.byteLength(f.content, 'utf8') > 1024 * 1024) throw new Error(`Upgrade file is too large: ${rel}`);
     if (paths.has(rel)) throw new Error(`Upgrade plan contains the same file more than once: ${rel}`);
     paths.add(rel);
   }
   const checkpoint = await snapshots.create(project, 'before-upgrade');
-  let written;
+  const checkpointSource = await fileManifest(sourceDir);
+  if (manifestHash(checkpointSource) !== manifestHash(before)) {
+    const err = new Error('Upgrade baseline became stale while the rollback checkpoint was being created.');
+    err.code = 'UPGRADE_BASELINE_STALE';
+    throw err;
+  }
+  let changedFiles;
   let after;
   let verified;
-  let baseline;
   try {
-    written = await writeGeneratedFiles(sourceDir, files);
+    await writeGeneratedFiles(sourceDir, files);
     after = await fileManifest(sourceDir);
-    const changed = diffManifest(before, after);
-    const unexpected = changed.filter((f) => !written.map(normalize).includes(normalize(f)));
+    changedFiles = diffManifest(before, after);
+    const unexpected = changedFiles.filter((f) => !paths.has(normalize(f)));
     if (unexpected.length) throw new Error(`Upgrade rolled back: unexpected files changed: ${unexpected.join(', ')}`);
-    verified = await inspectState(sourceDir);
-    baseline = await projects.readMetadata(project, 'upgrade-baseline.json', {});
-    const baselineScore = Number(baseline?.health?.score ?? 0);
-    const currentScore = score(verified.staticResult, verified.nodeResult, verified.security);
-    if (verified.security.critical > 0 || currentScore > Math.max(0, baselineScore)) {
-      throw new Error('Upgrade rolled back because verification regressed the app.');
-    }
+    if (!changedFiles.length) throw new Error('Upgrade plan did not change any source files.');
+    const syntax = await runSyntaxChecks(sourceDir, changedFiles);
+    if (syntax.status === 'failed') throw verificationError('Changed JavaScript failed syntax validation.', { syntax, changedFiles });
+    verified = await inspectState(sourceDir, {
+      installDependencies: changedFiles.some((file) => /(^|\/)(?:package\.json|package-lock\.json|npm-shrinkwrap\.json)$/.test(file)),
+      syntaxFiles: changedFiles,
+      precheckedSyntax: syntax,
+    });
+    verified.syntaxResult = mergeChangedSyntax(baseline.verification?.syntax, syntax, changedFiles);
+    const regression = verificationRegressed(baseline.verification, verificationSummary(verified), changedFiles);
+    if (regression.length) throw verificationError('Upgrade failed final verification and was rolled back.', {
+      changedFiles,
+      regression,
+      verification: verificationSummary(verified),
+    });
   } catch (err) {
     try {
       await snapshots.restore(project, checkpoint.id);
     } catch (rollbackErr) {
       throw new Error(`Upgrade failed (${String(err.message || err)}); rollback also failed (${String(rollbackErr.message || rollbackErr)}).`);
     }
+    if (err.upgradeVerification) err.upgradeVerification.rolledBack = true;
     throw err;
   }
   await appendUpgradeHistory(projects, project, {
     kind: 'upgrade', at: new Date().toISOString(), request, rootCause: plan.root_cause,
-    files: written, verification: verified.health, checkpointId: checkpoint.id, result: 'verified',
+    files: changedFiles, verification: verified.health, checkpointId: checkpoint.id, result: 'verified',
   });
   const sourceHash = await sourceFingerprint(sourceDir);
   const previousTests = await projects.readMetadata(project, 'test-plan.json', {});
@@ -219,10 +256,123 @@ export async function applyUpgrade({ project, projects, snapshots, plan, request
     dockerBuild: null,
     e2e: null,
     previewSourceHash: null,
+    changedFiles,
+    verification: verificationSummary(verified),
     verifiedAt: new Date().toISOString(),
   });
-  await projects.saveMetadata(project, 'upgrade-baseline.json', { ...baseline, updatedAt: new Date().toISOString(), sourceHash: manifestHash(after), knownIssues: verified.issues });
-  return { ok: true, files: written, verification: verified.health, checkpointId: checkpoint.id };
+  await projects.saveMetadata(project, 'upgrade-baseline.json', {
+    ...baseline, updatedAt: new Date().toISOString(), sourceHash: manifestHash(after),
+    health: verified.health, security: summarizeSecurity(verified.security),
+    knownIssues: verified.issues, verification: verificationSummary(verified),
+  });
+  return { ok: true, files: changedFiles, verification: verified.health, checkpointId: checkpoint.id, sourceHash };
+}
+
+export async function executeUpgradeRequest({ project, projects, snapshots, ai, request, emit = () => {} }) {
+  const sourceDir = projects.sourceDir(project.slug);
+  let baseline = await projects.readMetadata(project, 'upgrade-baseline.json', null);
+  if (!baseline) throw new Error('Upgrade baseline is missing. Inspect the app first.');
+  if (!baseline.sourceHash || !baseline.verification || baseline.sourceHash !== manifestHash(await fileManifest(sourceDir))) {
+    emit('inspect', 'running', 'Project files changed since the last inspection. Refreshing the baseline before upgrading…');
+    const inspection = await inspectUpgrade({ project, projects, snapshots });
+    baseline = inspection.baseline;
+  }
+
+  let verificationFailure = null;
+  const attemptedPlans = new Set();
+  for (let attempt = 0; attempt <= MAX_AI_REPAIRS; attempt += 1) {
+    emit('diagnose', 'running', attempt
+      ? verificationFailure?.sourceChanged
+        ? `Re-planning from the refreshed source (${attempt}/${MAX_AI_REPAIRS})…`
+        : `Re-planning from the failed checks (${attempt}/${MAX_AI_REPAIRS}); the failed patch was rolled back…`
+      : 'Matching your requested outcome to the current app and its inspection findings…');
+    const plan = await diagnoseUpgradeRequest({ project, projects, ai, request, verificationFailure });
+    await projects.saveMetadata(project, 'upgrade-plan.json', {
+      ...plan, request, attempt: attempt + 1, createdAt: new Date().toISOString(),
+    });
+    if (plan.needs_user_action) {
+      await projects.saveMetadata(project, 'upgrade-plan.json', {
+        ...plan, request, status: 'needs_user_action', attempt: attempt + 1,
+        createdAt: new Date().toISOString(),
+      });
+      return {
+        projectId: project.id, status: 'needs_user_action', needsUserAction: plan.needs_user_action,
+        plan, brief: `⏸ I need one decision before I can safely complete this upgrade: ${plan.needs_user_action}`,
+      };
+    }
+    const files = Array.isArray(plan.files) ? plan.files : [];
+    if (!files.length) {
+      await projects.saveMetadata(project, 'upgrade-plan.json', {
+        ...plan, request, status: 'no_changes', attempt: attempt + 1,
+        createdAt: new Date().toISOString(),
+      });
+      return {
+        projectId: project.id, status: 'no_changes', plan,
+        brief: plan.recommendation || 'No source change was needed for this request. The existing app was left unchanged.',
+      };
+    }
+    const patchHash = crypto.createHash('sha256')
+      .update(JSON.stringify(files.map((file) => ({ path: normalize(file?.path), content: file?.content })).sort((a, b) => a.path.localeCompare(b.path))))
+      .digest('hex');
+    if (attemptedPlans.has(patchHash)) {
+      const brief = '⚠ Upgrade stopped safely because the AI repeated a patch that had already failed verification. The failed change was rolled back; no partial edit was kept.';
+      emit('verify', 'failed', brief);
+      return { projectId: project.id, status: 'stopped', plan, verificationFailure, brief };
+    }
+    attemptedPlans.add(patchHash);
+    emit('patch', 'running', `Applying the smallest patch (${files.length} proposed file(s)); verification will check the actual changed files…`);
+    try {
+      const result = await applyUpgrade({
+        project, projects, snapshots, plan, request,
+        // The user explicitly requested this upgrade; ask only for decisions
+        // the plan says cannot safely be inferred, not confirmation per edit.
+        approved: true,
+      });
+      const brief = `${plan.completion_message || '✓ Upgrade verified.'}\nFiles verified: ${result.files.join(', ')}`;
+      emit('verify', 'done', brief);
+      await projects.saveMetadata(project, 'upgrade-plan.json', {
+        ...plan, request, status: 'verified', changedFiles: result.files,
+        checkpointId: result.checkpointId, sourceHash: result.sourceHash,
+        completedAt: new Date().toISOString(),
+      });
+      return {
+        projectId: project.id, status: 'completed', upgrade: true, plan,
+        files: result.files, verification: result.verification,
+        checkpointId: result.checkpointId, attempts: attempt + 1, brief,
+      };
+    } catch (err) {
+      if (err.code === 'UPGRADE_BASELINE_STALE') {
+        attemptedPlans.delete(patchHash);
+        if (attempt === MAX_AI_REPAIRS) {
+          return {
+            projectId: project.id, status: 'stopped', plan, attempts: attempt + 1,
+            brief: '⚠ The app changed while Upgrade was planning. No patch was written; inspect the latest source and send the request again.',
+          };
+        }
+        emit('inspect', 'running', 'The source changed while planning. Refreshing the baseline and re-reading the latest files…');
+        await inspectUpgrade({ project, projects, snapshots });
+        verificationFailure = { sourceChanged: true, message: err.message };
+        continue;
+      }
+      if (!err.upgradeVerification) throw err;
+      verificationFailure = {
+        ...err.upgradeVerification,
+        attempt: attempt + 1,
+        planFiles: files.map((file) => normalize(file?.path)).filter(Boolean),
+      };
+      await projects.saveMetadata(project, 'upgrade-plan.json', {
+        ...plan, request, status: 'rolled_back', verificationFailure,
+        completedAt: new Date().toISOString(),
+      });
+      emit('rollback', 'done', `Restored the checkpoint after verification failed in ${verificationFailure.changedFiles?.join(', ') || 'the proposed changes'}.`);
+      if (attempt === MAX_AI_REPAIRS) {
+        const brief = `⚠ Upgrade could not be verified after ${attempt + 1} targeted attempt(s). Every failed patch was rolled back. Latest check: ${String(err.message || err).slice(0, 500)}`;
+        emit('verify', 'failed', brief);
+        return { projectId: project.id, status: 'stopped', plan, verificationFailure, attempts: attempt + 1, brief };
+      }
+    }
+  }
+  throw new Error('Upgrade stopped without a verified result.');
 }
 
 export async function runRuleUpgrade({ project, projects, snapshots, ai, request = '', ruleText = '', emit = () => {} }) {
@@ -308,13 +458,6 @@ export async function runRuleUpgrade({ project, projects, snapshots, ai, request
       if (execution.stopOnUserAction) break;
       continue;
     }
-    const risk = String(plan.risk || 'high').toLowerCase();
-    if (risk === 'high') {
-      task.status = 'waiting_user'; task.needsUserAction = 'This step is high risk and needs your confirmation.';
-      userAction = task.needsUserAction;
-      emit('input', 'done', `⏸ ${userAction}`);
-      break;
-    }
     const before = await fileManifest(sourceDir);
     const sourceHash = manifestHash(before);
     const patchHash = crypto.createHash('sha256').update(JSON.stringify(plan.files || [])).digest('hex');
@@ -376,13 +519,14 @@ export async function runRuleUpgrade({ project, projects, snapshots, ai, request
   };
 }
 
-async function inspectState(sourceDir) {
-  const [security, staticResult, nodeResult, manifest] = await Promise.all([
-    scanProject(sourceDir), runStaticTests(sourceDir), runNodeTests(sourceDir, 45000), fileManifest(sourceDir),
+async function inspectState(sourceDir, { installDependencies = true, syntaxFiles = null, precheckedSyntax = null } = {}) {
+  const [security, staticResult, nodeResult, syntaxResult, manifest, stack] = await Promise.all([
+    scanProject(sourceDir), runStaticTests(sourceDir), runNodeTests(sourceDir, 45000, { installDependencies }),
+    precheckedSyntax || runSyntaxChecks(sourceDir, syntaxFiles), fileManifest(sourceDir), discoverStack(sourceDir),
   ]);
-  const issues = classifyIssues({ stack: await discoverStack(sourceDir), security, staticResult, nodeResult });
+  const issues = classifyIssues({ stack, security, staticResult, nodeResult, syntaxResult });
   return {
-    security, staticResult, nodeResult, issues,
+    security, staticResult, nodeResult, syntaxResult, manifest, stack, issues,
     health: {
       status: security.critical ? 'NEEDS_ATTENTION' : webAppHealth(staticResult, nodeResult, security),
       score: score(staticResult, nodeResult, security),
@@ -434,9 +578,18 @@ function detectFramework(files, pkg) {
   return 'Unknown';
 }
 
-function classifyIssues({ stack, security, staticResult, nodeResult }) {
+function classifyIssues({ stack, security, staticResult, nodeResult, syntaxResult }) {
   const out = [];
   for (const f of security.findings || []) out.push({ id: f.id, category: 'SECURITY', severity: f.severity, evidence: `${f.file}${f.line ? `:${f.line}` : ''}`, autoFix: Boolean(f.autoFix) });
+  if (syntaxResult?.status === 'failed') {
+    for (const check of syntaxResult.checks.filter((item) => !item.ok)) {
+      out.push({
+        id: `syntax:${check.file}`, category: 'BUG', severity: 'high',
+        evidence: `${check.file}: ${String(check.error || 'JavaScript syntax error').split(/\r?\n/).slice(0, 3).join(' ').slice(0, 300)}`,
+        autoFix: true,
+      });
+    }
+  }
   if (staticResult.status === 'failed') out.push({ id: 'static-tests', category: 'BUG', severity: 'high', evidence: staticResult.summary || 'Static checks failed', autoFix: false });
   if (nodeResult.status === 'failed') out.push({ id: 'node-tests', category: 'RUNTIME', severity: 'high', evidence: nodeResult.summary || 'Node tests failed', autoFix: false });
   if (!out.length) out.push({ id: 'healthy', category: 'INFO', severity: 'info', evidence: 'No blocking issue found in deterministic inspection.', autoFix: false });
@@ -498,10 +651,97 @@ function diffManifest(before, after) {
   return changed;
 }
 
+function dependencyManifestChanged(before, after) {
+  return diffManifest(before, after).some((file) => /(^|\/)(?:package\.json|package-lock\.json|npm-shrinkwrap\.json)$/.test(file));
+}
+
 function manifestHash(manifest) { return crypto.createHash('sha256').update(JSON.stringify(manifest || [])).digest('hex'); }
 function normalize(p) { return String(p || '').replace(/\\/g, '/').replace(/^\.\//, ''); }
 function score(staticResult, nodeResult, security) { return (staticResult?.status === 'failed' ? 2 : 0) + (nodeResult?.status === 'failed' ? 2 : 0) + Number(security?.critical || 0) * 4 + Number(security?.warning || 0); }
 function summarizeSecurity(s) { return { status: s.status, critical: s.critical, warning: s.warning, findings: (s.findings || []).map((f) => ({ id: f.id, severity: f.severity, file: f.file, title: f.title })) }; }
+
+function verificationSummary(state) {
+  const staticChecks = state.staticResult?.checks || [];
+  const syntaxChecks = state.syntaxResult?.checks || [];
+  const nodeError = String(state.nodeResult?.error || '');
+  const nodeFailures = nodeError.split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => /(?:not ok\s+\d|✖|FAIL\b|SyntaxError:)/i.test(line))
+    .map((line) => line.replace(/\s+\(\d+(?:\.\d+)?ms\).*$/, '').slice(0, 240))
+    .slice(0, 30);
+  return {
+    static: {
+      status: state.staticResult?.status || 'unknown',
+      failedChecks: staticChecks.filter((check) => !check.ok).map((check) => check.name),
+    },
+    node: {
+      status: state.nodeResult?.status || 'unknown',
+      stage: state.nodeResult?.stage || null,
+      failures: nodeFailures.length ? nodeFailures : state.nodeResult?.status === 'failed' ? ['node-tests-failed'] : [],
+    },
+    syntax: {
+      status: state.syntaxResult?.status || 'unknown',
+      checked: state.syntaxResult?.checked || 0,
+      failedFiles: syntaxChecks.filter((check) => !check.ok).map((check) => check.file),
+    },
+    security: {
+      findings: (state.security?.findings || [])
+        .filter((finding) => finding.severity === 'critical' || finding.severity === 'warning')
+        .map((finding) => `${finding.severity}|${finding.id}|${finding.file}`),
+    },
+  };
+}
+
+function mergeChangedSyntax(baseline, changed, changedFiles) {
+  const changedSet = new Set(changedFiles.map(normalize));
+  const unchangedFailures = (baseline?.failedFiles || [])
+    .filter((file) => !changedSet.has(normalize(file)))
+    .map((file) => ({ file, ok: false, error: 'Pre-existing syntax failure in an unchanged file.' }));
+  const checks = [...unchangedFailures, ...(changed?.checks || [])];
+  const failed = checks.filter((check) => !check.ok);
+  return {
+    status: failed.length
+      ? 'failed'
+      : baseline?.status === 'skipped' && changed?.status === 'skipped' ? 'skipped' : 'passed',
+    checked: Number(baseline?.checked || 0) + Number(changed?.checked || 0),
+    failed: failed.length,
+    checks,
+  };
+}
+
+function verificationRegressed(before, after, changedFiles = []) {
+  const failures = [];
+  const previousStatic = new Set(before?.static?.failedChecks || []);
+  for (const name of after?.static?.failedChecks || []) {
+    if (!previousStatic.has(name)) failures.push(`New static failure: ${name}`);
+  }
+  if (before?.node?.status !== 'failed' && after?.node?.status === 'failed') {
+    failures.push('Node tests failed after the change.');
+  } else if (before?.node?.status === 'failed' && after?.node?.status === 'failed') {
+    const previous = new Set(before.node.failures || []);
+    for (const name of after.node.failures || []) {
+      if (!previous.has(name) && name !== 'node-tests-failed') failures.push(`New Node test failure: ${name}`);
+    }
+  }
+  const previousSyntax = new Set(before?.syntax?.failedFiles || []);
+  for (const file of after?.syntax?.failedFiles || []) {
+    if (!previousSyntax.has(file) || changedFiles.some((changed) => normalize(changed) === normalize(file))) {
+      failures.push(`JavaScript syntax check failed: ${file}`);
+    }
+  }
+  const previousSecurity = new Set(before?.security?.findings || []);
+  for (const finding of after?.security?.findings || []) {
+    if (!previousSecurity.has(finding)) failures.push(`New security finding: ${finding}`);
+  }
+  return failures;
+}
+
+function verificationError(message, evidence) {
+  const err = new Error(message);
+  err.code = 'UPGRADE_VERIFICATION_FAILED';
+  err.upgradeVerification = evidence;
+  return err;
+}
 
 function webAppHealth(staticResult, nodeResult, security) {
   if (security?.critical) return 'NEEDS_ATTENTION';

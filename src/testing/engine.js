@@ -1,7 +1,9 @@
 import fs from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import { listFiles } from '../utils/fsx.js';
 
 const exec = promisify(execFile);
 
@@ -17,7 +19,11 @@ export async function runStaticTests(sourceDir) {
   const pkg = await fs.readFile(path.join(sourceDir, 'package.json'), 'utf8').catch(() => '');
   let pkgOk = false;
   let pkgData = {};
-  try { pkgData = JSON.parse(pkg); pkgOk = true; } catch { pkgOk = false; }
+  try {
+    const parsed = JSON.parse(pkg);
+    pkgOk = Boolean(parsed && typeof parsed === 'object' && !Array.isArray(parsed));
+    if (pkgOk) pkgData = parsed;
+  } catch { pkgOk = false; }
   checks.push({ category: 'UNIT', name: 'package.json valid', ok: pkgOk && Boolean(pkg) });
 
   const dockerfile = await fs.readFile(path.join(sourceDir, 'Dockerfile'), 'utf8').catch(() => '');
@@ -40,12 +46,22 @@ export async function runStaticTests(sourceDir) {
   };
 }
 
-export async function runNodeTests(sourceDir, timeoutMs = 60000) {
+export async function runNodeTests(sourceDir, timeoutMs = 60000, { installDependencies = true } = {}) {
   const pkgPath = path.join(sourceDir, 'package.json');
   if (!(await exists(pkgPath))) return { status: 'skipped', reason: 'No package.json' };
-  const pkg = JSON.parse(await fs.readFile(pkgPath, 'utf8').catch(() => '{}'));
-  const install = await exec('npm', ['install', '--ignore-scripts', '--no-audit', '--no-fund', '--package-lock=false'], { cwd: sourceDir, timeout: timeoutMs, maxBuffer: 2 * 1024 * 1024 }).catch((err) => ({ error: String(err.stderr || err.stdout || err.message).slice(0, 4000) }));
-  if (install.error) return { status: 'failed', runner: 'npm install + node --test', stage: 'install', error: install.error };
+  let pkg;
+  try {
+    pkg = JSON.parse(await fs.readFile(pkgPath, 'utf8'));
+  } catch (err) {
+    return { status: 'failed', runner: 'npm install + node --test', stage: 'package.json', error: String(err.message || err).slice(0, 1000) };
+  }
+  if (!pkg || typeof pkg !== 'object' || Array.isArray(pkg)) {
+    return { status: 'failed', runner: 'npm install + node --test', stage: 'package.json', error: 'package.json must contain a JSON object.' };
+  }
+  if (installDependencies) {
+    const install = await exec('npm', ['install', '--ignore-scripts', '--no-audit', '--no-fund', '--package-lock=false'], { cwd: sourceDir, timeout: timeoutMs, maxBuffer: 2 * 1024 * 1024 }).catch((err) => ({ error: String(err.stderr || err.stdout || err.message).slice(0, 4000) }));
+    if (install.error) return { status: 'failed', runner: 'npm install + node --test', stage: 'install', error: install.error };
+  }
   try {
     await exec('npm', ['test', '--', '--test-reporter=spec'], { cwd: sourceDir, timeout: timeoutMs, maxBuffer: 4 * 1024 * 1024 });
     let build = null;
@@ -59,12 +75,45 @@ export async function runNodeTests(sourceDir, timeoutMs = 60000) {
   }
 }
 
+export async function runSyntaxChecks(sourceDir, selectedFiles = null) {
+  const files = selectedFiles || await listFiles(sourceDir);
+  const candidates = [...new Set(files.map((file) => String(file).replace(/\\/g, '/')))]
+    .filter((file) => /\.(?:js|mjs|cjs)$/i.test(file));
+  const checks = [];
+  for (let offset = 0; offset < candidates.length; offset += 8) {
+    const batch = candidates.slice(offset, offset + 8);
+    checks.push(...await Promise.all(batch.map(async (rel) => {
+      let temporaryDir = null;
+      try {
+        let checkPath = path.join(sourceDir, rel);
+        if (/\.js$/i.test(rel) && /^\s*(?:import\s+(?:[\w*{]|["'])|export\s+(?:default|const|let|var|function|class|\{|\*))/m.test(await fs.readFile(checkPath, 'utf8'))) {
+          temporaryDir = await fs.mkdtemp(path.join(os.tmpdir(), 'paf-syntax-'));
+          checkPath = path.join(temporaryDir, 'module.mjs');
+          await fs.copyFile(path.join(sourceDir, rel), checkPath);
+        }
+        await exec('node', ['--check', checkPath], { timeout: 15000, maxBuffer: 256 * 1024 });
+        return { file: rel, ok: true };
+      } catch (err) {
+        return { file: rel, ok: false, error: String(err.stderr || err.stdout || err.message).slice(0, 1600) };
+      } finally {
+        if (temporaryDir) await fs.rm(temporaryDir, { recursive: true, force: true });
+      }
+    })));
+  }
+  const failed = checks.filter((check) => !check.ok);
+  return {
+    status: failed.length ? 'failed' : candidates.length ? 'passed' : 'skipped',
+    checked: checks.length,
+    failed: failed.length,
+    checks,
+  };
+}
+
 async function exists(p) {
   try { await fs.access(p); return true; } catch { return false; }
 }
 
 async function fileContains(root, re) {
-  const { listFiles } = await import('../utils/fsx.js');
   const files = await listFiles(root);
   for (const rel of files) {
     if (/\.(js|mjs|ts|md|json)$/.test(rel)) {

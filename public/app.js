@@ -393,7 +393,7 @@ async function startUpgrade() {
 async function askUpgradeRequest() {
   const request = await askSafeAction('UPGRADE WORKSHOP', 'Describe the upgrade, or attach a Rule file (.rule .yaml .json .md).');
   if (!request) return;
-  setBusy(true, 'Loading the Rule and inspecting the app…');
+  setBusy(true, 'Working toward your requested upgrade…');
   try {
     let ruleText = '';
     for (const file of request.files || []) {
@@ -421,26 +421,6 @@ function renderUpgradeBaseline(result) {
     'Your app is ready for upgrade.',
   ].join('\n'));
 }
-function renderUpgradePlan(plan, request) {
-  if (!plan) return;
-  const risk = String(plan.risk || 'unknown').toLowerCase();
-  const box = document.createElement('div'); box.className = 'msg ai';
-  const title = document.createElement('div'); title.textContent = '🔧 Upgrade Plan'; title.style.fontWeight = '700'; box.appendChild(title);
-  const body = document.createElement('div'); body.className = 'small';
-  body.textContent = `Problem: ${plan.root_cause || '—'}\n\nRecommended: ${plan.recommendation || '—'}\n\nRisk: ${plan.risk || 'unknown'}\n\nFiles: ${(plan.files || []).map(f => typeof f === 'string' ? f : f.path).join(', ') || 'none'}\n\nExpected: ${plan.expected_result || '—'}`;
-  body.style.whiteSpace = 'pre-wrap'; box.appendChild(body);
-  const row = document.createElement('div'); row.className = 'actionCard';
-  const apply = document.createElement('button'); apply.className = 'primary';
-  apply.textContent = risk === 'high' ? 'Apply high-risk upgrade' : 'Apply Upgrade';
-  apply.onclick = async () => {
-    if (state.busy) return;
-    setBusy(true, 'Applying the minimal upgrade…');
-    try { const r = await api(`/api/projects/${state.projectId}/upgrade/apply`, { method: 'POST', body: JSON.stringify({ approved: true, request, plan }) }); watch(r.jobId); }
-    catch (e) { handleJobActionError(e); }
-  };
-  row.appendChild(apply); box.appendChild(row); $('chat').appendChild(box); if (chatNearBottom()) $('chat').scrollTop = $('chat').scrollHeight;
-}
-
 async function startDiagnose() {
   if (!state.projectId) { add('ai', '🩺 Open or create an app first.'); return; }
   setBusy(true, 'Diagnosing the real project…');
@@ -630,9 +610,6 @@ async function watch(jobId, { preserveEvents = false, resetFailures = true } = {
         renderUpgradeBaseline(result);
         if (state.projectId) await askUpgradeRequest();
       }
-      if (job.status === 'done' && job.type === 'upgrade_request' && result.plan && !result.execution) {
-        renderUpgradePlan(result.plan, result.plan.request || '');
-      }
       if (job.status === 'done' && job.type === 'upgrade_request' && result.execution) {
         const state = result.execution;
         const pending = (state.tasks || []).filter(t => ['pending','waiting_user','failed','blocked'].includes(t.status));
@@ -661,6 +638,7 @@ async function watch(jobId, { preserveEvents = false, resetFailures = true } = {
       if (result.brief) add('ai', result.brief);
       else if (result.reply) add('ai', result.reply);
       else if (state.projectId) { await loadProjects(); }
+      if (job.type === 'upgrade_request') await loadProjects();
       summarizeResult(result, job.status);
       if (result.guide) renderGuide(result.guide);
       const live = extractRuntime(result);

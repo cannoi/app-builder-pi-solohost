@@ -22,7 +22,7 @@ import { runDare, formatDareReport } from '../dare/engine.js';
 import { shouldBlockRepeatedAction, nextRepeatState, repairFingerprint } from './loop-guard.js';
 import { mergeVerificationState } from './verification.js';
 import { maskSecrets } from '../utils/mask.js';
-import { inspectUpgrade, diagnoseUpgradeRequest, applyUpgrade, runRuleUpgrade } from '../upgrade/engine.js';
+import { inspectUpgrade, applyUpgrade, executeUpgradeRequest, runRuleUpgrade } from '../upgrade/engine.js';
 import { diagnoseProject, buildAdvisorReport } from '../diagnose/project.js';
 import { refreshProjectBrain, rememberFailedRepair, wasRepairTried } from '../diagnose/brain.js';
 import { sourceFingerprint, verificationMatchesSource } from '../projects/source-version.js';
@@ -140,12 +140,12 @@ export function registerPipeline(app) {
       projects.setStatus(projects.get(project.id), result.needsUserAction ? 'UPGRADE_WAITING_INPUT' : (result.status === 'completed' ? 'UPGRADE_READY' : 'UPGRADE_READY'));
       return result;
     }
-    emit('diagnose', 'running', 'Diagnosing the request against the real app baseline…');
-    const plan = await diagnoseUpgradeRequest({ project, projects, ai, request: job.payload.request, ruleText: '' });
-    await projects.saveMetadata(project, 'upgrade-plan.json', { ...plan, request: job.payload.request, createdAt: new Date().toISOString() });
-    projects.setStatus(projects.get(project.id), 'UPGRADE_WAITING_APPROVAL');
-    emit('recommend', 'done', plan.needs_user_action || plan.recommendation || 'Upgrade plan is ready for review.');
-    return { projectId: project.id, plan: { ...plan, request: job.payload.request }, needsApproval: true, brief: plan.recommendation };
+    const result = await executeUpgradeRequest({
+      project: projects.get(project.id), projects, snapshots, ai,
+      request: job.payload.request, emit,
+    });
+    projects.setStatus(projects.get(project.id), result.status === 'needs_user_action' ? 'UPGRADE_WAITING_INPUT' : 'UPGRADE_READY');
+    return result;
   });
 
   jobs.on('upgrade_apply', async (job, { emit }) => {

@@ -7,9 +7,12 @@ test('Upgrade Workshop is separate from Create App and Docker image keeps only r
   assert.match(pipeline, /jobs\.on\('upgrade_inspect'/);
   assert.match(pipeline, /jobs\.on\('upgrade_request'/);
   assert.match(pipeline, /jobs\.on\('upgrade_apply'/);
+  assert.match(pipeline, /executeUpgradeRequest\(/);
   const dockerfile = await fs.readFile(new URL('../Dockerfile', import.meta.url), 'utf8');
   assert.match(dockerfile, /tini unzip git chromium/);
   assert.doesNotMatch(dockerfile, /git-lfs/);
   assert.doesNotMatch(dockerfile, /poppler-utils/);
   assert.doesNotMatch(dockerfile, /\bzip\b/);
+  const ui = await fs.readFile(new URL('../public/app.js', import.meta.url), 'utf8');
+  assert.doesNotMatch(ui, /renderUpgradePlan/);
 });

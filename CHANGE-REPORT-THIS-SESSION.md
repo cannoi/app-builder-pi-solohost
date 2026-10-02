@@ -50,3 +50,23 @@ Create App, Preview, Provider Hub, GitHub publisher internals, Upgrade Workshop 
 ### Not done
 - The previously identified DNS rebinding/SSRF risk in external preview host resolution remains; it was not part of the selected High-severity fixes.
 - The three full-suite failures above remain outside the workflow/auth changes.
+
+
+## 1.4.61 — Automatic Upgrade and changed-file verification
+
+### Done
+- Normal Upgrade requests now proceed from diagnosis to patch and verification without stopping at an Apply Plan prompt. The user's request is treated as authorization for the requested work; Builder still pauses for a required credential or an unresolved consequential decision.
+- Inspect records the current source, syntax, static-test, Node-test, and security baseline, and refreshes it if the source changed before an upgrade.
+- JavaScript syntax is checked during inspection and on the exact changed files before slower tests. This detects incomplete functions such as `safeParseArray` before reporting an Upgrade as complete.
+- Every patch is checked against a source manifest. Unexpected changes are rejected; completed Upgrade history and test evidence list the exact files changed.
+- A failed patch is rolled back before Builder replans from fresh verification evidence. Retries are bounded to two; an identical patch is not applied again. Successful changes retain a checkpoint and the chat keeps its Rollback action.
+- Dependency installation is skipped on post-patch verification unless a package manifest changed. The final static, security, test, and build checks still run against the updated source.
+- Preserve the user's chat language in Upgrade diagnosis and completion responses; refresh project status after the job.
+
+### Verification
+- Upgrade, contract, and Rule tests: 17/17 passed.
+- JavaScript syntax and `git diff --check`: passed.
+- Full suite: 240/243 passed. The three failures are two existing Feedback Hub expectations that conflict with the current API fallback and a ZIP test requiring the unavailable `unzip` executable on Windows; no new failures were introduced.
+
+### Not done
+- Upgrade verifies syntax, security scan, static checks, and the project's Node tests/build; it does not automatically launch the SoloHost runtime or browser preview. Use Run/Check for live runtime verification before publishing.

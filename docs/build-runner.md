@@ -13,4 +13,6 @@ The preview flow is:
 
 Every saved test result and live preview is tied to a fingerprint of the current project source. Repair and Upgrade verify the files in the canonical project `source` directory; chat-triggered changes use the same verification record as direct Improve actions. A release is blocked if either the latest checks or preview belong to an older source fingerprint. Run Check and then Run against the updated files before publishing.
 
+The Upgrade Workshop first records a source and test baseline, including JavaScript syntax and security findings. It then applies the user's requested upgrade automatically, checks the exact changed-file manifest, syntax-checks changed JavaScript, and compares final security/static/test results against the baseline. A failed patch is rolled back before at most two evidence-based AI repair attempts; repeated patches stop safely. Each successful upgrade retains a checkpoint for user rollback. The Builder asks for input only when a required credential or consequential decision cannot be safely inferred.
+
 GitHub Actions remains responsible for the final published SoloHost image.
