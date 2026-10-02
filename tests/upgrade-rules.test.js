@@ -11,12 +11,15 @@ test('parses the bundled media-center rule', () => {
   assert.ok(rule.requiredCapabilities.includes('Playback'));
 });
 
-test('module integration rules require runtime configuration and safe authorization', () => {
+test('module integration rules require SoloHost environment and safe authorization', () => {
   const feedback = parseRule(fs.readFileSync(new URL('../modules/rules/feedback.md', import.meta.url), 'utf8'));
   const kernel = parseRule(fs.readFileSync(new URL('../modules/rules/ai-kernel.md', import.meta.url), 'utf8'));
   assert.equal(feedback.valid, true, feedback.error);
   assert.equal(kernel.valid, true, kernel.error);
-  assert.ok(feedback.requiredCapabilities.some((item) => /runtime configuration/i.test(item)));
+  assert.ok(feedback.requiredCapabilities.some((item) => /SHFH_HUB_URL.*SHFH_HUB_ID.*SHFH_INGEST_TOKEN/i.test(item)));
+  assert.match(feedback.source, /config_options\.yml/);
+  assert.match(feedback.source, /Do not ask app users/);
+  assert.match(feedback.source, /Do not add a public unauthenticated proxy/);
   assert.ok(kernel.requiredCapabilities.some((item) => /authorized/i.test(item)));
 });
 

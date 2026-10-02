@@ -17,6 +17,7 @@ import { createProjectZip } from '../projects/exporter.js';
 import { gcDocker } from '../docker/cleanup.js';
 import { createAccessAuth } from '../security/access-auth.js';
 import { resolveUpgradeRepository } from '../upgrade/source.js';
+import { forwardHubFeedback } from '../feedback/proxy.js';
 
 export function registerRoutes(r, app) {
   const { cfg, db, jobs, projects, snapshots, github, releases, runner, ai } = app;
@@ -142,7 +143,25 @@ export function registerRoutes(r, app) {
       version: cfg.version,
       platform: 'solohost',
       enabled: hub.enabled !== false,
+      configured: Boolean(hub.hubUrl && hub.hubId && hub.ingestToken),
     });
+  });
+
+  r.post('/api/feedback/submit', async (req, res) => {
+    const message = String(req.body?.message || '').trim();
+    const type = String(req.body?.type || 'improvement');
+    if (!message || message.length > 5000) return res.status(400).json({ error: 'Enter feedback of up to 5,000 characters.' });
+    if (!['bug', 'improvement', 'question'].includes(type)) return res.status(400).json({ error: 'Unsupported feedback type.' });
+    if (cfg.feedbackHub?.enabled === false) return res.status(503).json({ error: 'Feedback is temporarily unavailable.' });
+    try {
+      await forwardHubFeedback({ config: cfg.feedbackHub, type, message, locale: cfg.locale });
+      return res.json({ ok: true });
+    } catch (err) {
+      const configured = err.code !== 'FEEDBACK_NOT_CONFIGURED';
+      return res.status(configured ? 502 : 503).json({
+        error: configured ? 'Feedback could not be delivered. Please try again later.' : 'Feedback is not configured by the app owner yet.',
+      });
+    }
   });
 
   r.get('/api/ai/hub', (_req, res) => {
@@ -455,7 +474,7 @@ export function registerRoutes(r, app) {
     const moduleRequest = modulePack === 'ai'
       ? 'Integrate the supplied AI App Kernel using the existing app authorization and database.'
       : modulePack === 'feedback'
-        ? 'Integrate Feedback. Ask an authorized operator for Hub URL, Hub ID, and ingest token at runtime; never bake or persist these values.'
+        ? 'Integrate Feedback using server-side SHFH_HUB_URL, SHFH_HUB_ID, and SHFH_INGEST_TOKEN environment variables. Add empty SoloHost config fields and compose references; do not prompt app users or store credentials in source.'
         : '';
     const job = jobs.enqueue({
       type: 'upgrade_request',

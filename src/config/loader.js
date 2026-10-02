@@ -12,6 +12,9 @@ export function loadConfig() {
       accessPassword: process.env.BUILDER_ACCESS_PASSWORD || '',
     },
     feedbackHub: {
+      hubUrl: process.env.SHFH_HUB_URL || '',
+      hubId: process.env.SHFH_HUB_ID || '',
+      ingestToken: process.env.SHFH_INGEST_TOKEN || '',
       appId: process.env.SHFH_APP_ID || process.env.FEEDBACK_APP_ID || 'app-builder-pi-solohost',
       appName: process.env.SHFH_APP_NAME || 'App Builder — Pi SoloHost',
       enabled: process.env.SHFH_ENABLED !== '0',
@@ -58,6 +61,6 @@ export function publicConfig(cfg) {
     engine: { provider: cfg.runtime?.podman?.apiUrl ? 'podman-api' : 'native-preview', mode: cfg.runtime?.mode || 'auto', configured: true, containerSandbox: Boolean(cfg.runtime?.podman?.apiUrl), dockerSocket: false },
     ai: { provider: cfg.ai.provider, mode: cfg.ai.mode, geminiConfigured: Boolean(cfg.ai.geminiKey), deepseekConfigured: Boolean(cfg.ai.deepseekKey), deepseekModel: cfg.ai.deepseekModel },
     github: { configured: Boolean(cfg.github.token && cfg.github.owner), owner: cfg.github.owner || null },
-    feedbackHub: { configured: false },
+    feedbackHub: { configured: Boolean(cfg.feedbackHub?.enabled && cfg.feedbackHub?.hubUrl && cfg.feedbackHub?.hubId && cfg.feedbackHub?.ingestToken) },
   };
 }

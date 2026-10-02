@@ -13,6 +13,9 @@ services:
       DEEPSEEK_API_KEY: "${DEEPSEEK_API_KEY}"
       GITHUB_OWNER: "${GITHUB_OWNER}"
       GITHUB_TOKEN: "${GITHUB_TOKEN}"
+      SHFH_HUB_URL: "${SHFH_HUB_URL:-}"
+      SHFH_HUB_ID: "${SHFH_HUB_ID:-}"
+      SHFH_INGEST_TOKEN: "${SHFH_INGEST_TOKEN:-}"
       PREVIEW_MODE: "auto"
       PREVIEW_ONLINE: "true"
     dns:

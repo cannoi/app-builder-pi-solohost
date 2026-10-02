@@ -132,7 +132,7 @@
       <!-- SUPPORT -->
       <div class="group">
         <span class="groupLabel">💛 Support</span>
-        <button type="button" id="feedbackBtn" data-action="feedback">💬 Feedback <span id="feedbackBadge" class="feedbackBadge" hidden>0</span></button>
+        <button type="button" id="feedbackBtn" data-action="feedback">💬 Feedback</button>
         <button
           type="button"
           id="supportBtn"
@@ -260,16 +260,7 @@
         <h2>💬 Feedback</h2>
         <button id="closeFeedback" class="iconBtn" type="button">✕</button>
       </div>
-      <p class="info">Enter the Hub details each time you open Feedback. They are kept only in this page session and are not saved.</p>
-      <label class="feedbackField">Hub URL
-        <input id="feedbackHubUrl" type="url" inputmode="url" autocomplete="off" placeholder="https://feedback.example.com">
-      </label>
-      <label class="feedbackField">Hub ID
-        <input id="feedbackHubId" type="text" autocomplete="off" placeholder="Hub ID">
-      </label>
-      <label class="feedbackField">Ingest token
-        <input id="feedbackIngestToken" type="password" autocomplete="off" placeholder="Client ingest token">
-      </label>
+      <p class="info">Send feedback to the Builder team. Hub credentials are managed by the app owner and are never shown here.</p>
       <label class="feedbackField">Type
         <select id="feedbackType"><option value="bug">Bug</option><option value="improvement" selected>Improvement</option><option value="question">Question</option></select>
       </label>
@@ -277,7 +268,6 @@
         <textarea id="feedbackMessage" rows="5" placeholder="Tell us what happened…"></textarea>
       </label>
       <button id="sendFeedback" class="primary wide" type="button">Send feedback</button>
-      <div id="feedbackNotices" class="info compactInfo" hidden></div>
     </div>
   </div>
   <!-- SETTINGS MODAL -->  <div id="settings" class="modal" hidden><div class="sheet">
@@ -394,7 +384,7 @@
 
 </div>
 
-  </div>  <script src="/shfh-client.js?v=2.2"></script><script src="/app.js?v=feedback-1.4.61"></script><img
+  </div>  <script src="/app.js?v=feedback-proxy-1.4.62"></script><img
 class="paf-made-by"
 src="/made-by.png"
 alt="Made with App Builder — Pi SoloHost">
