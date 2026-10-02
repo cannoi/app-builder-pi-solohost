@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import { sha1 } from '../utils/hash.js';
 import { listFiles } from '../utils/fsx.js';
 import { scanProject } from '../security/scanner.js';
 import { GitHubImageUploader } from './uploader.js';
@@ -9,7 +10,7 @@ const API = 'https://api.github.com';
 
 export function gitBlobSha(buffer) {
   const body = Buffer.isBuffer(buffer) ? buffer : Buffer.from(buffer);
-  return crypto.createHash('sha1').update(`blob ${body.length}\0`).update(body).digest('hex');
+  return sha1(Buffer.concat([Buffer.from(`blob ${body.length}\0`), body]));
 }
 
 export function buildGitTreeUpdates(localEntries, remoteEntries) {

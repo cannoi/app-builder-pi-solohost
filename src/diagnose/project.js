@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import { sha256 } from '../utils/hash.js';
 import { listFiles } from '../utils/fsx.js';
 import { fingerprintError } from '../dare/fingerprint.js';
 
@@ -172,5 +173,5 @@ function detectRuntime(reads) {
 function parsePackage(reads) { const m = reads.match(/FILE package\.json\n([\s\S]*?)(?=\n\nFILE |$)/); if (!m) return {}; try { return JSON.parse(m[1]); } catch { return {}; } }
 function detectRepeatedFailures(history, fingerprint) { if (!fingerprint || fingerprint === 'NONE' || fingerprint === 'UNKNOWN') return []; return history.filter((h) => String(h?.fingerprint || h?.rootCause || '').includes(fingerprint) || String(h?.error || '').includes(fingerprint)).slice(-8); }
 function countRepeated(values) { const map = new Map(); for (const value of values) { const key = String(value).replace(/\s+/g, ' ').slice(0, 240); map.set(key, (map.get(key) || 0) + 1); } return [...map.entries()].filter(([, count]) => count > 1).map(([value, count]) => ({ value, count })).slice(0, 10); }
-async function manifestOf(dir) { const files = await listFiles(dir), out = []; for (const rel of files) { if (!SOURCE.test(rel) && !IMPORTANT.test(rel)) continue; const data = await fs.readFile(path.join(dir, rel)).catch(() => null); if (!data) continue; out.push({ path: rel.replace(/\\/g, '/'), sha256: crypto.createHash('sha256').update(data).digest('hex'), size: data.length }); } return out; }
+async function manifestOf(dir) { const files = await listFiles(dir), out = []; for (const rel of files) { if (!SOURCE.test(rel) && !IMPORTANT.test(rel)) continue; const data = await fs.readFile(path.join(dir, rel)).catch(() => null); if (!data) continue; out.push({ path: rel.replace(/\\/g, '/'), sha256: sha256(data), size: data.length }); } return out; }
 async function appendHistory(projects, project, report) { const old = await projects.readMetadata(project, 'diagnosis-history.json', []); const rows = Array.isArray(old) ? old : []; rows.push({ incidentId: report.incidentId, fingerprint: report.fingerprint, rootCause: report.rootCause, confidence: report.confidence, recommendation: report.recommendation, generatedAt: report.generatedAt }); await projects.saveMetadata(project, 'diagnosis-history.json', rows.slice(-50)); }

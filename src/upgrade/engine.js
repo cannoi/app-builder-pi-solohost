@@ -1,6 +1,6 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import crypto from 'node:crypto';
+import { sha256, fileClass } from '../utils/hash.js';
 import { listFiles, readJson } from '../utils/fsx.js';
 import { scanProject } from '../security/scanner.js';
 import { runStaticTests, runNodeTests } from '../testing/engine.js';
@@ -10,7 +10,6 @@ import { writeGeneratedFiles } from '../projects/generator.js';
 import { parseRule, capabilityGap, formatRuleStatus, buildRuleTasks, normalizeExecution } from './rules.js';
 
 const MAX_SAFE_REPAIRS = 2;
-const PROTECTED = /^(?:\.env(?:\.|$)|.*\/(?:\.env(?:\.|$)|id_rsa(?:\.|$)|private[_-]?key(?:\.|$)))/i;
 
 export async function inspectUpgrade({ project, projects, snapshots, log }) {
   const sourceDir = projects.sourceDir(project.slug);
@@ -155,14 +154,14 @@ Rules: do not invent facts; do not propose dependency-wide upgrades; do not modi
 }
 
 export async function applyUpgrade({ project, projects, snapshots, plan, request, approved = false, ruleExecution = false }) {
-  const risk = String(plan?.risk || 'high').toLowerCase();
-  // Rule execution may auto-apply proven low/medium-risk patches. High-risk work
-  // always stops for a real user decision. Normal chat upgrades keep the existing
-  // approval gate.
-  if (risk === 'high' && !approved) throw new Error('NEEDS_USER_ACTION: High-risk upgrade needs an explicit review.');
-  if (!ruleExecution && risk !== 'low' && risk !== 'medium' && !approved) throw new Error('NEEDS_USER_ACTION: Upgrade plan is not low risk. Review and approve the change before applying it.');
-  if (!ruleExecution && risk === 'medium' && !approved) throw new Error('NEEDS_USER_ACTION: Medium-risk upgrade needs your Apply confirmation.');
-  if (ruleExecution && risk === 'medium' && plan?.needs_user_action) throw new Error(`NEEDS_USER_ACTION: ${plan.needs_user_action}`);
+  const risk = String(plan?.risk || 'medium').toLowerCase();
+  const userAction = String(plan?.needs_user_action || '');
+  if (/secret|credential|wallet|private key|payment key/i.test(userAction)) {
+    throw new Error(`NEEDS_USER_ACTION: ${userAction}`);
+  }
+  // Risk is not an approval gate. Low, medium, and required high changes run
+  // automatically with a checkpoint. Only secret/destructive work stops.
+  void approved; void ruleExecution; void risk;
   const files = Array.isArray(plan.files) ? plan.files.filter((f) => f && f.path && typeof f.content === 'string') : [];
   if (!files.length) throw new Error('Upgrade plan contains no file changes.');
   if (files.length > 8) throw new Error('Upgrade scope is too large for an automatic minimal patch.');
@@ -171,7 +170,7 @@ export async function applyUpgrade({ project, projects, snapshots, plan, request
   const checkpoint = await snapshots.create(project, 'before-upgrade');
   for (const f of files) {
     const rel = normalize(f.path);
-    if (!rel || rel.startsWith('/') || rel.includes('..') || PROTECTED.test(rel)) throw new Error(`Upgrade attempted to modify a protected or unsafe file: ${rel}`);
+    if (!rel || rel.startsWith('/') || rel.includes('..') || fileClass(rel) === 'ABSOLUTELY_PROTECTED') throw new Error(`Upgrade attempted to modify a protected or unsafe file: ${rel}`);
     if (Buffer.byteLength(f.content, 'utf8') > 1024 * 1024) throw new Error(`Upgrade file is too large: ${rel}`);
   }
   const written = await writeGeneratedFiles(sourceDir, files);
@@ -290,7 +289,7 @@ export async function runRuleUpgrade({ project, projects, snapshots, ai, request
     }
     const before = await fileManifest(sourceDir);
     const sourceHash = manifestHash(before);
-    const patchHash = crypto.createHash('sha256').update(JSON.stringify(plan.files || [])).digest('hex');
+    const patchHash = sha256(JSON.stringify(plan.files || []));
     const key = `${task.capability}|${sourceHash}|${patchHash}`;
     if (seen.has(key)) {
       task.status = 'blocked'; task.error = 'Same repair already attempted for the same source state.';
@@ -445,10 +444,8 @@ async function fileManifest(sourceDir) {
   for (const rel of files) {
     const full = path.join(sourceDir, rel);
     const stat = await fs.stat(full).catch(() => null); if (!stat?.isFile()) continue;
-    const hash = crypto.createHash('sha256');
     const data = await fs.readFile(full);
-    hash.update(data);
-    out.push({ path: normalize(rel), size: stat.size, sha256: hash.digest('hex') });
+    out.push({ path: normalize(rel), size: stat.size, sha256: sha256(data) });
   }
   return out.sort((a, b) => a.path.localeCompare(b.path));
 }
@@ -462,7 +459,7 @@ function diffManifest(before, after) {
   return changed;
 }
 
-function manifestHash(manifest) { return crypto.createHash('sha256').update(JSON.stringify(manifest || [])).digest('hex'); }
+function manifestHash(manifest) { return sha256(JSON.stringify(manifest || [])); }
 function normalize(p) { return String(p || '').replace(/\\/g, '/').replace(/^\.\//, ''); }
 function score(staticResult, nodeResult, security) { return (staticResult?.status === 'failed' ? 2 : 0) + (nodeResult?.status === 'failed' ? 2 : 0) + Number(security?.critical || 0) * 4 + Number(security?.warning || 0); }
 function summarizeSecurity(s) { return { status: s.status, critical: s.critical, warning: s.warning, findings: (s.findings || []).map((f) => ({ id: f.id, severity: f.severity, file: f.file, title: f.title })) }; }

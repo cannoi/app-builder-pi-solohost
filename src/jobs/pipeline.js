@@ -138,9 +138,29 @@ export function registerPipeline(app) {
     emit('diagnose', 'running', 'Diagnosing the request against the real app baseline…');
     const plan = await diagnoseUpgradeRequest({ project, projects, ai, request: job.payload.request, ruleText: '' });
     await projects.saveMetadata(project, 'upgrade-plan.json', { ...plan, request: job.payload.request, createdAt: new Date().toISOString() });
-    projects.setStatus(projects.get(project.id), 'UPGRADE_WAITING_APPROVAL');
-    emit('recommend', 'done', plan.needs_user_action || plan.recommendation || 'Upgrade plan is ready for review.');
-    return { projectId: project.id, plan: { ...plan, request: job.payload.request }, needsApproval: true, brief: plan.recommendation };
+    const secretStop = /secret|credential|wallet|private key/i.test(String(plan.needs_user_action || ''));
+    if (secretStop) {
+      projects.setStatus(projects.get(project.id), 'UPGRADE_WAITING_INPUT');
+      emit('recommend', 'done', plan.needs_user_action);
+      return { projectId: project.id, plan, needsUserAction: true, needsApproval: false, brief: plan.needs_user_action };
+    }
+    emit('patch', 'running', 'Applying the upgrade. No extra confirmation is required.');
+    try {
+      const applied = await applyUpgrade({ project: projects.get(project.id), projects, snapshots, plan, request: job.payload.request, approved: true, ruleExecution: true });
+      projects.setStatus(projects.get(project.id), 'UPGRADE_READY');
+      emit('verify', 'done', `Upgrade verified. ${applied.files.length} file(s) changed. Rollback is available if you want the previous version.`);
+      return { projectId: project.id, plan, execution: applied, needsApproval: false, brief: plan.recommendation || 'Upgrade completed.', next: 'Open preview or Publish. Use Rollback if this is not what you wanted.' };
+    } catch (err) {
+      const message = String(err.message || err);
+      if (message.startsWith('NEEDS_USER_ACTION')) {
+        projects.setStatus(projects.get(project.id), 'UPGRADE_WAITING_INPUT');
+        emit('recommend', 'done', message);
+        return { projectId: project.id, plan, needsUserAction: true, needsApproval: false, brief: message };
+      }
+      projects.setStatus(projects.get(project.id), 'UPGRADE_READY');
+      emit('verify', 'failed', message);
+      throw err;
+    }
   });
 
   jobs.on('upgrade_apply', async (job, { emit }) => {

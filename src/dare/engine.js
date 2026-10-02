@@ -1,3 +1,4 @@
+import { sha256 } from '../utils/hash.js';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import crypto from 'node:crypto';
@@ -611,7 +612,7 @@ async function fileManifest(sourceDir) {
   for (const rel of await listFiles(sourceDir)) {
     if (rel.startsWith('.git/') || rel.startsWith('node_modules/')) continue;
     const data = await fs.readFile(path.join(sourceDir, rel)).catch(() => null);
-    if (data) manifest[rel] = crypto.createHash('sha256').update(data).digest('hex');
+    if (data) manifest[rel] = sha256(data);
   }
   return manifest;
 }
@@ -623,7 +624,7 @@ function diffManifest(before = {}, after = {}) {
 
 function manifestHash(manifest = {}) {
   const data = Object.keys(manifest).sort().map((key) => `${key}:${manifest[key]}`).join('|');
-  return crypto.createHash('sha256').update(data).digest('hex');
+  return sha256(data);
 }
 
 function normalizeFile(file) {
