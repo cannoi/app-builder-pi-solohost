@@ -25,6 +25,7 @@ import { maskSecrets } from '../utils/mask.js';
 import { inspectUpgrade, diagnoseUpgradeRequest, applyUpgrade, runRuleUpgrade } from '../upgrade/engine.js';
 import { diagnoseProject, buildAdvisorReport } from '../diagnose/project.js';
 import { refreshProjectBrain, rememberFailedRepair, wasRepairTried } from '../diagnose/brain.js';
+import { sourceFingerprint, verificationMatchesSource } from '../projects/source-version.js';
 
 // Safety net only — does not change what inspectUpgrade does on the happy path.
 // Without this, a slow/unusual imported repo (e.g. a hung install/test step)
@@ -42,6 +43,10 @@ function withTimeout(promise, ms, message) {
 
 export function registerPipeline(app) {
   const { jobs, ai, projects, snapshots, runner, sandbox, github, releases, cfg, log } = app;
+  async function saveVerification(project, verified) {
+    const previous = await projects.readMetadata(project, 'test-plan.json', {});
+    await projects.saveMetadata(project, 'test-plan.json', mergeVerificationState(previous, verified));
+  }
 
   // Upgrade Workshop is deliberately isolated from create_app/improve flows.
   jobs.on('project_diagnose', async (job, { emit }) => {
@@ -379,6 +384,7 @@ export function registerPipeline(app) {
     const publicBase = String(process.env.PREVIEW_PUBLIC_BASE_URL || '').replace(/\/$/, '');
     const publicUiUrl = publicBase ? `${publicBase}/preview/${encodeURIComponent(project.slug)}/` : `/preview/${encodeURIComponent(project.slug)}/`;
     const runtime = { ...result, image: null, imageFile: null, publicUiUrl, lastSeenAt: new Date().toISOString(), nextSteps: result.status === 'passed' ? ['Open the preview', 'Improve with AI if needed', 'Publish when ready'] : ['Fix the reported issue', 'Run again'], updatedAt: new Date().toISOString() };
+    runtime.sourceHash = await sourceFingerprint(sourcePath);
     await projects.saveMetadata(project, 'runtime.json', runtime);
     const tests = await projects.readMetadata(project, 'test-plan.json', {});
     const previewPassed = result.status === 'passed' && result.health === true;
@@ -386,6 +392,7 @@ export function registerPipeline(app) {
       ...tests,
       preview: result,
       e2e: result.e2e || null,
+      previewSourceHash: runtime.sourceHash,
       verifiedAt: new Date().toISOString(),
     };
     if (previewPassed) {
@@ -462,8 +469,13 @@ export function registerPipeline(app) {
     try {
       const result = await improveProject(project, feedback, emit);
       if (result.tested) {
-        const previousTests = await projects.readMetadata(project, 'test-plan.json', {});
-        await projects.saveMetadata(project, 'test-plan.json', mergeVerificationState(previousTests, result.tested));
+        await saveVerification(project, {
+          ...result.tested,
+          preview: result.runtime || null,
+          dockerBuild: null,
+          e2e: result.runtime?.e2e || null,
+          previewSourceHash: result.runtime?.sourceHash || null,
+        });
       }
       if (result.runtime?.status === 'passed' || (result.tested?.staticResult?.status === 'passed' && result.tested?.nodeResult?.status !== 'failed' && result.tested?.scan?.critical === 0)) {
         await projects.saveMetadata(project, 'action-guard.json', null);
@@ -478,16 +490,24 @@ export function registerPipeline(app) {
           });
         }
       }
+      const verified = result.verified === true;
+      const verificationMessage = verified
+        ? (result.explanation || 'Change verified.')
+        : 'The changed source did not pass every required check; it was not marked fixed.';
       await projects.updateWorkPlan(project, {
         stepId: plan.steps[0].id,
-        step: { status: 'done', files: result.files || [], result: result.explanation || 'Change verified.' },
-        reports: [{ action: 'improve', status: 'done', files: result.files || [], explanation: result.explanation || '' }],
+        step: { status: verified ? 'done' : 'blocked', files: result.files || [], result: verificationMessage },
+        reports: [{ action: 'improve', status: verified ? 'done' : 'blocked', files: result.files || [], explanation: verificationMessage }],
       });
-      const finished = await projects.finishWorkPlan(project, 'done', 'Change was checked after the patch. The checkpoint remains available for rollback.');
+      const finished = await projects.finishWorkPlan(project, verified ? 'done' : 'blocked', verified
+        ? 'Change was checked after the patch. The checkpoint remains available for rollback.'
+        : 'The source remains available, but the repair is not marked complete until the current files pass verification.');
       return {
         ...result,
         workPlan: finished,
-        next: result.next || 'Tap ▶ Run to verify the repair, then tap 🚀 Publish. Publish uploads the repaired files (overwrite). Do not use Re-check until the new source is on GitHub.',
+        next: result.next || (verified
+          ? 'Tap ▶ Run to verify the repair, then tap 🚀 Publish. Publish uploads the repaired files (overwrite). Do not use Re-check until the new source is on GitHub.'
+          : 'The change is saved, but verification is incomplete. Review the failing check, fix that evidence, then Run again.'),
       };
     } catch (err) {
       await projects.updateWorkPlan(project, {
@@ -582,7 +602,13 @@ export function registerPipeline(app) {
         emit('validate', 'done', 'Runtime contract repair already ran. Continuing with the current source instead of repeating the same patch.');
       }
     }
-    const previewFresh = runtime.status === 'passed' && runtime.health === true;
+    await stampMadeBy(source, cfg);
+    const currentSourceHash = await sourceFingerprint(source);
+    const previewFresh = runtime.status === 'passed' && runtime.health === true
+      && runtime.sourceHash === currentSourceHash;
+    if (!verificationMatchesSource(tests, runtime, currentSourceHash)) {
+      throw new Error('RELEASE_STALE_VERIFICATION: The app files changed after the latest checks or preview. Tap Check, then Run, and publish again so every result matches the current source.');
+    }
     if (tests.nodeResult?.status === 'failed' && !previewFresh) {
       throw new Error('Release blocked: the latest saved verification still has a failed runtime test. Tap Run first so the live preview can refresh the test report.');
     }
@@ -592,7 +618,6 @@ export function registerPipeline(app) {
       await projects.saveMetadata(project, 'test-plan.json', { ...tests, verifiedAt: new Date().toISOString() });
     }
 
-    await stampMadeBy(source, cfg);
     const quality = await review(project);
     let aiDescription = '';
     try {
@@ -887,7 +912,7 @@ export function registerPipeline(app) {
     emit('diagnose', 'running', 'Reading the failed GitHub Actions job and asking AI for the smallest safe fix…');
     let r;
     try {
-      const relevant = await collectProjectContext(source);
+      const relevant = await collectProjectContext(source, evidence);
       r = await ai.completeJson({
         task: 'DEBUGGING',
         system: SYSTEM,
@@ -1061,7 +1086,7 @@ export function registerPipeline(app) {
     const activityText = (Array.isArray(activity) ? activity.slice(-20) : []).map((a) => `${a.t || ''} ${a.action || ''} ${a.status || ''} ${String(a.detail || '').slice(0, 160)}`).join('\n');
     const handoff = await projects.readMetadata(project, 'handoff.json', {});
     const previousPlan = await projects.readMetadata(project, 'work-plan.json', {});
-    const context = await collectProjectContext(source);
+    const context = await collectProjectContext(source, message);
     const attachContext = await attachmentContext(projects.projectDir(project));
     const requestedImage = extractGhcrImage(message);
     const installFromImage = Boolean(requestedImage && /(solohost|cài đặt|cai dat|install|docker-compose|config_options|file cài|tạo file|tao file|generate)/i.test(message));
@@ -1186,6 +1211,7 @@ export function registerPipeline(app) {
             emit('improve', 'running', `Step: targeted patch — ${step.goal.slice(0, 80)}`);
             await snapshots.create(project, 'before-step-improve').catch(() => {});
             payload.result = await improveProject(project, step.goal, emit);
+            if (payload.result?.tested) await saveVerification(project, payload.result.tested);
           } else if (stepAction === 'run') {
             payload.runtime = await runWithRepair(project, emit, step.goal);
           } else if (stepAction === 'analyze') {
@@ -1238,6 +1264,10 @@ export function registerPipeline(app) {
           }
           let stepStatus = 'done';
           let stepError = '';
+          if (stepAction === 'improve' && payload.result?.verified !== true) {
+            stepStatus = 'failed';
+            stepError = 'The current app files did not pass all required verification checks.';
+          }
           if (stepAction === 'run' && payload.runtime?.status !== 'passed') {
             stepStatus = 'failed';
             stepError = payload.runtime?.error || 'Run did not produce a verified healthy runtime.';
@@ -1592,7 +1622,7 @@ export function registerPipeline(app) {
       emit('repair', 'running', 'A safe security fix is available. Applying one targeted repair…');
       let securityCheckpoint = null;
       try {
-        const relevant = await collectProjectContext(source);
+        const relevant = await collectProjectContext(source, scan.copy_for_ai);
         const r = await ai.completeJson({
           task: 'SECURITY',
           system: SYSTEM,
@@ -1632,11 +1662,16 @@ export function registerPipeline(app) {
     emit('preview', 'running', 'Starting a safe preview without host Docker access…');
     const dockerBuild = await runner.run({ sourcePath: source, projectSlug: project.slug, timeout: cfg.limits.sandboxTimeoutSec });
     const imageFile = null;
-    await projects.saveMetadata(project, 'test-plan.json', { staticResult, nodeResult, scan, preview: dockerBuild, dockerBuild, e2e: dockerBuild.e2e || null, imageFile, securityRepair });
+    const sourceHash = await sourceFingerprint(source);
+    await projects.saveMetadata(project, 'test-plan.json', {
+      staticResult, nodeResult, scan, preview: dockerBuild, dockerBuild,
+      e2e: dockerBuild.e2e || null, imageFile, securityRepair,
+      sourceHash, previewSourceHash: sourceHash, verifiedAt: new Date().toISOString(),
+    });
     const ok = staticResult.status === 'passed' && nodeResult.status !== 'failed' && scan.critical === 0 && dockerBuild.status === 'passed';
     projects.setStatus(project, ok ? 'WAITING_APPROVAL' : 'FAILED');
     if (ok) emit('test', 'done', '✓ Source checks, security, preview and Playwright E2E passed.');
-    return { staticResult, nodeResult, scan, dockerBuild, e2e: dockerBuild.e2e || null, imageFile, autoFixes: attempts, securityRepair, next: ok ? 'Open the preview with Run, Improve if needed, or Publish when ready.' : 'Fix the blocking issue shown above, then Run again.' };
+    return { staticResult, nodeResult, scan, dockerBuild, e2e: dockerBuild.e2e || null, imageFile, autoFixes: attempts, securityRepair, sourceHash, previewSourceHash: sourceHash, next: ok ? 'Open the preview with Run, Improve if needed, or Publish when ready.' : 'Fix the blocking issue shown above, then Run again.' };
   }
 
   async function review(project) {
@@ -1681,9 +1716,10 @@ export function registerPipeline(app) {
   async function runProject(project, emit) {
     const source = projects.sourceDir(project.slug);
     const runtime = await runner.runApp({ sourcePath: source, projectSlug: project.slug, timeout: cfg.limits.sandboxTimeoutSec, keepRunning: true });
+    runtime.sourceHash = await sourceFingerprint(source);
     await projects.saveMetadata(project, 'runtime.json', { ...runtime, image: runtime.image || null, lastSeenAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
     const tests = await projects.readMetadata(project, 'test-plan.json', {});
-    await projects.saveMetadata(project, 'test-plan.json', { ...tests, preview: runtime });
+    await projects.saveMetadata(project, 'test-plan.json', { ...tests, preview: runtime, previewSourceHash: runtime.sourceHash });
     projects.setStatus(project, runtime.status === 'passed' ? 'WAITING_APPROVAL' : 'FAILED');
     if (runtime.status === 'passed') {
       runtime.previewPath = runtime.previewPath || `/preview/${project.slug}/`;
@@ -1704,7 +1740,7 @@ export function registerPipeline(app) {
     const scan = await scanProject(source);
     emit('analyze', staticResult.status === 'passed' && nodeResult.status !== 'failed' && scan.critical === 0 ? 'done' : 'failed',
       `INSPECT ONLY: source ${staticResult.status}; runtime tests ${nodeResult.status}; security critical ${scan.critical}.`);
-    return { staticResult, nodeResult, scan, diagnosis, inspectOnly: true };
+    return { staticResult, nodeResult, scan, diagnosis, sourceHash: await sourceFingerprint(source), preview: null, dockerBuild: null, e2e: null, previewSourceHash: null, inspectOnly: true };
   }
 
   async function improveProject(project, feedback, emit) {
@@ -1750,7 +1786,21 @@ export function registerPipeline(app) {
           const repairedRuntime = await runProject(projects.get(project.id), emit);
           if (repairedRuntime?.status === 'passed') {
             await projects.saveMetadata(project, 'action-guard.json', null);
-            return { feedback, rootCause: dare.reason || '', explanation: dare.reason || 'Deterministic runtime repair verified.', files: dare.files || [], tested: { staticResult: afterStatic, nodeResult: afterNode, scan: afterScan }, runtime: repairedRuntime, dare };
+            const sourceHash = await sourceFingerprint(source);
+            return {
+              feedback,
+              rootCause: dare.reason || '',
+              explanation: dare.reason || 'Deterministic runtime repair verified.',
+              files: dare.files || [],
+              tested: {
+                staticResult: afterStatic, nodeResult: afterNode, scan: afterScan,
+                sourceHash, previewSourceHash: repairedRuntime.sourceHash,
+                preview: repairedRuntime, dockerBuild: null, e2e: repairedRuntime.e2e || null,
+              },
+              runtime: repairedRuntime,
+              verified: true,
+              dare,
+            };
           }
         }
         if (dareCheckpoint?.id) await snapshots.restore(project, dareCheckpoint.id).catch(() => {});
@@ -1772,7 +1822,7 @@ export function registerPipeline(app) {
     }
     await projects.saveMetadata(project, 'action-guard.json', nextRepeatState(guard, problemFingerprint));
 
-    const relevant = await collectProjectContext(source);
+    const relevant = await collectProjectContext(source, feedback);
     const attachContext = await attachmentContext(projects.projectDir(project));
     const attachList = await attachmentList(projects.projectDir(project));
     const security = await scanProject(source);
@@ -1809,7 +1859,15 @@ export function registerPipeline(app) {
         emit('rollback', 'done', 'The change did not produce a verified step forward, so I restored the previous checkpoint.');
         const restored = await inspectOnly(project, emit);
         runtime = null;
-        return { feedback, rootCause: r.json.root_cause || '', explanation: 'Change rolled back because verification regressed.', files: [], tested: { staticResult: restored.staticResult, nodeResult: restored.nodeResult, scan: restored.scan }, runtime };
+        return {
+          feedback,
+          rootCause: r.json.root_cause || '',
+          explanation: 'Change rolled back because verification regressed.',
+          files: [],
+          tested: { ...restored, dockerBuild: null },
+          runtime,
+          verified: false,
+        };
       }
     }
     const tested = { staticResult: afterStatic, nodeResult: afterNode, scan: afterScan };
@@ -1831,7 +1889,26 @@ export function registerPipeline(app) {
       runtime.brief = briefFail(runtime.error);
       emit('run', 'failed', runtime.error);
     }
-    return { feedback, rootCause: r.json.root_cause || '', explanation: r.json.explanation || '', files: r.json.files.map((f) => f.path), tested, runtime };
+    tested.sourceHash = await sourceFingerprint(source);
+    tested.previewSourceHash = runtime?.sourceHash || null;
+    tested.preview = runtime || null;
+    tested.dockerBuild = null;
+    tested.e2e = runtime?.e2e || null;
+    const verified = afterStatic.status === 'passed'
+      && afterNode.status !== 'failed'
+      && afterScan.critical === 0
+      && runtime?.status === 'passed'
+      && (!networkIssue || runtime.internet?.ok === true);
+    return {
+      feedback,
+      rootCause: r.json.root_cause || '',
+      explanation: r.json.explanation || '',
+      files: r.json.files.map((f) => f.path),
+      tested,
+      runtime,
+      verified,
+      next: verified ? undefined : 'The change is saved but not verified. Fix the failing check or preview, then run verification again.',
+    };
   }
 
   function imageInputs(files) {
@@ -1864,8 +1941,17 @@ export function registerPipeline(app) {
       }
     }
     const snapshot = await snapshotStore.create(project, `before-${reason}`);
-    const written = await writeGeneratedFiles(sourceDir, proposed);
-    return { written, snapshot };
+    try {
+      const written = await writeGeneratedFiles(sourceDir, proposed);
+      return { written, snapshot };
+    } catch (err) {
+      try {
+        await snapshotStore.restore(project, snapshot.id);
+      } catch (rollbackErr) {
+        throw new Error(`Patch write failed (${String(err.message || err)}); rollback also failed (${String(rollbackErr.message || rollbackErr)}).`);
+      }
+      throw err;
+    }
   }
 
   function failureScore(staticResult, nodeResult) {
@@ -1932,7 +2018,8 @@ export function registerPipeline(app) {
       runtime.error,
     ].filter(Boolean).join('\n');
     try {
-      await improveProject(project, feedback, emit);
+      const repaired = await improveProject(project, feedback, emit);
+      if (repaired.tested) await saveVerification(project, repaired.tested);
       emit('run', 'running', 'Retrying the preview after the fix…');
       runtime = await runProject(project, emit);
     } catch (err) {
@@ -2088,24 +2175,33 @@ Return JSON with full file contents for every changed file:
 }`;
 }
 
-async function collectProjectContext(source) {
+async function collectProjectContext(source, request = '') {
   const allFiles = await listFiles(source);
   const preferred = ['package.json', 'Dockerfile', 'docker-compose.yml', 'config_options.yml', '.github/workflows/docker.yml', 'README.md', 'INSTALL.md', 'src/server.js', 'server.js', 'app.js', 'src/app.js', 'src/proxy.js', 'src/gateway.js', 'src/routes.js', 'public/index.html', 'public/game.js', 'public/app.js', 'public/browser.js'];
-  const names = [...preferred, ...allFiles.filter((f) => /^(src|server|public|tests)\//.test(f) && /\.(js|mjs|cjs|ts|tsx|jsx|html|css|json|yml|yaml)$/.test(f)).slice(0, 24)];
-  const unique = [...new Set(names)].filter((name) => allFiles.includes(name));
+  const keywords = String(request).toLowerCase().split(/[^a-z0-9_-]+/i).filter((word) => word.length > 3).slice(0, 12);
+  const preferredRank = new Map(preferred.map((name, index) => [name, index]));
+  const unique = [...new Set([...preferred, ...allFiles])].filter((name) => allFiles.includes(name))
+    .sort((a, b) => {
+      const score = (name) => keywords.reduce((sum, word) => sum + (name.toLowerCase().includes(word) ? 5 : 0), 0)
+        + (preferredRank.has(name) ? 2 : 0)
+        + (/^(src|server|public|tests)\//.test(name) ? 1 : 0);
+      return score(b) - score(a) || (preferredRank.get(a) ?? 99) - (preferredRank.get(b) ?? 99) || a.localeCompare(b);
+    })
+    .slice(0, request ? 18 : 28);
   const chunks = [
     `--- BUILDER TOOLBOX ---\ninspect files · static tests · Node tests · security scan · native preview · Container Sandbox · runtime logs · GitHub publish · Actions diagnostics · GHCR verify · SoloHost validator · checkpoint · rollback`,
     `--- FILE INVENTORY (${allFiles.length}) ---\n${allFiles.slice(0, 120).join('\n')}`,
   ];
+  const maxContext = request ? 18000 : 24000;
   let total = chunks.join('\n\n').length;
-  for (const name of unique.slice(0, 36)) {
-    if (total > 30000) break;
+  for (const name of unique) {
+    if (total > maxContext) break;
     const text = await fs.readFile(path.join(source, name), 'utf8').catch(() => '');
-    const part = `--- ${name} ---\n${clampText(text, name === 'README.md' || name.endsWith('.css') ? 2200 : 4200)}`;
+    const part = `--- ${name} ---\n${clampText(text, name === 'README.md' || name.endsWith('.css') ? 1500 : 2600)}`;
     chunks.push(part);
     total += part.length;
   }
-  return clampText(chunks.join('\n\n'), 32000);
+  return clampText(chunks.join('\n\n'), maxContext);
 }
 
 function friendlyAiError(err) {

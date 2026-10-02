@@ -1,4 +1,5 @@
 import path from 'node:path';
+import fs from 'node:fs/promises';
 import { copyDir, ensureDir } from '../utils/fsx.js';
 import { uuid } from '../utils/ids.js';
 
@@ -37,7 +38,28 @@ export class SnapshotStore {
     );
     if (!row) throw new Error('Snapshot not found');
     const dest = path.join(this.cfg.projectsDir, project.slug, 'source');
-    await copyDir(row.path, dest);
+    const staging = path.join(path.dirname(dest), `.source-restore-${uuid()}`);
+    const backup = path.join(path.dirname(dest), `.source-backup-${uuid()}`);
+    let movedCurrent = false;
+    try {
+      await copyDir(row.path, staging);
+      try {
+        await fs.rename(dest, backup);
+        movedCurrent = true;
+      } catch (err) {
+        if (err.code !== 'ENOENT') throw err;
+      }
+      await fs.rename(staging, dest);
+    } catch (err) {
+      if (movedCurrent) {
+        await fs.rename(backup, dest).catch((rollbackErr) => {
+          throw new Error(`Snapshot restore failed (${String(err.message || err)}); preserving current source also failed (${String(rollbackErr.message || rollbackErr)}).`);
+        });
+      }
+      await fs.rm(staging, { recursive: true, force: true }).catch(() => {});
+      throw err;
+    }
+    if (movedCurrent) await fs.rm(backup, { recursive: true, force: true });
     return row;
   }
 }

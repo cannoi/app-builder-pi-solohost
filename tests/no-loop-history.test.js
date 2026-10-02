@@ -35,6 +35,25 @@ test('verification after Improve replaces stale test results used by Publish', (
   assert.equal(next.e2e.status, 'passed');
 });
 
+test('verification merge clears stale preview evidence after source changes', () => {
+  const old = {
+    sourceHash: 'old-source',
+    previewSourceHash: 'old-source',
+    preview: { status: 'passed' },
+    dockerBuild: { status: 'passed' },
+  };
+  const next = mergeVerificationState(old, {
+    sourceHash: 'new-source',
+    previewSourceHash: null,
+    preview: null,
+    dockerBuild: null,
+  });
+  assert.equal(next.sourceHash, 'new-source');
+  assert.equal(next.previewSourceHash, null);
+  assert.equal(next.preview, null);
+  assert.equal(next.dockerBuild, null);
+});
+
 test('project work history persists across Builder sessions', async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'paf-history-'));
   const db = openDb(path.join(root, 'data'));

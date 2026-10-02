@@ -3,8 +3,9 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+import { fileURLToPath } from 'node:url';
 import { flattenImportedTree } from '../src/projects/importer.js';
-const ROOT = path.resolve(new URL('..', import.meta.url).pathname);
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 test('SoloHost compose has no undeclared interpolation and no forbidden security_opt', () => {
   const y = fs.readFileSync(new URL('../docker-compose.yml', import.meta.url), 'utf8');
@@ -118,8 +119,8 @@ test('native preview has mandatory online verification in product config', async
 
 test('SoloHost config schema keeps fields and fixed_values as arrays', () => {
   const text = fs.readFileSync(new URL('../config_options.yml', import.meta.url), 'utf8');
-  assert.match(text, /fields:\n\s+- name:/);
-  assert.match(text, /fixed_values:\n\s+- name: PREVIEW_MODE/);
+  assert.match(text, /fields:\r?\n\s+- name:/);
+  assert.match(text, /fixed_values:\r?\n\s+- name: PREVIEW_MODE/);
   assert.match(text, /- name: PODMAN_API_URL/);
 });
 

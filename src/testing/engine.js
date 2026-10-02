@@ -44,7 +44,7 @@ export async function runNodeTests(sourceDir, timeoutMs = 60000) {
   const pkgPath = path.join(sourceDir, 'package.json');
   if (!(await exists(pkgPath))) return { status: 'skipped', reason: 'No package.json' };
   const pkg = JSON.parse(await fs.readFile(pkgPath, 'utf8').catch(() => '{}'));
-  const install = await exec('npm', ['install', '--ignore-scripts', '--no-audit', '--no-fund'], { cwd: sourceDir, timeout: timeoutMs, maxBuffer: 2 * 1024 * 1024 }).catch((err) => ({ error: String(err.stderr || err.stdout || err.message).slice(0, 4000) }));
+  const install = await exec('npm', ['install', '--ignore-scripts', '--no-audit', '--no-fund', '--package-lock=false'], { cwd: sourceDir, timeout: timeoutMs, maxBuffer: 2 * 1024 * 1024 }).catch((err) => ({ error: String(err.stderr || err.stdout || err.message).slice(0, 4000) }));
   if (install.error) return { status: 'failed', runner: 'npm install + node --test', stage: 'install', error: install.error };
   try {
     await exec('npm', ['test', '--', '--test-reporter=spec'], { cwd: sourceDir, timeout: timeoutMs, maxBuffer: 4 * 1024 * 1024 });

@@ -15,6 +15,38 @@ async function api(url, options = {}) {
   }
   return data;
 }
+async function authenticateBuilder() {
+  const response = await fetch('/api/auth/status', { cache: 'no-store' });
+  const status = await response.json();
+  if (status.authenticated) return true;
+  const gate = $('authGate');
+  const message = $('authMessage');
+  gate.hidden = false;
+  if (!status.configured) {
+    $('authPasswordLabel').hidden = true;
+    $('authSubmit').hidden = true;
+    message.textContent = 'Builder access is locked until the operator sets BUILDER_ACCESS_PASSWORD (at least 16 characters) in SoloHost settings and restarts the app.';
+    return false;
+  }
+  $('authForm').onsubmit = async (event) => {
+    event.preventDefault();
+    $('authSubmit').disabled = true;
+    try {
+      await api('/api/auth/login', {
+        method: 'POST',
+        body: JSON.stringify({ password: $('authPassword').value }),
+      });
+      window.location.reload();
+    } catch (err) {
+      message.textContent = err.message || 'Sign-in failed. Please try again.';
+    } finally {
+      $('authSubmit').disabled = false;
+      $('authPassword').value = '';
+    }
+  };
+  $('authPassword').focus();
+  return false;
+}
 function compactNotice(text) {
   const raw = String(text || '').replace(/\s+/g, ' ').trim();
   if (/container exited before smoke/i.test(raw)) return 'GHCR: the container exited before HTTP was ready. Copy this: Container exited before smoke test passed.';
@@ -1152,11 +1184,25 @@ function bindSupport() {
 bindSupport();
 $('closeFeedback') && ($('closeFeedback').onclick = () => { $('feedbackModal').hidden = true; });
 $('sendFeedback') && ($('sendFeedback').onclick = sendFeedbackHub);
+$('signOut') && ($('signOut').onclick = async () => {
+  try {
+    await api('/api/auth/logout', { method: 'POST', body: '{}' });
+    window.location.reload();
+  } catch (err) {
+    add('ai', err.message || 'Could not sign out.');
+  }
+});
 
-Promise.all([loadStatus(), loadProjects(), loadSettings(), loadFeedbackConfig()]).then(async () => {
+authenticateBuilder().then((authenticated) => {
+  if (!authenticated) return;
+  return Promise.all([loadStatus(), loadProjects(), loadSettings(), loadFeedbackConfig()]).then(async () => {
   await initFeedbackHub();
   const id = savedProjectId();
   if (id && state.projects.some((p) => p.id === id)) await openProject(id, false);
   else if (state.projects[0]?.id) await openProject(state.projects[0].id, false);
   else renderWelcome();
-}).catch(() => renderWelcome());
+  });
+}).catch(() => {
+  $('authGate').hidden = false;
+  $('authMessage').textContent = 'Could not check Builder sign-in. Check the connection, then reload the page.';
+});

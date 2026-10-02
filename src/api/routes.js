@@ -15,9 +15,18 @@ import { normalizeDeepSeekModel } from '../ai/providers/deepseek.js';
 import { inferAction, parseGithubRepoUrl } from '../scripts/ops.js';
 import { createProjectZip } from '../projects/exporter.js';
 import { gcDocker } from '../docker/cleanup.js';
+import { createAccessAuth } from '../security/access-auth.js';
 
 export function registerRoutes(r, app) {
   const { cfg, db, jobs, projects, snapshots, github, releases, runner, ai } = app;
+  const accessAuth = createAccessAuth(cfg.security?.accessPassword);
+  r.use(accessAuth.middleware);
+  r.get('/api/auth/status', (req, res) => res.json({
+    configured: accessAuth.configured,
+    authenticated: accessAuth.isAuthenticated(req),
+  }));
+  r.post('/api/auth/login', (req, res) => accessAuth.login(req, res));
+  r.post('/api/auth/logout', (req, res) => accessAuth.logout(req, res));
 
   const ensureFree = (projectId, res) => {
     if (!jobs.isBusy(projectId)) return true;

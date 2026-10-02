@@ -4,4 +4,9 @@ description: "Create, test, improve and publish simple SoloHost apps with AI."
 footer_hint: AI Builder · Safe preview · GitHub publishing.
 output_file: .env
 after_save: Saved. Start the app from SoloHost.
-fields: []
+fields:
+  - name: BUILDER_ACCESS_PASSWORD
+    label: Builder access password
+    type: password
+    preserve_if_blank: true
+    help: "Required to open Builder. Use at least 16 characters and keep it private."

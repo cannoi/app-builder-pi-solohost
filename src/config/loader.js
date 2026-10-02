@@ -8,6 +8,9 @@ export function loadConfig() {
     templatesDir: process.env.TEMPLATES_DIR || './templates',
     logLevel: process.env.LOG_LEVEL || 'info',
     locale: process.env.APP_LOCALE || 'en',
+    security: {
+      accessPassword: process.env.BUILDER_ACCESS_PASSWORD || '',
+    },
     feedbackHub: {
       hubId: process.env.SHFH_HUB_ID || 'FH-CANNOI-0905428801SH',
       url: String(process.env.SHFH_HUB_URL || process.env.FEEDBACK_HUB_URL || 'http://14.176.78.46:8090').replace(/\/$/, ''),

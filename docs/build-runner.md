@@ -11,4 +11,6 @@ The preview flow is:
 7. If `auto` mode cannot use the Container Sandbox, fall back to native preview and report the runtime used.
 8. Never use a host Docker socket.
 
+Every saved test result and live preview is tied to a fingerprint of the current project source. Repair and Upgrade verify the files in the canonical project `source` directory; chat-triggered changes use the same verification record as direct Improve actions. A release is blocked if either the latest checks or preview belong to an older source fingerprint. Run Check and then Run against the updated files before publishing.
+
 GitHub Actions remains responsible for the final published SoloHost image.

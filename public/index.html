@@ -9,6 +9,16 @@
   <link rel="stylesheet" href="/styles.css?v=1.4.35">
 <style>.paf-made-by{position:fixed;right:8px;bottom:8px;width:min(72px,12vw);max-width:12vw;height:auto;object-fit:contain;opacity:.5;background:transparent;padding:0;border:0;box-shadow:none;filter:none;pointer-events:none;z-index:30}</style>
 </head><body>
+  <div id="authGate" class="modal" hidden>
+    <form id="authForm" class="sheet">
+      <div class="sheetHead"><h2>App Builder sign in</h2></div>
+      <p id="authMessage" class="info">Enter your Builder access password.</p>
+      <label id="authPasswordLabel">Access password
+        <input id="authPassword" type="password" autocomplete="current-password" required>
+      </label>
+      <button id="authSubmit" class="primary wide" type="submit">Sign in</button>
+    </form>
+  </div>
   <div id="app"><header class="hero">
   <img src="/banner.png" alt="App Builder — Pi SoloHost">
 </header>
@@ -355,6 +365,7 @@
   </div>
 
   <button id="saveSettings" class="primary wide">Save</button>
+  <button id="signOut" class="wide" type="button">Sign out</button>
 
   <div class="advisorBox">
     <h3>🧭 AI Advisor</h3>

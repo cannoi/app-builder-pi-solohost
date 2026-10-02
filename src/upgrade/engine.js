@@ -7,6 +7,7 @@ import { runStaticTests, runNodeTests } from '../testing/engine.js';
 import { runDare } from '../dare/engine.js';
 import { findMissingNodeModules } from '../projects/deps-fix.js';
 import { writeGeneratedFiles } from '../projects/generator.js';
+import { sourceFingerprint } from '../projects/source-version.js';
 import { parseRule, capabilityGap, formatRuleStatus, buildRuleTasks, normalizeExecution } from './rules.js';
 
 const MAX_SAFE_REPAIRS = 2;
@@ -168,31 +169,57 @@ export async function applyUpgrade({ project, projects, snapshots, plan, request
   if (files.length > 8) throw new Error('Upgrade scope is too large for an automatic minimal patch.');
   const sourceDir = projects.sourceDir(project.slug);
   const before = await fileManifest(sourceDir);
-  const checkpoint = await snapshots.create(project, 'before-upgrade');
+  const paths = new Set();
   for (const f of files) {
     const rel = normalize(f.path);
     if (!rel || rel.startsWith('/') || rel.includes('..') || PROTECTED.test(rel)) throw new Error(`Upgrade attempted to modify a protected or unsafe file: ${rel}`);
     if (Buffer.byteLength(f.content, 'utf8') > 1024 * 1024) throw new Error(`Upgrade file is too large: ${rel}`);
+    if (paths.has(rel)) throw new Error(`Upgrade plan contains the same file more than once: ${rel}`);
+    paths.add(rel);
   }
-  const written = await writeGeneratedFiles(sourceDir, files);
-  const after = await fileManifest(sourceDir);
-  const changed = diffManifest(before, after);
-  const unexpected = changed.filter((f) => !written.map(normalize).includes(normalize(f)));
-  if (unexpected.length) {
-    await snapshots.restore(project, checkpoint.id);
-    throw new Error(`Upgrade rolled back: unexpected files changed: ${unexpected.join(', ')}`);
-  }
-  const verified = await inspectState(sourceDir);
-  const baseline = await projects.readMetadata(project, 'upgrade-baseline.json', {});
-  const baselineScore = Number(baseline?.health?.score ?? 0);
-  const currentScore = score(verified.staticResult, verified.nodeResult, verified.security);
-  if (verified.security.critical > 0 || currentScore > Math.max(0, baselineScore)) {
-    await snapshots.restore(project, checkpoint.id);
-    throw new Error('Upgrade rolled back because verification regressed the app.');
+  const checkpoint = await snapshots.create(project, 'before-upgrade');
+  let written;
+  let after;
+  let verified;
+  let baseline;
+  try {
+    written = await writeGeneratedFiles(sourceDir, files);
+    after = await fileManifest(sourceDir);
+    const changed = diffManifest(before, after);
+    const unexpected = changed.filter((f) => !written.map(normalize).includes(normalize(f)));
+    if (unexpected.length) throw new Error(`Upgrade rolled back: unexpected files changed: ${unexpected.join(', ')}`);
+    verified = await inspectState(sourceDir);
+    baseline = await projects.readMetadata(project, 'upgrade-baseline.json', {});
+    const baselineScore = Number(baseline?.health?.score ?? 0);
+    const currentScore = score(verified.staticResult, verified.nodeResult, verified.security);
+    if (verified.security.critical > 0 || currentScore > Math.max(0, baselineScore)) {
+      throw new Error('Upgrade rolled back because verification regressed the app.');
+    }
+  } catch (err) {
+    try {
+      await snapshots.restore(project, checkpoint.id);
+    } catch (rollbackErr) {
+      throw new Error(`Upgrade failed (${String(err.message || err)}); rollback also failed (${String(rollbackErr.message || rollbackErr)}).`);
+    }
+    throw err;
   }
   await appendUpgradeHistory(projects, project, {
     kind: 'upgrade', at: new Date().toISOString(), request, rootCause: plan.root_cause,
     files: written, verification: verified.health, checkpointId: checkpoint.id, result: 'verified',
+  });
+  const sourceHash = await sourceFingerprint(sourceDir);
+  const previousTests = await projects.readMetadata(project, 'test-plan.json', {});
+  await projects.saveMetadata(project, 'test-plan.json', {
+    ...previousTests,
+    staticResult: verified.staticResult,
+    nodeResult: verified.nodeResult,
+    scan: verified.security,
+    sourceHash,
+    preview: null,
+    dockerBuild: null,
+    e2e: null,
+    previewSourceHash: null,
+    verifiedAt: new Date().toISOString(),
   });
   await projects.saveMetadata(project, 'upgrade-baseline.json', { ...baseline, updatedAt: new Date().toISOString(), sourceHash: manifestHash(after), knownIssues: verified.issues });
   return { ok: true, files: written, verification: verified.health, checkpointId: checkpoint.id };
@@ -430,13 +457,22 @@ function buildKnowledgeMap(project, stack, state, manifest, repairs) {
 async function relevantContext(sourceDir, request) {
   const files = await listFiles(sourceDir);
   const keywords = String(request).toLowerCase().split(/[^a-z0-9_-]+/i).filter((x) => x.length > 3).slice(0, 12);
-  const selected = files.filter((f) => /package\.json|Dockerfile|compose|config|route|api|server|app|index|readme/i.test(f) || keywords.some((k) => f.toLowerCase().includes(k))).slice(0, 40);
-  const parts = [];
-  for (const rel of selected) {
+  const selected = files.map((file) => ({
+    file,
+    score: keywords.reduce((sum, word) => sum + (file.toLowerCase().includes(word) ? 5 : 0), 0)
+      + (/package\.json|Dockerfile|compose|config|route|api|server|app|index|readme/i.test(file) ? 2 : 0),
+  })).sort((a, b) => b.score - a.score || a.file.localeCompare(b.file)).slice(0, 16);
+  const parts = [`SOURCE INVENTORY (${files.length} files): ${files.slice(0, 80).join(', ')}`];
+  let total = parts[0].length;
+  for (const { file: rel } of selected) {
+    if (total >= 18000) break;
     const text = await fs.readFile(path.join(sourceDir, rel), 'utf8').catch(() => '');
-    if (text) parts.push(`FILE ${rel}\n${text.slice(0, 12000)}`);
+    if (!text) continue;
+    const chunk = `FILE ${rel}\n${text.slice(0, Math.min(2400, 18000 - total))}`;
+    parts.push(chunk);
+    total += chunk.length;
   }
-  return parts.join('\n\n').slice(0, 100000);
+  return parts.join('\n\n');
 }
 
 async function fileManifest(sourceDir) {

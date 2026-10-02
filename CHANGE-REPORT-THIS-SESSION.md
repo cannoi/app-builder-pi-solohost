@@ -30,3 +30,23 @@ Create App, Preview, Provider Hub, GitHub publisher internals, Upgrade Workshop 
 - Existing normal Upgrade requests keep the Apply approval flow.
 - Bundled Rules now include bounded execution and Definition-of-Done contracts.
 - No UI, provider, GitHub, GHCR, or SoloHost architecture was intentionally changed.
+
+
+## 1.4.61 — Repair / Upgrade workflow integrity and access hardening
+
+### Done
+- Tie test and preview evidence to a SHA-256 fingerprint of the current project source; block publishing when any evidence is stale.
+- Keep chat-triggered Improve changes on the same verification path as direct Improve actions, and report success only after checks and preview pass.
+- Limit AI context and prioritize files relevant to the requested change to reduce overload on smaller/free models.
+- Restore snapshots as a complete source replacement so rollback removes files added after the checkpoint; restore the checkpoint if a multi-file Upgrade write fails.
+- Protect project APIs and preview routes with a signed, HTTP-only session; require an operator-configured SoloHost password, rate-limit failed sign-ins, and reject cross-origin login and unsafe API requests.
+- Sandbox external preview HTML without granting same-origin access.
+
+### Verification
+- Workflow/auth regression tests: 13/13 passed.
+- Related configuration, hardening, UI, and preview tests: 50/50 passed.
+- Full suite: 237/240 passed. Two existing Feedback Hub tests assert that the current fallback API must not exist, while the UI and server still implement it; one ZIP test requires the unavailable `unzip` executable on Windows.
+
+### Not done
+- The previously identified DNS rebinding/SSRF risk in external preview host resolution remains; it was not part of the selected High-severity fixes.
+- The three full-suite failures above remain outside the workflow/auth changes.

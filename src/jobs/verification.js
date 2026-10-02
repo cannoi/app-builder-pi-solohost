@@ -1,14 +1,22 @@
 export function mergeVerificationState(previous = {}, verified = {}) {
+  const value = (key) => Object.hasOwn(verified, key) ? verified[key] : (previous[key] ?? null);
+  const preview = Object.hasOwn(verified, 'preview')
+    ? verified.preview
+    : Object.hasOwn(verified, 'dockerBuild')
+      ? verified.dockerBuild
+      : (previous.preview ?? null);
   return {
     ...previous,
-    staticResult: verified.staticResult || previous.staticResult || null,
-    nodeResult: verified.nodeResult || previous.nodeResult || null,
-    scan: verified.scan || previous.scan || null,
-    preview: verified.dockerBuild || verified.preview || previous.preview || null,
-    dockerBuild: verified.dockerBuild || previous.dockerBuild || null,
-    e2e: verified.e2e || previous.e2e || null,
-    imageFile: verified.imageFile || previous.imageFile || null,
-    securityRepair: verified.securityRepair || previous.securityRepair || null,
-    verifiedAt: new Date().toISOString(),
+    staticResult: value('staticResult'),
+    nodeResult: value('nodeResult'),
+    scan: value('scan'),
+    preview,
+    dockerBuild: value('dockerBuild'),
+    e2e: value('e2e'),
+    imageFile: value('imageFile'),
+    securityRepair: value('securityRepair'),
+    sourceHash: value('sourceHash'),
+    previewSourceHash: value('previewSourceHash'),
+    verifiedAt: verified.verifiedAt || new Date().toISOString(),
   };
 }
