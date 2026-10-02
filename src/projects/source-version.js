@@ -20,6 +20,31 @@ export async function sourceFingerprint(sourceDir) {
   return hash.digest('hex');
 }
 
+export async function sourceManifest(sourceDir) {
+  const files = await collectFiles(sourceDir);
+  const manifest = [];
+  for (const rel of files) {
+    const full = path.join(sourceDir, rel);
+    const stat = await fs.lstat(full);
+    if (!stat.isFile()) continue;
+    const content = await fs.readFile(full);
+    manifest.push({
+      path: rel.replace(/\\/g, '/'),
+      size: content.length,
+      sha256: crypto.createHash('sha256').update(content).digest('hex'),
+    });
+  }
+  return manifest;
+}
+
+export function diffSourceManifest(before = [], after = []) {
+  const previous = new Map(before.map((entry) => [entry.path, entry.sha256]));
+  const current = new Map(after.map((entry) => [entry.path, entry.sha256]));
+  return [...new Set([...previous.keys(), ...current.keys()])]
+    .filter((file) => previous.get(file) !== current.get(file))
+    .sort((a, b) => a.localeCompare(b));
+}
+
 async function collectFiles(root, prefix = '') {
   const entries = await fs.readdir(path.join(root, prefix), { withFileTypes: true });
   const files = [];

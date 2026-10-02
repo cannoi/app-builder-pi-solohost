@@ -18,6 +18,26 @@ test('repeat guard blocks the same failed action after one automatic attempt in 
   assert.equal(shouldBlockRepeatedAction(history, 'release-tests-failed', now + 11 * 60_000, 10 * 60_000, 1), false);
 });
 
+test('repeat guard stops identical fingerprint, workspace, and validation evidence immediately', () => {
+  const now = Date.now();
+  const history = {
+    fingerprint: 'UNKNOWN_RUNTIME_ERROR:typeerror',
+    attempts: 1,
+    lastAt: new Date(now).toISOString(),
+    workspaceHash: 'workspace-a',
+    validationHash: 'validation-a',
+  };
+  assert.equal(shouldBlockRepeatedAction(history, history.fingerprint, now, undefined, 2, {
+    workspaceHash: 'workspace-a', validationHash: 'validation-a',
+  }), true);
+  assert.equal(shouldBlockRepeatedAction(history, history.fingerprint, now, undefined, 2, {
+    workspaceHash: 'workspace-b', validationHash: 'validation-a',
+  }), false);
+  assert.equal(shouldBlockRepeatedAction(history, history.fingerprint, now, undefined, 2, {
+    workspaceHash: 'workspace-a', validationHash: 'validation-b',
+  }), false);
+});
+
 
 test('repair fingerprint follows the concrete runtime error, not changing user wording', () => {
   const runtime = { error: "Error: EACCES: permission denied, mkdir '/app/data'", logs: '' };

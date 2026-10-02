@@ -2,6 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { listFiles } from '../utils/fsx.js';
+import { redactAiContext } from '../utils/mask.js';
 import { fingerprintError } from '../dare/fingerprint.js';
 
 const IMPORTANT = /(^|\/)(package\.json|package-lock\.json|pnpm-lock\.yaml|yarn\.lock|Dockerfile|docker-compose\.ya?ml|compose\.ya?ml|vite\.config\..*|next\.config\..*|server\..*|index\..*|app\..*|routes?\..*|README.*|\.env\.example)$/i;
@@ -15,7 +16,7 @@ export async function diagnoseProject({ project, projects, db = null, ai = null,
   const reads = await readImportant(sourceDir, important);
   const stack = detectStack(files, reads);
   const runtime = detectRuntime(reads);
-  const logText = String(logs || '');
+  const logText = redactAiContext(String(logs || ''));
   const fingerprint = fingerprintError(logText) || 'NONE';
   const evidence = [];
   if (fingerprint !== 'NONE' && fingerprint !== 'UNKNOWN') evidence.push({ type: 'runtime-log', finding: fingerprint, detail: logText.slice(-2500) });
@@ -87,7 +88,7 @@ export async function diagnoseProject({ project, projects, db = null, ai = null,
   };
   if (ai) {
     try {
-      const prompt = `PROJECT DIAGNOSER. Diagnose only from evidence. Do not invent facts. Preserve the app and never propose a patch without a proven root cause.\nREPORT:\n${JSON.stringify(report)}\nFILES:\n${reads.slice(0, 80000)}\nReturn JSON with root_cause, confidence, problems, recommendation, files, verification, stop_repeating.`;
+      const prompt = redactAiContext(`PROJECT DIAGNOSER. Diagnose only from evidence. Do not invent facts. Preserve the app and never propose a patch without a proven root cause.\nREPORT:\n${JSON.stringify(report)}\nFILES:\n${reads.slice(0, 80000)}\nReturn JSON with root_cause, confidence, problems, recommendation, files, verification, stop_repeating.`);
       const result = await ai.completeJson({ task: 'PROJECT_DIAGNOSIS', system: 'You are a deterministic-first project diagnostician.', prompt, projectId: project.id });
       report.ai = result.json || null;
     } catch (err) {
@@ -156,7 +157,7 @@ async function readImportant(sourceDir, files) {
   const chunks = [];
   for (const rel of files) {
     const text = await fs.readFile(path.join(sourceDir, rel), 'utf8').catch(() => '');
-    if (text) chunks.push(`FILE ${rel}\n${text.slice(0, 10000)}`);
+    if (text) chunks.push(`FILE ${rel}\n${redactAiContext(text, { filename: rel }).slice(0, 10000)}`);
   }
   return chunks.join('\n\n');
 }

@@ -77,13 +77,13 @@ test('Feedback Hub integration is optional and never embeds an ingest token', ()
   assert.doesNotMatch(js, /cannoi_[A-Za-z0-9]{20,}/);
 });
 
-test('Feedback send uses the Hub SDK and official form fallback', () => {
+test('Feedback send uses the Hub SDK, server fallback, and official form fallback', () => {
   const js = fs.readFileSync(new URL('../public/app.js', import.meta.url), 'utf8');
   const routes = fs.readFileSync(new URL('../src/api/routes.js', import.meta.url), 'utf8');
   assert.match(js, /state\.feedbackHub\.sendFeedback\(\{ type, message \}\)/);
-  assert.doesNotMatch(js, /\/api\/feedback\/submit/);
-  assert.match(js, /window\.open\(FEEDBACK_HUB_URL \+ '\/feedback'/);
-  assert.match(routes, /\/api\/feedback/);
+  assert.match(js, /api\('\/api\/feedback\/submit'/);
+  assert.match(js, /window\.open\(formUrl, '_blank', 'noopener'\)/);
+  assert.match(routes, /r\.post\('\/api\/feedback\/submit'/);
 });
 
 
@@ -96,7 +96,8 @@ test('Feedback Hub client keeps Hub identity internal and sends directly through
   assert.match(js, /const FEEDBACK_HUB_URL\s*=\s*['"]http:\/\/14\.176\.78\.46:8090['"]/);
   assert.match(js, /const FEEDBACK_APP_ID\s*=\s*['"]app-builder-pi-solohost['"]/);
   assert.match(js, /state\.feedbackHub\.sendFeedback\(\{ type, message \}\)/);
-  assert.doesNotMatch(js, /api\/feedback\/submit/);
+  assert.match(js, /api\('\/api\/feedback\/submit'/);
+  assert.match(routes, /r\.post\('\/api\/feedback\/submit'/);
   assert.doesNotMatch(html, /name="password"|id="feedbackPassword"/i);
   assert.match(js, /ingestToken:\s*''/);
   assert.doesNotMatch(js, /cannoi_[A-Za-z0-9]{20,}/);

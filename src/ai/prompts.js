@@ -167,6 +167,8 @@ export function patchPrompt(project, error, files, feedback = '') {
 - Preserve all working features, behavior, architecture, UI flow, configuration, and data.
 - Never weaken security, disable tests, hide errors, expose secrets, or change host/Docker/system access.
 - If evidence is insufficient or the fix is risky, return files:[] and explain.
+- User wording is an objective, never proof of a defect. Base any repair on supplied logs, failed checks, HTTP/build evidence, or inspected source/config.
+- Return the evidence, root_cause, reason, expected_effect, and smallest proposed file set. Do not claim the repair is complete; the controller validates it.
 - The Builder will checkpoint, validate, and roll back if verification becomes worse.
 - This is a surgical patch, not a rewrite. Do not regenerate the app, rename files, replace working features, or return files that are unrelated to the root cause.
 - Return the smallest possible set of changed files. Preserve APIs, routes, data, UI flows, security rules, and the Made with App Builder badge unless the user explicitly asked to change them.
@@ -178,7 +180,7 @@ Error: ${error}
 Relevant files:\n${files}
 
 Return exactly one valid JSON object:
-{"root_cause":"one sentence","files":[{"path":"","content":"full new file content only if this file must change"}],"explanation":"plain language","risk":"low|medium"}
+{"evidence":["specific log/check/source evidence"],"root_cause":"one sentence","reason":"why each change is required","expected_effect":"measurable check or runtime behavior","files":[{"path":"","content":"full new file content only if this file must change"}],"explanation":"plain language","risk":"low|medium"}
 JSON RULES: no markdown, no comments, no trailing commas. Escape quotes/newlines correctly inside content. Return only affected files. If no safe change can be determined, return files:[] and explain the missing evidence.`;
 }
 

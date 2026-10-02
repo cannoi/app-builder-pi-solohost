@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import { execFileSync } from 'node:child_process';
+import { unpackZip } from '../src/utils/zip.js';
 
 test('SoloHost knowledge is embedded in the Builder prompts', async () => {
   const p = await import('../src/ai/prompts.js');
@@ -50,12 +50,12 @@ test('project exporter creates source and SoloHost ZIPs without secrets', async 
   const install = await createProjectZip({ sourceDir: `${root}/source`, outputDir: `${root}/artifacts`, slug: 'demo', kind: 'solohost' });
   assert.equal(fs.existsSync(source.path), true);
   assert.equal(fs.existsSync(install.path), true);
-  const listSource = execFileSync('unzip', ['-l', source.path], { encoding: 'utf8' });
-  const listInstall = execFileSync('unzip', ['-l', install.path], { encoding: 'utf8' });
-  assert.match(listSource, /index\.html/);
-  assert.doesNotMatch(listSource, /\.env\s/);
-  assert.match(listInstall, /docker-compose\.yml/);
-  assert.doesNotMatch(listInstall, /index\.html/);
+  const listSource = unpackZip(fs.readFileSync(source.path)).map((entry) => entry.name);
+  const listInstall = unpackZip(fs.readFileSync(install.path)).map((entry) => entry.name);
+  assert.ok(listSource.includes('index.html'));
+  assert.ok(!listSource.some((name) => name === '.env' || name.endsWith('/.env')));
+  assert.ok(listInstall.some((name) => name.endsWith('docker-compose.yml')));
+  assert.ok(!listInstall.includes('index.html'));
 });
 
 test('top-level Builder compose keeps SoloHost-compatible runtime environment', async () => {

@@ -75,6 +75,24 @@ export async function runNodeTests(sourceDir, timeoutMs = 60000, { installDepend
   }
 }
 
+export async function runProjectBuild(sourceDir, timeoutMs = 45000) {
+  const pkgPath = path.join(sourceDir, 'package.json');
+  if (!(await exists(pkgPath))) return { status: 'skipped', reason: 'No package.json' };
+  let pkg;
+  try {
+    pkg = JSON.parse(await fs.readFile(pkgPath, 'utf8'));
+  } catch (err) {
+    return { status: 'failed', error: `Invalid package.json: ${String(err.message || err).slice(0, 500)}` };
+  }
+  if (!pkg?.scripts?.build) return { status: 'skipped', reason: 'No build script' };
+  try {
+    await exec('npm', ['run', 'build'], { cwd: sourceDir, timeout: timeoutMs, maxBuffer: 4 * 1024 * 1024 });
+    return { status: 'passed', script: 'npm run build' };
+  } catch (err) {
+    return { status: 'failed', script: 'npm run build', error: String(err.stderr || err.stdout || err.message).slice(0, 5000) };
+  }
+}
+
 export async function runSyntaxChecks(sourceDir, selectedFiles = null) {
   const files = selectedFiles || await listFiles(sourceDir);
   const candidates = [...new Set(files.map((file) => String(file).replace(/\\/g, '/')))]

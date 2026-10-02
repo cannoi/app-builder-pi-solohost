@@ -3,20 +3,26 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { listFiles, readJson } from '../utils/fsx.js';
 import { scanProject } from '../security/scanner.js';
-import { runStaticTests, runNodeTests, runSyntaxChecks } from '../testing/engine.js';
+import { runStaticTests, runNodeTests, runSyntaxChecks, runProjectBuild } from '../testing/engine.js';
 import { runDare } from '../dare/engine.js';
 import { findMissingNodeModules } from '../projects/deps-fix.js';
 import { writeGeneratedFiles } from '../projects/generator.js';
 import { sourceFingerprint } from '../projects/source-version.js';
 import { parseRule, capabilityGap, formatRuleStatus, buildRuleTasks, normalizeExecution } from './rules.js';
 import { languageInstruction } from '../ai/language.js';
+import { isProtectedFilePath } from '../security/policy.js';
+import { redactAiContext } from '../utils/mask.js';
+import { createRepairOperation, transitionRepairOperation, finishRepairOperation, persistRepairOperation } from '../jobs/loop-guard.js';
 
 const MAX_SAFE_REPAIRS = 2;
 const MAX_AI_REPAIRS = 2;
-const PROTECTED = /^(?:\.env(?:\.|$)|.*\/(?:\.env(?:\.|$)|id_rsa(?:\.|$)|private[_-]?key(?:\.|$)))/i;
 
-export async function inspectUpgrade({ project, projects, snapshots, log }) {
+export async function inspectUpgrade({ project, projects, snapshots, log, validateRuntime = null, jobId = null }) {
   const sourceDir = projects.sourceDir(project.slug);
+  const operation = createRepairOperation({ jobId, projectId: project.id, kind: 'upgrade-inspection' });
+  operation.workspace_hash_before = await sourceFingerprint(sourceDir);
+  await persistRepairOperation(projects, project, operation);
+  transitionRepairOperation(operation, 'DIAGNOSE', { source_hash: operation.workspace_hash_before });
   let state = await inspectState(sourceDir);
   const stack = state.stack;
 
@@ -30,18 +36,37 @@ export async function inspectUpgrade({ project, projects, snapshots, log }) {
     if (!candidate && attempt > 0) break;
     const repairBefore = await fileManifest(sourceDir);
     const checkpoint = await snapshots.create(project, `before-upgrade-safe-${attempt + 1}`);
+    transitionRepairOperation(operation, 'EVIDENCE', { source_hash: manifestHash(repairBefore), candidate });
+    const issueIds = state.issues.filter((issue) => issue.id !== 'healthy').map((issue) => issue.id).sort();
+    operation.fingerprint = issueIds.length
+      ? `INSPECTION_FINDINGS:${crypto.createHash('sha256').update(JSON.stringify(issueIds)).digest('hex').slice(0, 24)}`
+      : 'NO_FAILURE_EVIDENCE';
+    operation.fingerprint_history.push({ cycle: attempt + 1, fingerprint: operation.fingerprint, workspace_hash: manifestHash(repairBefore) });
+    transitionRepairOperation(operation, 'FINGERPRINT', { fingerprint: operation.fingerprint });
+    transitionRepairOperation(operation, 'DARE', { source_hash: manifestHash(repairBefore) });
+    await persistRepairOperation(projects, project, operation);
     const repair = await runDare({
       sourceDir,
       logs: 'Upgrade preflight deterministic inspection.',
       extra: { message: 'SOLOHOST_UPGRADE_PREFLIGHT' },
       history: repairHistory,
     });
+    if (repair?.fingerprint && repair.fingerprint !== operation.fingerprint) {
+      operation.fingerprint = repair.fingerprint;
+      operation.fingerprint_history.push({ cycle: attempt + 1, fingerprint: repair.fingerprint, workspace_hash: manifestHash(repairBefore) });
+    }
+    transitionRepairOperation(operation, 'DARE_RESULT', { fingerprint: repair?.fingerprint || null, status: repair?.ok ? 'changed' : 'no_change' });
+    await persistRepairOperation(projects, project, operation);
     if (!repair?.ok) {
       if (repair?.stopped || repair?.next === 'AI' || repair?.next === 'USER_ACTION') break;
       break;
     }
     const after = await fileManifest(sourceDir);
     const changed = diffManifest(repairBefore, after);
+    operation.fingerprint = repair.fingerprint || operation.fingerprint || null;
+    operation.fingerprint_history.push({ cycle: attempt + 1, fingerprint: repair.fingerprint || 'NO_CHANGE', workspace_hash: manifestHash(repairBefore), after_hash: manifestHash(after) });
+    operation.actual_changed_files = changed;
+    operation.workspace_hash_after = await sourceFingerprint(sourceDir);
     if (!changed.length) break;
     const allowed = new Set((repair.files || []).map(normalize));
     const unexpected = changed.filter((f) => !allowed.has(normalize(f)));
@@ -52,7 +77,10 @@ export async function inspectUpgrade({ project, projects, snapshots, log }) {
     const afterState = await inspectState(sourceDir, {
       installDependencies: dependencyManifestChanged(repairBefore, after),
     });
+    const runtime = validateRuntime ? await validateRuntime(project) : null;
     const regression = verificationRegressed(verificationSummary(state), verificationSummary(afterState));
+    if (afterState.buildResult.status === 'failed') regression.push('Build failed after the deterministic repair.');
+    if (validateRuntime && (runtime?.status !== 'passed' || runtime?.health !== true)) regression.push('Start/health/HTTP/smoke verification failed after the deterministic repair.');
     if (regression.length) {
       log?.warn?.('Upgrade deterministic repair regressed verification', { regression, before: verificationSummary(state), after: verificationSummary(afterState) });
       await snapshots.restore(project, checkpoint.id);
@@ -83,15 +111,23 @@ export async function inspectUpgrade({ project, projects, snapshots, log }) {
     knownIssues: state.issues,
     safeRepairs,
     verification: verificationSummary(state),
-    evidence: { static: state.staticResult.status, node: state.nodeResult.status, syntax: state.syntaxResult.status },
+    evidence: { static: state.staticResult.status, node: state.nodeResult.status, syntax: state.syntaxResult.status, build: state.buildResult.status },
   };
   await projects.saveMetadata(project, 'upgrade-knowledge.json', knowledge);
   await projects.saveMetadata(project, 'upgrade-baseline.json', baseline);
   await appendUpgradeHistory(projects, project, {
     kind: 'inspect', at: baseline.createdAt, result: 'baseline-created', safeRepairs,
   });
+  finishRepairOperation(operation, 'DONE', {
+    workspace_hash_before: operation.workspace_hash_before,
+    workspace_hash_after: await sourceFingerprint(sourceDir),
+    changed_files: operation.actual_changed_files || [],
+    verification: baseline.verification,
+    safe_repairs: safeRepairs.length,
+  });
+  await persistRepairOperation(projects, project, operation);
   log?.info?.('Upgrade baseline created', { project: project.slug, files: after.length, safeRepairs: safeRepairs.length });
-  return { baseline, knowledge, issues: state.issues, safeRepairs, ready: true };
+  return { baseline, knowledge, issues: state.issues, safeRepairs, ready: true, operationId: operation.operation_id, terminalState: operation.terminal_state };
 }
 
 export async function diagnoseUpgradeRequest({ project, projects, ai, request, ruleText = '', taskBrief = null, verificationFailure = null }) {
@@ -99,7 +135,8 @@ export async function diagnoseUpgradeRequest({ project, projects, ai, request, r
   const knowledge = await projects.readMetadata(project, 'upgrade-knowledge.json', {});
   const baseline = await projects.readMetadata(project, 'upgrade-baseline.json', {});
   const parsed = taskBrief ? { valid: false } : parseRule(ruleText || (/RULE_NAME|REQUIRED CAPABILITIES|REQUIRED_CAPABILITIES/i.test(request || '') ? request : ''));
-  const relevant = await relevantContext(sourceDir, `${request}\n${taskBrief?.capability || (parsed.valid ? parsed.requiredCapabilities.join(' ') : '')}`);
+  const safeRequest = redactAiContext(request);
+  const relevant = await relevantContext(sourceDir, `${safeRequest}\n${taskBrief?.capability || (parsed.valid ? parsed.requiredCapabilities.join(' ') : '')}`);
   const gap = parsed.valid ? capabilityGap(parsed, relevant) : null;
   if (ruleText && !taskBrief && !parsed.valid) throw new Error(parsed.error);
   if (parsed.valid) await projects.saveMetadata(project, 'upgrade-rule.json', { rule: parsed, gap, loadedAt: new Date().toISOString() });
@@ -142,7 +179,7 @@ RULE:
 ${parsed.valid ? JSON.stringify({ name: parsed.name, goal: parsed.goal, required: parsed.requiredCapabilities, missing: gap?.missingCapabilities || [], secrets: parsed.secrets }) : 'No structured rule. Treat the user text as a normal upgrade request.'}
 
 USER REQUEST:
-${String(request).trim()}
+${safeRequest}
 
 ${verificationFailure ? `${verificationFailure.sourceChanged
   ? 'PROJECT SOURCE CHANGED WHILE THE PLAN WAS BEING PREPARED; no patch was written.'
@@ -167,56 +204,103 @@ Return JSON only with:
   "alternatives": [{"name":"...","risk":"...","scope":"..."}]
 }
 Rules: achieve the user's requested outcome, not merely describe a repair. Also fix confirmed pre-existing syntax, test, and security findings when safe and within the request's scope. Do not invent facts; do not propose dependency-wide upgrades; do not modify secrets, credentials, database schema, auth, payment, wallet, or Docker architecture unless explicitly required and marked high risk. Keep the patch limited to files needed for the request or confirmed findings, and preserve all unrelated behavior. If a required credential, destructive action, or decision cannot be safely inferred, set needs_user_action instead of guessing.`;
-  const result = await ai.completeJson({ task: 'UPGRADE_WORKSHOP', system: 'You are the Upgrade Workshop. Inspect first, diagnose from evidence, recommend the smallest effective change, and preserve the existing app.', prompt, projectId: project.id });
+  const result = await ai.completeJson({ task: 'UPGRADE_WORKSHOP', system: 'You are the Upgrade Workshop. Inspect first, diagnose from evidence, recommend the smallest effective change, and preserve the existing app.', prompt: redactAiContext(prompt), projectId: project.id });
   return { ...(result.json || {}), rule: parsed.valid ? parsed : null, gap, ruleStatus: parsed.valid ? formatRuleStatus(parsed, gap) : '' };
 }
 
-export async function applyUpgrade({ project, projects, snapshots, plan, request, approved = false, ruleExecution = false }) {
+export async function applyUpgrade({ project, projects, snapshots, plan, request, approved = false, ruleExecution = false, operation = null, validateRuntime = null }) {
+  const ownsOperation = !operation;
+  operation ||= createRepairOperation({ projectId: project.id, kind: ruleExecution ? 'rule-upgrade' : 'upgrade-apply', request: redactAiContext(request) });
+  await persistRepairOperation(projects, project, operation);
   const risk = String(plan?.risk || 'high').toLowerCase();
+  const stopBeforePatch = async (message, code, terminalState = 'BLOCKED') => {
+    if (ownsOperation) {
+      finishRepairOperation(operation, terminalState, { error: message });
+      await persistRepairOperation(projects, project, operation);
+    }
+    const err = new Error(message);
+    err.code = code;
+    throw err;
+  };
+  const needsUserAction = async (message) => {
+    return stopBeforePatch(message, 'NEEDS_USER_ACTION', 'NEEDS_USER_ACTION');
+  };
   // Explicitly requested autonomous upgrades pass approved=true. Direct callers
   // without that user intent still need an explicit confirmation for risky work.
-  if (risk === 'high' && !approved) throw new Error('NEEDS_USER_ACTION: High-risk upgrade needs an explicit review.');
-  if (!ruleExecution && risk !== 'low' && risk !== 'medium' && !approved) throw new Error('NEEDS_USER_ACTION: Upgrade plan is not low risk. Review and approve the change before applying it.');
-  if (!ruleExecution && risk === 'medium' && !approved) throw new Error('NEEDS_USER_ACTION: Medium-risk upgrade needs your Apply confirmation.');
-  if (ruleExecution && risk === 'medium' && plan?.needs_user_action) throw new Error(`NEEDS_USER_ACTION: ${plan.needs_user_action}`);
+  if (risk === 'high' && !approved) await needsUserAction('NEEDS_USER_ACTION: High-risk upgrade needs an explicit review.');
+  if (!ruleExecution && risk !== 'low' && risk !== 'medium' && !approved) await needsUserAction('NEEDS_USER_ACTION: Upgrade plan is not low risk. Review and approve the change before applying it.');
+  if (!ruleExecution && risk === 'medium' && !approved) await needsUserAction('NEEDS_USER_ACTION: Medium-risk upgrade needs your Apply confirmation.');
+  if (ruleExecution && risk === 'medium' && plan?.needs_user_action) await needsUserAction(`NEEDS_USER_ACTION: ${plan.needs_user_action}`);
   const files = Array.isArray(plan.files)
     ? plan.files.filter((f) => f && f.path && typeof f.content === 'string').map((f) => ({ ...f, path: normalize(f.path) }))
     : [];
-  if (!files.length) throw new Error('Upgrade plan contains no file changes.');
-  if (files.length > 8) throw new Error('Upgrade scope is too large for an automatic minimal patch.');
+  if (!files.length) {
+    if (ownsOperation) {
+      finishRepairOperation(operation, 'NO_CHANGE', { reason: 'Upgrade plan contains no file changes.' });
+      await persistRepairOperation(projects, project, operation);
+    }
+    const err = new Error('Upgrade plan contains no file changes.');
+    err.code = 'NO_CHANGE';
+    throw err;
+  }
+  if (files.length > 8) await needsUserAction('NEEDS_USER_ACTION: Upgrade scope is too large for an automatic minimal patch.');
   const sourceDir = projects.sourceDir(project.slug);
   const before = await fileManifest(sourceDir);
   const baseline = await projects.readMetadata(project, 'upgrade-baseline.json', {});
   if (baseline?.sourceHash && baseline.sourceHash !== manifestHash(before)) {
-    const err = new Error('Upgrade baseline is stale because project files changed after inspection.');
-    err.code = 'UPGRADE_BASELINE_STALE';
-    throw err;
+    await stopBeforePatch('Upgrade baseline is stale because project files changed after inspection.', 'UPGRADE_BASELINE_STALE', 'NEEDS_USER_ACTION');
   }
   const paths = new Set();
   for (const f of files) {
     const rel = normalize(f.path);
-    if (!rel || rel.startsWith('/') || /^[a-z]:\//i.test(rel) || rel.split('/').includes('..') || rel.includes('\0') || PROTECTED.test(rel)) throw new Error(`Upgrade attempted to modify a protected or unsafe file: ${rel}`);
-    if (Buffer.byteLength(f.content, 'utf8') > 1024 * 1024) throw new Error(`Upgrade file is too large: ${rel}`);
-    if (paths.has(rel)) throw new Error(`Upgrade plan contains the same file more than once: ${rel}`);
+    if (isProtectedFilePath(rel) || rel.includes('\0')) {
+      const err = new Error(`Upgrade attempted to modify a protected or unsafe file: ${rel}`);
+      err.code = 'PATCH_PROTECTED_FILE';
+      transitionRepairOperation(operation, 'REJECT_PATCH', { fingerprint: `PROTECTED_FILE_TARGET:${rel}`, target: rel });
+      finishRepairOperation(operation, 'BLOCKED', { fingerprint: `PROTECTED_FILE_TARGET:${rel}` });
+      await persistRepairOperation(projects, project, operation);
+      throw err;
+    }
+    if (Buffer.byteLength(f.content, 'utf8') > 1024 * 1024) await stopBeforePatch(`Upgrade file is too large: ${rel}`, 'PATCH_REJECTED');
+    if (paths.has(rel)) await stopBeforePatch(`Upgrade plan contains the same file more than once: ${rel}`, 'PATCH_REJECTED');
     paths.add(rel);
   }
   const checkpoint = await snapshots.create(project, 'before-upgrade');
   const checkpointSource = await fileManifest(sourceDir);
   if (manifestHash(checkpointSource) !== manifestHash(before)) {
-    const err = new Error('Upgrade baseline became stale while the rollback checkpoint was being created.');
-    err.code = 'UPGRADE_BASELINE_STALE';
-    throw err;
+    await stopBeforePatch('Upgrade baseline became stale while the rollback checkpoint was being created.', 'UPGRADE_BASELINE_STALE', 'NEEDS_USER_ACTION');
   }
+  const beforeWorkspaceHash = await sourceFingerprint(sourceDir);
+  operation.workspace_hash_before = beforeWorkspaceHash;
+  operation.proposed_files = [...paths];
+  transitionRepairOperation(operation, 'PREFLIGHT', { workspace_hash: beforeWorkspaceHash, proposed_files: operation.proposed_files });
+  await persistRepairOperation(projects, project, operation);
   let changedFiles;
   let after;
   let verified;
+  let runtimeResult = null;
   try {
+    transitionRepairOperation(operation, 'APPLY', { before_hash: beforeWorkspaceHash, proposed_files: [...paths] });
+    await persistRepairOperation(projects, project, operation);
     await writeGeneratedFiles(sourceDir, files);
     after = await fileManifest(sourceDir);
     changedFiles = diffManifest(before, after);
+    operation.actual_changed_files = changedFiles;
+    operation.workspace_hash_after = await sourceFingerprint(sourceDir);
     const unexpected = changedFiles.filter((f) => !paths.has(normalize(f)));
-    if (unexpected.length) throw new Error(`Upgrade rolled back: unexpected files changed: ${unexpected.join(', ')}`);
-    if (!changedFiles.length) throw new Error('Upgrade plan did not change any source files.');
+    if (unexpected.length) {
+      const err = new Error(`Upgrade rolled back: unexpected files changed: ${unexpected.join(', ')}`);
+      err.code = 'PATCH_OUT_OF_SCOPE';
+      err.upgradeVerification = { changedFiles, unexpectedFiles: unexpected };
+      throw err;
+    }
+    if (!changedFiles.length) {
+      const err = new Error('Upgrade plan did not change any source files.');
+      err.code = 'NO_CHANGE';
+      throw err;
+    }
+    transitionRepairOperation(operation, 'VALIDATE', { changed_files: changedFiles, workspace_hash: operation.workspace_hash_after });
+    await persistRepairOperation(projects, project, operation);
     const syntax = await runSyntaxChecks(sourceDir, changedFiles);
     if (syntax.status === 'failed') throw verificationError('Changed JavaScript failed syntax validation.', { syntax, changedFiles });
     verified = await inspectState(sourceDir, {
@@ -231,13 +315,43 @@ export async function applyUpgrade({ project, projects, snapshots, plan, request
       regression,
       verification: verificationSummary(verified),
     });
+    if (verified.buildResult.status === 'failed') throw verificationError('Upgrade build failed and was rolled back.', {
+      changedFiles, regression: ['Project build failed.'], verification: verificationSummary(verified),
+    });
+    if (validateRuntime) {
+      transitionRepairOperation(operation, 'START', { status: 'running' });
+      await persistRepairOperation(projects, project, operation);
+      runtimeResult = await validateRuntime(project);
+      transitionRepairOperation(operation, 'SMOKE_TEST', { status: runtimeResult?.e2e?.status || 'skipped' });
+      transitionRepairOperation(operation, 'HTTP_TEST', { status: runtimeResult?.health === true ? 'passed' : 'failed', source_hash: runtimeResult?.sourceHash || null });
+      operation.validation = { ...verificationSummary(verified), runtime: { status: runtimeResult?.status, health: runtimeResult?.health === true, e2e: runtimeResult?.e2e?.status || 'skipped' } };
+      await persistRepairOperation(projects, project, operation);
+      if (runtimeResult?.status !== 'passed' || runtimeResult?.health !== true) throw verificationError('Upgrade start/health/smoke/HTTP validation failed and was rolled back.', {
+        changedFiles, regression: ['Runtime validation failed.'], verification: operation.validation,
+      });
+    }
   } catch (err) {
     try {
+      transitionRepairOperation(operation, 'ROLLBACK', { error: redactAiContext(err.message || err) });
       await snapshots.restore(project, checkpoint.id);
+      const restoredHash = await sourceFingerprint(sourceDir);
+      operation.rollback = { expected_hash: beforeWorkspaceHash, restored_hash: restoredHash, verified: restoredHash === beforeWorkspaceHash };
+      await persistRepairOperation(projects, project, operation);
+      if (restoredHash !== beforeWorkspaceHash) throw new Error('Rollback verification failed: workspace hash did not return to its pre-patch value.');
     } catch (rollbackErr) {
       throw new Error(`Upgrade failed (${String(err.message || err)}); rollback also failed (${String(rollbackErr.message || rollbackErr)}).`);
     }
     if (err.upgradeVerification) err.upgradeVerification.rolledBack = true;
+    if (ownsOperation) {
+      finishRepairOperation(operation, err.code === 'PATCH_PROTECTED_FILE' ? 'BLOCKED'
+        : err.code === 'NO_CHANGE' ? 'NO_CHANGE'
+          : err.code === 'NEEDS_USER_ACTION' ? 'NEEDS_USER_ACTION' : 'ROLLED_BACK', {
+        workspace_hash_after: await sourceFingerprint(sourceDir),
+        rollback: operation.rollback || null,
+        error: redactAiContext(err.message || err),
+      });
+      await persistRepairOperation(projects, project, operation);
+    }
     throw err;
   }
   await appendUpgradeHistory(projects, project, {
@@ -252,10 +366,10 @@ export async function applyUpgrade({ project, projects, snapshots, plan, request
     nodeResult: verified.nodeResult,
     scan: verified.security,
     sourceHash,
-    preview: null,
+    preview: runtimeResult,
     dockerBuild: null,
-    e2e: null,
-    previewSourceHash: null,
+    e2e: runtimeResult?.e2e || null,
+    previewSourceHash: runtimeResult?.sourceHash || null,
     changedFiles,
     verification: verificationSummary(verified),
     verifiedAt: new Date().toISOString(),
@@ -265,28 +379,76 @@ export async function applyUpgrade({ project, projects, snapshots, plan, request
     health: verified.health, security: summarizeSecurity(verified.security),
     knownIssues: verified.issues, verification: verificationSummary(verified),
   });
-  return { ok: true, files: changedFiles, verification: verified.health, checkpointId: checkpoint.id, sourceHash };
+  operation.validation = { ...verificationSummary(verified), runtime: validateRuntime ? operation.validation?.runtime : { status: 'not_run' } };
+  operation.workspace_hash_after = sourceHash;
+  if (ownsOperation) finishRepairOperation(operation, 'DONE', { workspace_hash_after: sourceHash, changed_files: changedFiles, validation: operation.validation });
+  await persistRepairOperation(projects, project, operation);
+  return { ok: true, files: changedFiles, verification: verified.health, checkpointId: checkpoint.id, sourceHash, runtime: runtimeResult, operationId: operation.operation_id, terminalState: ownsOperation ? 'DONE' : null };
 }
 
-export async function executeUpgradeRequest({ project, projects, snapshots, ai, request, emit = () => {} }) {
+export async function executeUpgradeRequest({ project, projects, snapshots, ai, request, emit = () => {}, validateRuntime = null, jobId = null }) {
   const sourceDir = projects.sourceDir(project.slug);
   let baseline = await projects.readMetadata(project, 'upgrade-baseline.json', null);
-  if (!baseline) throw new Error('Upgrade baseline is missing. Inspect the app first.');
-  if (!baseline.sourceHash || !baseline.verification || baseline.sourceHash !== manifestHash(await fileManifest(sourceDir))) {
-    emit('inspect', 'running', 'Project files changed since the last inspection. Refreshing the baseline before upgrading…');
-    const inspection = await inspectUpgrade({ project, projects, snapshots });
+  const operation = createRepairOperation({ jobId, projectId: project.id, kind: 'upgrade', request: redactAiContext(request) });
+  const fail = async (err) => {
+    finishRepairOperation(operation, 'FAILED', {
+      error: redactAiContext(err.message || err),
+      workspace_hash_after: await sourceFingerprint(sourceDir).catch(() => null),
+    });
+    await persistRepairOperation(projects, project, operation);
+    throw err;
+  };
+  if (!baseline) {
+    let inspection;
+    try {
+      inspection = await inspectUpgrade({ project, projects, snapshots, validateRuntime, jobId });
+    } catch (err) {
+      return fail(err);
+    }
     baseline = inspection.baseline;
   }
+  if (!baseline.sourceHash || !baseline.verification || baseline.sourceHash !== manifestHash(await fileManifest(sourceDir))) {
+    emit('inspect', 'running', 'Project files changed since the last inspection. Refreshing the baseline before upgrading…');
+    let inspection;
+    try {
+      inspection = await inspectUpgrade({ project, projects, snapshots, validateRuntime, jobId });
+    } catch (err) {
+      return fail(err);
+    }
+    baseline = inspection.baseline;
+  }
+  operation.workspace_hash_before = baseline.sourceHash;
+  await persistRepairOperation(projects, project, operation);
+  const step = async (state, evidence = {}) => {
+    transitionRepairOperation(operation, state, evidence);
+    await persistRepairOperation(projects, project, operation);
+    emit(state.toLowerCase(), 'running', state);
+  };
+  const terminal = async (terminalState, result, evidence = {}) => {
+    finishRepairOperation(operation, terminalState, evidence);
+    await persistRepairOperation(projects, project, operation);
+    return { ...result, operationId: operation.operation_id, terminalState };
+  };
 
   let verificationFailure = null;
-  const attemptedPlans = new Set();
-  for (let attempt = 0; attempt <= MAX_AI_REPAIRS; attempt += 1) {
+  for (let attempt = 0; attempt < MAX_AI_REPAIRS; attempt += 1) {
+    operation.cycle = attempt + 1;
+    await step('PREFLIGHT', { workspace_hash: await sourceFingerprint(sourceDir), attempt: attempt + 1 });
     emit('diagnose', 'running', attempt
       ? verificationFailure?.sourceChanged
         ? `Re-planning from the refreshed source (${attempt}/${MAX_AI_REPAIRS})…`
         : `Re-planning from the failed checks (${attempt}/${MAX_AI_REPAIRS}); the failed patch was rolled back…`
       : 'Matching your requested outcome to the current app and its inspection findings…');
-    const plan = await diagnoseUpgradeRequest({ project, projects, ai, request, verificationFailure });
+    await step('DIAGNOSE', { source_hash: await sourceFingerprint(sourceDir), verification_failure: verificationFailure ? redactAiContext(JSON.stringify(verificationFailure)) : null });
+    let plan;
+    try {
+      plan = await diagnoseUpgradeRequest({ project, projects, ai, request, verificationFailure });
+    } catch (err) {
+      return fail(err);
+    }
+    await step('EVIDENCE', { baseline_hash: baseline.sourceHash, issue_count: baseline.knownIssues?.length || 0 });
+    operation.fingerprint = String(verificationFailure?.fingerprint || baseline.knownIssues?.[0]?.id || 'UPGRADE_OBJECTIVE');
+    operation.fingerprint_history.push({ cycle: attempt + 1, fingerprint: operation.fingerprint, workspace_hash: await sourceFingerprint(sourceDir), validation_hash: verificationFailure?.validationHash || null });
     await projects.saveMetadata(project, 'upgrade-plan.json', {
       ...plan, request, attempt: attempt + 1, createdAt: new Date().toISOString(),
     });
@@ -295,10 +457,10 @@ export async function executeUpgradeRequest({ project, projects, snapshots, ai, 
         ...plan, request, status: 'needs_user_action', attempt: attempt + 1,
         createdAt: new Date().toISOString(),
       });
-      return {
+      return terminal('NEEDS_USER_ACTION', {
         projectId: project.id, status: 'needs_user_action', needsUserAction: plan.needs_user_action,
         plan, brief: `⏸ I need one decision before I can safely complete this upgrade: ${plan.needs_user_action}`,
-      };
+      }, { fingerprint: operation.fingerprint });
     }
     const files = Array.isArray(plan.files) ? plan.files : [];
     if (!files.length) {
@@ -306,20 +468,15 @@ export async function executeUpgradeRequest({ project, projects, snapshots, ai, 
         ...plan, request, status: 'no_changes', attempt: attempt + 1,
         createdAt: new Date().toISOString(),
       });
-      return {
+      return terminal('NO_CHANGE', {
         projectId: project.id, status: 'no_changes', plan,
         brief: plan.recommendation || 'No source change was needed for this request. The existing app was left unchanged.',
-      };
+      }, { fingerprint: operation.fingerprint, sourceHash: await sourceFingerprint(sourceDir) });
     }
-    const patchHash = crypto.createHash('sha256')
-      .update(JSON.stringify(files.map((file) => ({ path: normalize(file?.path), content: file?.content })).sort((a, b) => a.path.localeCompare(b.path))))
-      .digest('hex');
-    if (attemptedPlans.has(patchHash)) {
-      const brief = '⚠ Upgrade stopped safely because the AI repeated a patch that had already failed verification. The failed change was rolled back; no partial edit was kept.';
-      emit('verify', 'failed', brief);
-      return { projectId: project.id, status: 'stopped', plan, verificationFailure, brief };
-    }
-    attemptedPlans.add(patchHash);
+    operation.ai_proposal = redactAiContext(JSON.stringify({ root_cause: plan.root_cause, recommendation: plan.recommendation, risk: plan.risk, expected_result: plan.expected_result, files: files.map((file) => file.path) }));
+    operation.proposed_files = files.map((file) => normalize(file.path));
+    await step('PLAN', { proposed_files: operation.proposed_files, reason: redactAiContext(plan.recommendation || ''), expected_effect: redactAiContext(plan.expected_result || '') });
+    await step('SAFETY_CHECK', { proposed_files: operation.proposed_files });
     emit('patch', 'running', `Applying the smallest patch (${files.length} proposed file(s)); verification will check the actual changed files…`);
     try {
       const result = await applyUpgrade({
@@ -327,6 +484,7 @@ export async function executeUpgradeRequest({ project, projects, snapshots, ai, 
         // The user explicitly requested this upgrade; ask only for decisions
         // the plan says cannot safely be inferred, not confirmation per edit.
         approved: true,
+        operation, validateRuntime,
       });
       const brief = `${plan.completion_message || '✓ Upgrade verified.'}\nFiles verified: ${result.files.join(', ')}`;
       emit('verify', 'done', brief);
@@ -335,47 +493,62 @@ export async function executeUpgradeRequest({ project, projects, snapshots, ai, 
         checkpointId: result.checkpointId, sourceHash: result.sourceHash,
         completedAt: new Date().toISOString(),
       });
-      return {
+      return terminal('DONE', {
         projectId: project.id, status: 'completed', upgrade: true, plan,
         files: result.files, verification: result.verification,
         checkpointId: result.checkpointId, attempts: attempt + 1, brief,
-      };
+      }, { fingerprint: operation.fingerprint, changedFiles: result.files, workspaceHash: result.sourceHash, validation: result.verification });
     } catch (err) {
       if (err.code === 'UPGRADE_BASELINE_STALE') {
-        attemptedPlans.delete(patchHash);
-        if (attempt === MAX_AI_REPAIRS) {
-          return {
+        if (attempt === MAX_AI_REPAIRS - 1) {
+          return terminal('NO_CHANGE', {
             projectId: project.id, status: 'stopped', plan, attempts: attempt + 1,
             brief: '⚠ The app changed while Upgrade was planning. No patch was written; inspect the latest source and send the request again.',
-          };
+          }, { fingerprint: operation.fingerprint });
         }
         emit('inspect', 'running', 'The source changed while planning. Refreshing the baseline and re-reading the latest files…');
-        await inspectUpgrade({ project, projects, snapshots });
+        let inspection;
+        try {
+          inspection = await inspectUpgrade({ project, projects, snapshots, validateRuntime, jobId });
+        } catch (inspectErr) {
+          return fail(inspectErr);
+        }
+        baseline = inspection.baseline;
         verificationFailure = { sourceChanged: true, message: err.message };
         continue;
       }
-      if (!err.upgradeVerification) throw err;
+      if (err.code === 'PATCH_PROTECTED_FILE') {
+        await projects.saveMetadata(project, 'upgrade-plan.json', { ...plan, request, status: 'blocked', terminalState: 'BLOCKED', error: redactAiContext(err.message) });
+        return terminal('BLOCKED', { projectId: project.id, status: 'blocked', plan, brief: `⛔ ${err.message}` }, { fingerprint: operation.fingerprint });
+      }
+      if (!err.upgradeVerification) return fail(err);
       verificationFailure = {
         ...err.upgradeVerification,
         attempt: attempt + 1,
         planFiles: files.map((file) => normalize(file?.path)).filter(Boolean),
+        fingerprint: operation.fingerprint,
+        validationHash: crypto.createHash('sha256').update(JSON.stringify(err.upgradeVerification.verification || err.upgradeVerification)).digest('hex'),
       };
       await projects.saveMetadata(project, 'upgrade-plan.json', {
         ...plan, request, status: 'rolled_back', verificationFailure,
         completedAt: new Date().toISOString(),
       });
       emit('rollback', 'done', `Restored the checkpoint after verification failed in ${verificationFailure.changedFiles?.join(', ') || 'the proposed changes'}.`);
-      if (attempt === MAX_AI_REPAIRS) {
-        const brief = `⚠ Upgrade could not be verified after ${attempt + 1} targeted attempt(s). Every failed patch was rolled back. Latest check: ${String(err.message || err).slice(0, 500)}`;
+      const currentWorkspaceHash = manifestHash(await fileManifest(sourceDir));
+      const priorFingerprint = operation.fingerprint_history[operation.fingerprint_history.length - 1];
+      if (currentWorkspaceHash === baseline.sourceHash
+        && verificationFailure.fingerprint === priorFingerprint?.fingerprint) {
+        const brief = '⚠ Upgrade stopped after rollback. The workspace and validation baseline are unchanged, so another AI call would repeat the same repair without progress.';
         emit('verify', 'failed', brief);
-        return { projectId: project.id, status: 'stopped', plan, verificationFailure, attempts: attempt + 1, brief };
+        return terminal('ROLLED_BACK', { projectId: project.id, status: 'stopped', plan, verificationFailure, attempts: attempt + 1, brief }, verificationFailure);
       }
     }
   }
-  throw new Error('Upgrade stopped without a verified result.');
+  const brief = 'Upgrade stopped after the bounded repair attempts. No unverified change was reported as complete.';
+  return terminal('ROLLED_BACK', { projectId: project.id, status: 'stopped', verificationFailure, brief }, verificationFailure || {});
 }
 
-export async function runRuleUpgrade({ project, projects, snapshots, ai, request = '', ruleText = '', emit = () => {} }) {
+export async function runRuleUpgrade({ project, projects, snapshots, ai, request = '', ruleText = '', emit = () => {}, validateRuntime = null, jobId = null }) {
   const parsed = parseRule(ruleText || request);
   if (!parsed.valid) throw new Error(parsed.error);
 
@@ -383,6 +556,9 @@ export async function runRuleUpgrade({ project, projects, snapshots, ai, request
   // EXECUTION: null, missing maxCycles, strings, or extra parameters.
   const execution = normalizeExecution(parsed.execution);
   const sourceDir = projects.sourceDir(project.slug);
+  const operation = createRepairOperation({ jobId, projectId: project.id, kind: 'rule-upgrade', request: redactAiContext(request) });
+  operation.workspace_hash_before = await sourceFingerprint(sourceDir);
+  await persistRepairOperation(projects, project, operation);
   const history = await projects.readMetadata(project, 'upgrade-rule-execution.json', {});
   const previous = Array.isArray(history?.history) ? history.history : [];
   const initialContext = await relevantContext(sourceDir, parsed.requiredCapabilities.join(' '));
@@ -402,17 +578,65 @@ export async function runRuleUpgrade({ project, projects, snapshots, ai, request
   emit('rule', 'running', `🧭 Rule loaded: ${parsed.name}. Builder will plan and execute ${tasks.filter(t => t.status === 'pending').length} task(s).`);
 
   const seen = new Set(previous.map((x) => `${x.capability}|${x.sourceHash}|${x.patchHash || ''}`));
+  const attemptedEvidence = new Set();
   let userAction = '';
   let completed = 0;
-  for (let cycle = 1; cycle <= execution.maxCycles; cycle += 1) {
+  let cycle = 0;
+  for (cycle = 1; cycle <= execution.maxCycles; cycle += 1) {
+    operation.cycle = cycle;
     state.cycle = cycle;
     const context = await relevantContext(sourceDir, parsed.requiredCapabilities.join(' '));
     gap = capabilityGap(parsed, context);
     if (gap.complete && !tasks.some(t => t.status === 'pending' && t.acceptance)) break;
     if (await hasDeterministicCandidate(sourceDir)) {
       emit('repair', 'running', `🛠 Cycle ${cycle}/${execution.maxCycles}: Builder applying a proven local fix before asking AI.`);
-      const dare = await runDare({ sourceDir, logs: `Rule cycle ${cycle} deterministic pass.`, extra: { message: 'RULE_ENGINE_CYCLE' }, history: state.history });
+      const dareBeforeHash = await sourceFingerprint(sourceDir);
+      const dareCheckpoint = await snapshots.create(project, `before-rule-dare-${cycle}`);
+      transitionRepairOperation(operation, 'DARE', { source_hash: dareBeforeHash });
+      await persistRepairOperation(projects, project, operation);
+      let dare;
+      try {
+        dare = await runDare({ sourceDir, logs: `Rule cycle ${cycle} deterministic pass.`, extra: { message: 'RULE_ENGINE_CYCLE' }, history: state.history });
+      } catch (err) {
+        await snapshots.restore(project, dareCheckpoint.id);
+        const restoredHash = await sourceFingerprint(sourceDir);
+        operation.rollback = { expected_hash: dareBeforeHash, restored_hash: restoredHash, verified: restoredHash === dareBeforeHash };
+        finishRepairOperation(operation, operation.rollback.verified ? 'ROLLED_BACK' : 'FAILED', {
+          error: redactAiContext(err.message || err),
+          rollback: operation.rollback,
+        });
+        await persistRepairOperation(projects, project, operation);
+        if (!operation.rollback.verified) throw new Error(`${String(err.message || err)}; Rule DARE rollback verification failed.`);
+        throw err;
+      }
       if (dare?.ok && !dare.alreadyFixed && Array.isArray(dare.files) && dare.files.length) {
+        operation.fingerprint = dare.fingerprint || 'NO_FAILURE_EVIDENCE';
+        operation.fingerprint_history.push({ cycle, source: 'DARE', fingerprint: operation.fingerprint, workspace_hash: dareBeforeHash });
+        operation.proposed_files = dare.files.map(normalize);
+        operation.actual_changed_files = dare.changed || [];
+        operation.workspace_hash_after = await sourceFingerprint(sourceDir);
+        const checks = await inspectState(sourceDir);
+        const baselineNow = await projects.readMetadata(project, 'upgrade-baseline.json', {});
+        const regression = verificationRegressed(baselineNow.verification, verificationSummary(checks), operation.actual_changed_files);
+        if (checks.buildResult.status === 'failed') regression.push('Build failed after deterministic rule repair.');
+        const runtime = validateRuntime ? await validateRuntime(project) : null;
+        if (validateRuntime && (runtime?.status !== 'passed' || runtime?.health !== true)) regression.push('Runtime validation failed after deterministic rule repair.');
+        if (!validateRuntime || regression.length) {
+          await snapshots.restore(project, dareCheckpoint.id);
+          const restoredHash = await sourceFingerprint(sourceDir);
+          operation.rollback = { expected_hash: dareBeforeHash, restored_hash: restoredHash, verified: restoredHash === dareBeforeHash };
+          await persistRepairOperation(projects, project, operation);
+          if (!operation.rollback.verified) throw new Error('Rule DARE rollback verification failed.');
+          const reason = !validateRuntime
+            ? 'A runtime validator is required before deterministic repair can be completed.'
+            : `Deterministic repair did not pass final verification: ${regression.join('; ')}`;
+          state.history.push({ cycle, capability: gap.missingCapabilities?.[0] || parsed.name, result: 'rolled_back', error: reason, at: new Date().toISOString() });
+          emit('verify', 'failed', reason);
+          break;
+        }
+        transitionRepairOperation(operation, 'VALIDATE', { changed_files: operation.actual_changed_files, runtime: runtime.status });
+        await persistRepairOperation(projects, project, operation);
+        await inspectUpgrade({ project, projects, snapshots, validateRuntime, jobId });
         emit('verify', 'done', `✓ Builder fixed a proven issue on cycle ${cycle} without AI.`);
         continue;
       }
@@ -420,8 +644,17 @@ export async function runRuleUpgrade({ project, projects, snapshots, ai, request
     const pending = tasks.filter(t => t.status === 'pending').slice(0, execution.maxTasks);
     if (!pending.length) break;
     const task = pending[0];
+    const evidenceKey = `${task.capability}|${await sourceFingerprint(sourceDir)}`;
+    if (attemptedEvidence.has(evidenceKey)) {
+      task.status = 'blocked';
+      task.error = 'Same fingerprint and workspace state produced no verified progress; stopping without another AI call.';
+      break;
+    }
+    attemptedEvidence.add(evidenceKey);
     const taskRequest = `${request || parsed.goal}\nRULE TASK: Complete only this task: ${task.capability}\nDo not redesign unrelated parts. Inspect current evidence and preserve working behavior.`;
     emit('plan', 'running', `🧩 Task ${completed + 1}/${tasks.length}: ${task.capability}`);
+    transitionRepairOperation(operation, 'DIAGNOSE', { task: task.capability, source_hash: await sourceFingerprint(sourceDir) });
+    await persistRepairOperation(projects, project, operation);
     let plan;
     try {
       // Definition-of-done items are evaluation tasks, not invitations to invent
@@ -449,6 +682,8 @@ export async function runRuleUpgrade({ project, projects, snapshots, ai, request
     } catch (err) {
       task.status = 'blocked'; task.error = String(err.message || err).slice(0, 500);
       await projects.saveMetadata(project, 'upgrade-rule-execution.json', state);
+      finishRepairOperation(operation, 'FAILED', { error: redactAiContext(err.message || err), cycle, task: task.capability });
+      await persistRepairOperation(projects, project, operation);
       throw err;
     }
     if (plan.needs_user_action) {
@@ -457,6 +692,19 @@ export async function runRuleUpgrade({ project, projects, snapshots, ai, request
       emit('input', 'done', `⏸ ${userAction}`);
       if (execution.stopOnUserAction) break;
       continue;
+    }
+    transitionRepairOperation(operation, 'EVIDENCE', { fingerprint: task.capability, evidence: redactAiContext(JSON.stringify(gap.missingCapabilities || [])) });
+    operation.fingerprint = `RULE_TASK:${crypto.createHash('sha256').update(task.capability).digest('hex')}`;
+    operation.fingerprint_history.push({ cycle, fingerprint: operation.fingerprint, workspace_hash: await sourceFingerprint(sourceDir) });
+    operation.ai_proposal = redactAiContext(JSON.stringify({ root_cause: plan.root_cause, recommendation: plan.recommendation, expected_effect: plan.expected_result, files: (plan.files || []).map((file) => file.path) }));
+    operation.proposed_files = (plan.files || []).map((file) => normalize(file.path));
+    transitionRepairOperation(operation, 'PLAN', { proposed_files: operation.proposed_files });
+    await persistRepairOperation(projects, project, operation);
+    if (!Array.isArray(plan.files) || !plan.files.length) {
+      task.status = 'blocked';
+      task.error = 'AI proposed no source changes for this unmet rule task.';
+      await projects.saveMetadata(project, 'upgrade-rule-execution.json', state);
+      break;
     }
     const before = await fileManifest(sourceDir);
     const sourceHash = manifestHash(before);
@@ -469,7 +717,7 @@ export async function runRuleUpgrade({ project, projects, snapshots, ai, request
     }
     seen.add(key);
     try {
-      const result = await applyUpgrade({ project, projects, snapshots, plan, request: taskRequest, approved: true, ruleExecution: true });
+      const result = await applyUpgrade({ project, projects, snapshots, plan, request: taskRequest, approved: true, ruleExecution: true, operation, validateRuntime });
       task.status = 'done'; task.files = result.files; task.verification = result.verification;
       completed += 1;
       state.history.push({ cycle, capability: task.capability, sourceHash, patchHash, files: result.files, result: 'verified', at: new Date().toISOString() });
@@ -498,6 +746,16 @@ export async function runRuleUpgrade({ project, projects, snapshots, ai, request
   const pending = tasks.filter(t => t.status === 'pending');
   const blocked = tasks.filter(t => ['blocked','failed'].includes(t.status));
   state.status = userAction ? 'NEEDS_USER_ACTION' : (!pending.length && !blocked.length ? 'completed' : 'stopped');
+  const terminalState = userAction ? 'NEEDS_USER_ACTION'
+    : state.status === 'completed' ? (completed ? 'DONE' : 'NO_CHANGE')
+      : state.history.some((entry) => entry.result === 'failed') ? 'ROLLED_BACK' : 'BLOCKED';
+  finishRepairOperation(operation, terminalState, {
+    fingerprint: operation.fingerprint || null,
+    workspace_hash_after: await sourceFingerprint(sourceDir),
+    changed_files: operation.actual_changed_files || [],
+    cycle,
+    status: state.status,
+  });
   state.finishedAt = new Date().toISOString();
   state.gap = gap;
   state.tasks = tasks;
@@ -507,6 +765,8 @@ export async function runRuleUpgrade({ project, projects, snapshots, ai, request
     rule: parsed,
     execution: state,
     status: state.status,
+    terminalState,
+    operationId: operation.operation_id,
     completedTasks: tasks.filter(t => t.status === 'done' || t.status === 'satisfied').length,
     totalTasks: tasks.length,
     needsUserAction: userAction,
@@ -524,9 +784,12 @@ async function inspectState(sourceDir, { installDependencies = true, syntaxFiles
     scanProject(sourceDir), runStaticTests(sourceDir), runNodeTests(sourceDir, 45000, { installDependencies }),
     precheckedSyntax || runSyntaxChecks(sourceDir, syntaxFiles), fileManifest(sourceDir), discoverStack(sourceDir),
   ]);
-  const issues = classifyIssues({ stack, security, staticResult, nodeResult, syntaxResult });
+  const buildResult = nodeResult.build === 'passed'
+    ? { status: 'passed', script: 'npm run build' }
+    : await runProjectBuild(sourceDir);
+  const issues = classifyIssues({ stack, security, staticResult, nodeResult, syntaxResult, buildResult });
   return {
-    security, staticResult, nodeResult, syntaxResult, manifest, stack, issues,
+    security, staticResult, nodeResult, syntaxResult, buildResult, manifest, stack, issues,
     health: {
       status: security.critical ? 'NEEDS_ATTENTION' : webAppHealth(staticResult, nodeResult, security),
       score: score(staticResult, nodeResult, security),
@@ -578,7 +841,7 @@ function detectFramework(files, pkg) {
   return 'Unknown';
 }
 
-function classifyIssues({ stack, security, staticResult, nodeResult, syntaxResult }) {
+function classifyIssues({ stack, security, staticResult, nodeResult, syntaxResult, buildResult }) {
   const out = [];
   for (const f of security.findings || []) out.push({ id: f.id, category: 'SECURITY', severity: f.severity, evidence: `${f.file}${f.line ? `:${f.line}` : ''}`, autoFix: Boolean(f.autoFix) });
   if (syntaxResult?.status === 'failed') {
@@ -592,6 +855,7 @@ function classifyIssues({ stack, security, staticResult, nodeResult, syntaxResul
   }
   if (staticResult.status === 'failed') out.push({ id: 'static-tests', category: 'BUG', severity: 'high', evidence: staticResult.summary || 'Static checks failed', autoFix: false });
   if (nodeResult.status === 'failed') out.push({ id: 'node-tests', category: 'RUNTIME', severity: 'high', evidence: nodeResult.summary || 'Node tests failed', autoFix: false });
+  if (buildResult?.status === 'failed') out.push({ id: 'project-build', category: 'BUILD', severity: 'high', evidence: String(buildResult.error || 'Project build failed').slice(0, 300), autoFix: false });
   if (!out.length) out.push({ id: 'healthy', category: 'INFO', severity: 'info', evidence: 'No blocking issue found in deterministic inspection.', autoFix: false });
   return out;
 }
@@ -684,6 +948,10 @@ function verificationSummary(state) {
       checked: state.syntaxResult?.checked || 0,
       failedFiles: syntaxChecks.filter((check) => !check.ok).map((check) => check.file),
     },
+    build: {
+      status: state.buildResult?.status || 'unknown',
+      error: state.buildResult?.status === 'failed' ? String(state.buildResult.error || '').slice(0, 1000) : null,
+    },
     security: {
       findings: (state.security?.findings || [])
         .filter((finding) => finding.severity === 'critical' || finding.severity === 'warning')
@@ -723,6 +991,7 @@ function verificationRegressed(before, after, changedFiles = []) {
       if (!previous.has(name) && name !== 'node-tests-failed') failures.push(`New Node test failure: ${name}`);
     }
   }
+  if (before?.build?.status !== 'failed' && after?.build?.status === 'failed') failures.push('Project build failed after the change.');
   const previousSyntax = new Set(before?.syntax?.failedFiles || []);
   for (const file of after?.syntax?.failedFiles || []) {
     if (!previousSyntax.has(file) || changedFiles.some((changed) => normalize(changed) === normalize(file))) {
