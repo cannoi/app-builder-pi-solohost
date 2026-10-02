@@ -131,8 +131,15 @@ async function downloadScript(kind) {
 }
 function event(stage, status, message) {
   const shown = compactNotice(message);
-  if (shouldSkipNotice(`${status}:${shown}`)) return;
-  const el = document.createElement('div'); el.className = `event ${status}`; el.textContent = `${status === 'done' ? '✓' : status === 'failed' ? '⚠' : '•'} ${shown}`;
+  if (shouldSkipNotice(`${stage}:${status}:${shown}`)) return;
+  const labels = {
+    inspecting: 'INSPECTING', inspect: 'INSPECTING', baseline: 'BASELINE',
+    planning: 'PLANNING', diagnose: 'PLANNING', upgrading: 'UPGRADING', patch: 'UPGRADING',
+    validating: 'VALIDATING', validate: 'VALIDATING', testing: 'TESTING', preview: 'PREVIEW',
+    completed: 'COMPLETED',
+  };
+  const label = labels[String(stage || '').toLowerCase()];
+  const el = document.createElement('div'); el.className = `event ${status}`; el.textContent = `${status === 'done' ? '✓' : status === 'failed' ? '⚠' : '•'} ${label ? `${label} · ` : ''}${shown}`;
   $('chat').appendChild(el); if (chatNearBottom()) $('chat').scrollTop = $('chat').scrollHeight; else maybeJump();
 }
 function toast(message) { add('system', message); }
@@ -302,7 +309,7 @@ async function sendMessage() {
   if (message) { add('user', message); $('message').value = ''; }
   const githubUrl = parseGithubInput(message);
   if (githubUrl && !files.length) {
-    setBusy(true, 'Importing public GitHub source…');
+    setBusy(true, 'Fetching the current GitHub commit…');
     try {
       const r = await api('/api/projects/upgrade/github', { method: 'POST', body: JSON.stringify({ url: githubUrl }) });
       add('ai', '🔧 GitHub source imported into the independent Upgrade Workshop.');
@@ -375,14 +382,27 @@ function parseGithubInput(text) {
 }
 async function startUpgrade() {
   if (!state.projectId) {
-    const request = await askSafeAction('UPGRADE FROM GITHUB', 'Paste a public GitHub repository URL.');
+    const request = await askSafeAction('UPGRADE FROM GITHUB', 'Paste a GitHub repository URL. Private repositories need GitHub credentials in Settings.');
     if (!request) return;
     const url = parseGithubInput(request.text) || request.text.trim();
-    setBusy(true, 'Importing public GitHub source…');
+    setBusy(true, 'Fetching the current GitHub commit…');
     try { const r = await api('/api/projects/upgrade/github', { method: 'POST', body: JSON.stringify({ url }) }); add('ai', '🔧 GitHub source imported into the independent Upgrade Workshop.'); watch(r.jobId); }
     catch (e) { handleJobActionError(e); }
     return;
   }
+  try {
+    const upgrade = await api(`/api/projects/${state.projectId}/upgrade`);
+    if (!upgrade.source) {
+      const request = await askSafeAction('LINK GITHUB SOURCE', 'Paste the GitHub repository URL. The repository will open as a separate Upgrade project; this unlinked project will remain unchanged.');
+      if (!request) return;
+      const url = parseGithubInput(request.text) || request.text.trim();
+      setBusy(true, 'Fetching the current GitHub commit…');
+      const result = await api('/api/projects/upgrade/github', { method: 'POST', body: JSON.stringify({ url }) });
+      add('ai', '🔧 GitHub source imported into a new Upgrade project. The original project was not changed.');
+      watch(result.jobId);
+      return;
+    }
+  } catch (e) { handleJobActionError(e); return; }
   setBusy(true, 'Inspecting the existing app…');
   try {
     const r = await api(`/api/projects/${state.projectId}/upgrade/inspect`, { method: 'POST', body: '{}' });
@@ -407,10 +427,13 @@ function renderUpgradeBaseline(result) {
   const health = result.baseline?.health?.status || result.knowledge?.runtime?.status || 'HEALTHY';
   const issues = result.issues || result.baseline?.knownIssues || [];
   const findings = issues.filter((i) => i.id !== 'healthy');
+  const githubSource = result.source || result.baseline?.githubSource || {};
+  const commit = githubSource.commitSha || githubSource.commit_sha || '';
   add('ai', [
     '✓ App inspected',
+    `✓ GitHub source pinned: ${githubSource.owner || '?'} / ${githubSource.repo || '?'}${commit ? ` @ ${commit.slice(0, 12)}` : ''}`,
     '✓ Security checked',
-    '✓ Runtime checked',
+    '• Build/start/HTTP/browser preview will be verified after the requested changes.',
     '✓ Existing features mapped',
     '✓ Baseline created',
     '',
@@ -607,8 +630,12 @@ async function watch(jobId, { preserveEvents = false, resetFailures = true } = {
           await loadProjects();
           await openProject(result.projectId, false);
         }
-        renderUpgradeBaseline(result);
-        if (state.projectId) await askUpgradeRequest();
+        if (result.terminalState === 'NEEDS_USER_ACTION' || result.needsUserAction || result.ready === false) {
+          if (result.brief) add('ai', result.brief);
+        } else {
+          renderUpgradeBaseline(result);
+          if (state.projectId) await askUpgradeRequest();
+        }
       }
       if (job.status === 'done' && job.type === 'upgrade_request' && result.execution) {
         const state = result.execution;

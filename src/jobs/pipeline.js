@@ -23,6 +23,7 @@ import { shouldBlockRepeatedAction, nextRepeatState, repairFingerprint, createRe
 import { mergeVerificationState } from './verification.js';
 import { maskSecrets, redactAiContext } from '../utils/mask.js';
 import { inspectUpgrade, applyUpgrade, executeUpgradeRequest, runRuleUpgrade } from '../upgrade/engine.js';
+import { refreshUpgradeSource, resolveUpgradeRepository } from '../upgrade/source.js';
 import { diagnoseProject, buildAdvisorReport } from '../diagnose/project.js';
 import { refreshProjectBrain, rememberFailedRepair, wasRepairTried } from '../diagnose/brain.js';
 import { sourceFingerprint, sourceManifest, diffSourceManifest, verificationMatchesSource } from '../projects/source-version.js';
@@ -89,19 +90,19 @@ export function registerPipeline(app) {
 
   jobs.on('upgrade_github_import', async (job, { emit }) => {
     const parsed = parseGithubRepoUrl(job.payload.url);
-    if (!parsed) throw new Error('Use a public GitHub repository URL such as https://github.com/owner/repository');
-    const owner = parsed.owner;
-    const repo = parsed.repo;
-    const url = parsed.url;
-    const archiveUrl = `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/zipball/HEAD`;
-    emit('import', 'running', `Fetching public GitHub source: ${owner}/${repo}…`);
-    const response = await fetch(archiveUrl, { headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'pi-app-factory-upgrade' } });
-    if (!response.ok) throw new Error(`GitHub public repository could not be downloaded (HTTP ${response.status}).`);
-    const buffer = Buffer.from(await response.arrayBuffer());
-    const project = await projects.create({ idea: `Upgrade existing GitHub app: ${owner}/${repo}`, name: repo, analysis: { name: repo, slug: repo, recommended_stack: {} }, plan: { mode: 'upgrade-existing' } });
+    if (!parsed) throw new Error('Use a GitHub repository URL such as https://github.com/owner/repository. Private repositories require GitHub credentials in Settings.');
+    emit('inspecting', 'running', `Fetching the current GitHub commit for ${parsed.owner}/${parsed.repo}…`);
+    const fetchedSource = await github.fetchRepositorySource(parsed.owner, parsed.repo);
+    const project = await projects.create({ idea: `Upgrade existing GitHub app: ${parsed.owner}/${parsed.repo}`, name: parsed.repo, analysis: { name: parsed.repo, slug: parsed.repo, recommended_stack: {} }, plan: { mode: 'upgrade-existing' } });
     jobs.attachProject(job.id, project.id);
-    await importZipBuffer(buffer, projects.sourceDir(project.slug), { replace: true });
-    await projects.saveMetadata(project, 'upgrade-source.json', { type: 'github-public', url, owner, repo, importedAt: new Date().toISOString() });
+    const synced = await refreshUpgradeSource({
+      project, projects, snapshots, github,
+      source: { owner: parsed.owner, repo: parsed.repo, url: parsed.url },
+      fetchedSource, jobId: job.id, emit,
+    });
+    const owner = synced.source.owner;
+    const repo = synced.source.repo;
+    const url = synced.source.url;
     projects.setStatus(project, 'UPGRADE_INSPECTING');
     emit('import', 'done', 'GitHub source imported. Starting the independent Upgrade Workshop.');
     emit('inspect', 'running', 'Inspecting the imported app and creating an upgrade baseline…');
@@ -113,25 +114,30 @@ export function registerPipeline(app) {
         'Upgrade inspection took too long and was stopped. This can happen with large or unusual repositories — try again, or use Import ZIP with just the app source instead.',
       );
     } catch (err) {
-      projects.setStatus(projects.get(project.id), 'UPGRADE_READY');
+      projects.setStatus(projects.get(project.id), 'FAILED');
       emit('inspect', 'failed', String(err.message || err).slice(0, 280));
       return {
         projectId: project.id,
-        ready: true,
-        source: { type: 'github-public', owner, repo, url },
+        ready: false,
+        status: 'failed',
+        terminalState: 'FAILED',
+        source: { type: 'github', owner, repo, url, branch: synced.source.branch, commitSha: synced.source.commitSha },
         issues: [{ id: 'inspect-partial', detail: String(err.message || err) }],
         safeRepairs: [],
-        brief: `Project ${repo} is open in the Upgrade Workshop. Inspection was incomplete: ${String(err.message || err).slice(0, 180)}\nTell me what you want to improve.`,
+        brief: `GitHub source ${owner}/${repo}@${synced.source.commitSha.slice(0, 12)} was imported, but inspection failed: ${String(err.message || err).slice(0, 180)}. No successful baseline was created.`,
       };
     }
     projects.setStatus(projects.get(project.id), result.ready ? 'UPGRADE_READY' : 'FAILED');
-    return { projectId: project.id, source: { type: 'github-public', owner, repo, url }, ...result };
+    return { projectId: project.id, source: { type: 'github', owner, repo, url, branch: synced.source.branch, commitSha: synced.source.commitSha }, ...result };
   });
 
   jobs.on('upgrade_inspect', async (job, { emit }) => {
     const project = mustProject(job.payload.projectId);
     projects.setStatus(project, 'UPGRADE_INSPECTING');
-    emit('inspect', 'running', 'Inspecting the existing app before any upgrade request…');
+    const source = await currentUpgradeSource(project);
+    if (!source) return upgradeSourceActionNeeded(project, job.id);
+    await refreshUpgradeSource({ project, projects, snapshots, github, source, jobId: job.id, emit });
+    emit('inspecting', 'running', 'Inspecting the latest GitHub files before creating the upgrade baseline…');
     const result = await withTimeout(
       inspectUpgrade({ project: projects.get(project.id), projects, snapshots, log, jobId: job.id, validateRuntime: (target) => runProject(projects.get(target.id), emit) }),
       UPGRADE_INSPECT_TIMEOUT_MS,
@@ -144,8 +150,21 @@ export function registerPipeline(app) {
 
   jobs.on('upgrade_request', async (job, { emit }) => {
     const project = mustProject(job.payload.projectId);
-    const baseline = await projects.readMetadata(project, 'upgrade-baseline.json', null);
-    if (!baseline) throw new Error('Upgrade baseline is missing. Inspect the app first.');
+    const source = await currentUpgradeSource(project);
+    if (!source) return upgradeSourceActionNeeded(project, job.id);
+    await refreshUpgradeSource({ project, projects, snapshots, github, source, jobId: job.id, emit });
+    const inspection = await withTimeout(
+      inspectUpgrade({ project: projects.get(project.id), projects, snapshots, log, jobId: job.id, validateRuntime: (target) => runProject(projects.get(target.id), emit) }),
+      UPGRADE_INSPECT_TIMEOUT_MS,
+      'Upgrade baseline could not be created from the latest GitHub source before timeout.',
+    );
+    if (!inspection.ready) throw new Error('Upgrade baseline could not be created from the latest GitHub source.');
+    const syncedSource = await projects.readMetadata(project, 'upgrade-source.json', {});
+    await projects.saveMetadata(project, 'upgrade-baseline.json', {
+      ...inspection.baseline,
+      githubSource: { owner: syncedSource.owner, repo: syncedSource.repo, branch: syncedSource.branch, commitSha: syncedSource.commitSha, sourceHash: syncedSource.sourceHash },
+    });
+    emit('baseline', 'done', `Baseline created from ${syncedSource.owner}/${syncedSource.repo}@${syncedSource.commitSha?.slice(0, 12) || 'latest'}.`);
     projects.setStatus(project, 'UPGRADE_DIAGNOSING');
     const ruleText = String(job.payload.ruleText || '').trim();
     const pastedRule = /RULE_NAME|REQUIRED CAPABILITIES|REQUIRED_CAPABILITIES/i.test(String(job.payload.request || ''));
@@ -169,12 +188,44 @@ export function registerPipeline(app) {
   jobs.on('upgrade_apply', async (job, { emit }) => {
     const project = mustProject(job.payload.projectId);
     projects.setStatus(project, 'UPGRADING');
+    const source = await currentUpgradeSource(project);
+    if (!source) return upgradeSourceActionNeeded(project, job.id);
+    await refreshUpgradeSource({ project, projects, snapshots, github, source, jobId: job.id, emit });
+    await inspectUpgrade({ project: projects.get(project.id), projects, snapshots, log, jobId: job.id, validateRuntime: (target) => runProject(projects.get(target.id), emit) });
     emit('patch', 'running', 'Applying only the approved upgrade files…');
     const plan = job.payload.plan || await projects.readMetadata(project, 'upgrade-plan.json', {});
-    const result = await applyUpgrade({ project: projects.get(project.id), projects, snapshots, plan, request: job.payload.request || plan.request || '', approved: job.payload.approved === true, validateRuntime: (target) => runProject(projects.get(target.id), emit) });
+    const baseline = await projects.readMetadata(project, 'upgrade-baseline.json', {});
+    if (!plan.sourceHash || plan.sourceHash !== baseline.sourceHash) {
+      projects.setStatus(projects.get(project.id), 'UPGRADE_READY');
+      const operation = createRepairOperation({ jobId: job.id, projectId: project.id, kind: 'upgrade-apply' });
+      operation.workspace_hash_before = await sourceFingerprint(projects.sourceDir(project.slug));
+      operation.github_source = baseline.githubSource || null;
+      transitionRepairOperation(operation, 'SAFETY_CHECK', { reason: 'stale_plan', source_hash: baseline.sourceHash });
+      finishRepairOperation(operation, 'NEEDS_USER_ACTION', {
+        reason: 'Plan does not match the current GitHub-backed baseline.',
+        workspace_hash_after: operation.workspace_hash_before,
+      });
+      await persistRepairOperation(projects, project, operation);
+      return {
+        projectId: project.id,
+        status: 'needs_user_action',
+        terminalState: 'NEEDS_USER_ACTION',
+        operationId: operation.operation_id,
+        needsUserAction: 'The plan was prepared for a different GitHub source snapshot. Re-run Upgrade so the plan uses the latest commit.',
+        brief: '⏸ GitHub source changed after this plan was created. No patch was applied; prepare a fresh plan from the current commit.',
+      };
+    }
+    const result = await applyUpgrade({ project: projects.get(project.id), projects, snapshots, plan, request: job.payload.request || plan.request || '', approved: job.payload.approved === true, validateRuntime: (target) => runProject(projects.get(target.id), emit), emit });
     projects.setStatus(projects.get(project.id), 'UPGRADE_READY');
-    emit('verify', 'done', `Upgrade verified. ${result.files.length} file(s) changed. Ready for release or rollback.`);
-    return result;
+    const brief = `✓ Upgrade verified from GitHub commit ${plan.sourceCommit || 'current source'}.\nFiles verified: ${result.files.join(', ')}`;
+    await projects.saveMetadata(project, 'upgrade-plan.json', {
+      ...plan, status: 'verified', changedFiles: result.files,
+      beforeSourceHash: plan.beforeWorkspaceHash, afterSourceHash: result.sourceHash,
+      checkpointId: result.checkpointId, runtime: result.runtime,
+      completedAt: new Date().toISOString(),
+    });
+    emit('completed', 'done', brief);
+    return { ...result, status: 'completed', brief, sourceCommit: plan.sourceCommit || null, beforeSourceHash: plan.beforeWorkspaceHash, afterSourceHash: result.sourceHash };
   });
 
   jobs.on('create_app', async (job, { emit }) => {
@@ -563,6 +614,10 @@ export function registerPipeline(app) {
     });
     await projects.saveMetadata(project, 'release.json', { github: pushed });
     if (!pushed.ok) throw new Error([pushed.error, pushed.fix].filter(Boolean).join('\n\n'));
+    await projects.saveMetadata(project, 'upgrade-source.json', {
+      type: 'github', owner: pushed.owner, repo: pushed.repo, url: pushed.url,
+      branch: pushed.branch || null, lastSyncedCommit: pushed.sha || null,
+    });
     return pushed;
   });
 
@@ -716,6 +771,13 @@ export function registerPipeline(app) {
         image: registryImage, createdAt: pending?.createdAt || new Date().toISOString(),
         autoRepairAttempts: Number(pending?.autoRepairAttempts || 0), ...extra,
       });
+      if (githubUrl) {
+        await projects.saveMetadata(project, 'upgrade-source.json', {
+          type: 'github', owner, repo, url: githubUrl,
+          branch: githubPublish?.branch || pending?.branch || null,
+          lastSyncedCommit: githubPublish?.sha || pending?.sha || null,
+        });
+      }
     }
 
     if (githubUrl) {
@@ -2301,6 +2363,34 @@ export function registerPipeline(app) {
     const p = projects.get(id);
     if (!p) throw new Error('Project not found');
     return p;
+  }
+
+  async function currentUpgradeSource(project) {
+    const [source, release, pending] = await Promise.all([
+      projects.readMetadata(project, 'upgrade-source.json', {}),
+      projects.readMetadata(project, 'release.json', {}),
+      projects.readMetadata(project, 'release-pending.json', {}),
+    ]);
+    return resolveUpgradeRepository(source, release, pending);
+  }
+
+  async function upgradeSourceActionNeeded(project, jobId = null) {
+    projects.setStatus(project, 'UPGRADE_WAITING_INPUT');
+    let operationId = null;
+    try {
+      await refreshUpgradeSource({ project, projects, snapshots, github, source: null, jobId });
+    } catch (error) {
+      if (error.code !== 'UPGRADE_SOURCE_UNLINKED') throw error;
+      operationId = error.operationId;
+    }
+    return {
+      projectId: project.id,
+      status: 'needs_user_action',
+      terminalState: 'NEEDS_USER_ACTION',
+      operationId,
+      needsUserAction: 'Link this app to its GitHub repository before upgrading. Upgrade will not use an unverified local copy.',
+      brief: '⏸ This app is not linked to a GitHub repository, so I cannot verify the latest source commit. Import the repository through Upgrade from GitHub; no files were changed.',
+    };
   }
 
   async function runWithRepair(project, emit, userMessage) {

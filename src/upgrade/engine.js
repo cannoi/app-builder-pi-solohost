@@ -105,6 +105,7 @@ export async function inspectUpgrade({ project, projects, snapshots, log, valida
     createdAt: new Date().toISOString(),
     sourceHash: manifestHash(after),
     fileCount: after.length,
+    githubSource: await projects.readMetadata(project, 'upgrade-source.json', null),
     stack,
     health: state.health,
     security: summarizeSecurity(state.security),
@@ -208,7 +209,7 @@ Rules: achieve the user's requested outcome, not merely describe a repair. Also 
   return { ...(result.json || {}), rule: parsed.valid ? parsed : null, gap, ruleStatus: parsed.valid ? formatRuleStatus(parsed, gap) : '' };
 }
 
-export async function applyUpgrade({ project, projects, snapshots, plan, request, approved = false, ruleExecution = false, operation = null, validateRuntime = null }) {
+export async function applyUpgrade({ project, projects, snapshots, plan, request, approved = false, ruleExecution = false, operation = null, validateRuntime = null, emit = () => {} }) {
   const ownsOperation = !operation;
   operation ||= createRepairOperation({ projectId: project.id, kind: ruleExecution ? 'rule-upgrade' : 'upgrade-apply', request: redactAiContext(request) });
   await persistRepairOperation(projects, project, operation);
@@ -247,6 +248,13 @@ export async function applyUpgrade({ project, projects, snapshots, plan, request
   const sourceDir = projects.sourceDir(project.slug);
   const before = await fileManifest(sourceDir);
   const baseline = await projects.readMetadata(project, 'upgrade-baseline.json', {});
+  operation.github_source = baseline.githubSource ? {
+    owner: baseline.githubSource.owner,
+    repo: baseline.githubSource.repo,
+    branch: baseline.githubSource.branch,
+    commit_sha: baseline.githubSource.commitSha,
+    source_hash: baseline.githubSource.sourceHash,
+  } : null;
   if (baseline?.sourceHash && baseline.sourceHash !== manifestHash(before)) {
     await stopBeforePatch('Upgrade baseline is stale because project files changed after inspection.', 'UPGRADE_BASELINE_STALE', 'NEEDS_USER_ACTION');
   }
@@ -264,6 +272,9 @@ export async function applyUpgrade({ project, projects, snapshots, plan, request
     if (Buffer.byteLength(f.content, 'utf8') > 1024 * 1024) await stopBeforePatch(`Upgrade file is too large: ${rel}`, 'PATCH_REJECTED');
     if (paths.has(rel)) await stopBeforePatch(`Upgrade plan contains the same file more than once: ${rel}`, 'PATCH_REJECTED');
     paths.add(rel);
+  }
+  if (typeof validateRuntime !== 'function') {
+    await needsUserAction('NEEDS_USER_ACTION: A live runtime validator is required before an Upgrade can be marked complete.');
   }
   const checkpoint = await snapshots.create(project, 'before-upgrade');
   const checkpointSource = await fileManifest(sourceDir);
@@ -301,6 +312,7 @@ export async function applyUpgrade({ project, projects, snapshots, plan, request
     }
     transitionRepairOperation(operation, 'VALIDATE', { changed_files: changedFiles, workspace_hash: operation.workspace_hash_after });
     await persistRepairOperation(projects, project, operation);
+    emit('validating', 'running', 'Checking the changed files, app tests, security and build against the latest source…');
     const syntax = await runSyntaxChecks(sourceDir, changedFiles);
     if (syntax.status === 'failed') throw verificationError('Changed JavaScript failed syntax validation.', { syntax, changedFiles });
     verified = await inspectState(sourceDir, {
@@ -319,16 +331,30 @@ export async function applyUpgrade({ project, projects, snapshots, plan, request
       changedFiles, regression: ['Project build failed.'], verification: verificationSummary(verified),
     });
     if (validateRuntime) {
+      emit('testing', 'running', 'Starting the updated app and checking health, HTTP and browser behavior…');
       transitionRepairOperation(operation, 'START', { status: 'running' });
       await persistRepairOperation(projects, project, operation);
       runtimeResult = await validateRuntime(project);
       transitionRepairOperation(operation, 'SMOKE_TEST', { status: runtimeResult?.e2e?.status || 'skipped' });
       transitionRepairOperation(operation, 'HTTP_TEST', { status: runtimeResult?.health === true ? 'passed' : 'failed', source_hash: runtimeResult?.sourceHash || null });
-      operation.validation = { ...verificationSummary(verified), runtime: { status: runtimeResult?.status, health: runtimeResult?.health === true, e2e: runtimeResult?.e2e?.status || 'skipped' } };
+      operation.validation = {
+        ...verificationSummary(verified),
+        runtime: {
+          status: runtimeResult?.status,
+          health: runtimeResult?.health === true,
+          http: runtimeResult?.health === true ? 'passed' : 'failed',
+          e2e: runtimeResult?.e2e?.status || 'skipped',
+          preview: runtimeResult?.previewPath ? 'passed' : 'failed',
+          sourceHash: runtimeResult?.sourceHash || null,
+        },
+      };
       await persistRepairOperation(projects, project, operation);
-      if (runtimeResult?.status !== 'passed' || runtimeResult?.health !== true) throw verificationError('Upgrade start/health/smoke/HTTP validation failed and was rolled back.', {
+      if (runtimeResult?.status !== 'passed' || runtimeResult?.health !== true
+        || runtimeResult?.e2e?.status !== 'passed' || !runtimeResult?.previewPath
+        || runtimeResult?.sourceHash !== operation.workspace_hash_after) throw verificationError('Upgrade start/health/HTTP/browser-preview validation failed and was rolled back.', {
         changedFiles, regression: ['Runtime validation failed.'], verification: operation.validation,
       });
+      emit('preview', 'done', `Preview and browser smoke test passed at ${runtimeResult.previewPath}.`);
     }
   } catch (err) {
     try {
@@ -398,6 +424,21 @@ export async function executeUpgradeRequest({ project, projects, snapshots, ai, 
     await persistRepairOperation(projects, project, operation);
     throw err;
   };
+  if (typeof validateRuntime !== 'function') {
+    finishRepairOperation(operation, 'NEEDS_USER_ACTION', {
+      error: 'A live runtime/preview validator is required before an Upgrade can be marked complete.',
+      workspace_hash_after: await sourceFingerprint(sourceDir).catch(() => null),
+    });
+    await persistRepairOperation(projects, project, operation);
+    return {
+      projectId: project.id,
+      status: 'needs_user_action',
+      terminalState: 'NEEDS_USER_ACTION',
+      needsUserAction: 'The live preview validator is unavailable, so the Upgrade cannot be safely completed.',
+      brief: '⏸ No patch was applied because this environment cannot verify start, HTTP health, browser behavior and preview against the updated files.',
+      operationId: operation.operation_id,
+    };
+  }
   if (!baseline) {
     let inspection;
     try {
@@ -417,12 +458,33 @@ export async function executeUpgradeRequest({ project, projects, snapshots, ai, 
     }
     baseline = inspection.baseline;
   }
-  operation.workspace_hash_before = baseline.sourceHash;
+  operation.workspace_hash_before = await sourceFingerprint(sourceDir);
+  operation.github_source = baseline.githubSource ? {
+    owner: baseline.githubSource.owner,
+    repo: baseline.githubSource.repo,
+    branch: baseline.githubSource.branch,
+    commit_sha: baseline.githubSource.commitSha,
+    source_hash: baseline.githubSource.sourceHash,
+  } : null;
   await persistRepairOperation(projects, project, operation);
   const step = async (state, evidence = {}) => {
     transitionRepairOperation(operation, state, evidence);
     await persistRepairOperation(projects, project, operation);
-    emit(state.toLowerCase(), 'running', state);
+    const stage = ({
+      PREFLIGHT: 'inspecting',
+      DIAGNOSE: 'planning',
+      EVIDENCE: 'planning',
+      FINGERPRINT: 'planning',
+      DARE: 'planning',
+      PLAN: 'planning',
+      SAFETY_CHECK: 'upgrading',
+      APPLY: 'upgrading',
+      VALIDATE: 'validating',
+      START: 'testing',
+      SMOKE_TEST: 'testing',
+      HTTP_TEST: 'testing',
+    })[state] || state.toLowerCase();
+    emit(stage, 'running', state);
   };
   const terminal = async (terminalState, result, evidence = {}) => {
     finishRepairOperation(operation, terminalState, evidence);
@@ -446,6 +508,9 @@ export async function executeUpgradeRequest({ project, projects, snapshots, ai, 
     } catch (err) {
       return fail(err);
     }
+    plan.sourceHash = baseline.sourceHash;
+    plan.sourceCommit = baseline.githubSource?.commitSha || null;
+    plan.beforeWorkspaceHash = await sourceFingerprint(sourceDir);
     await step('EVIDENCE', { baseline_hash: baseline.sourceHash, issue_count: baseline.knownIssues?.length || 0 });
     operation.fingerprint = String(verificationFailure?.fingerprint || baseline.knownIssues?.[0]?.id || 'UPGRADE_OBJECTIVE');
     operation.fingerprint_history.push({ cycle: attempt + 1, fingerprint: operation.fingerprint, workspace_hash: await sourceFingerprint(sourceDir), validation_hash: verificationFailure?.validationHash || null });
@@ -477,27 +542,35 @@ export async function executeUpgradeRequest({ project, projects, snapshots, ai, 
     operation.proposed_files = files.map((file) => normalize(file.path));
     await step('PLAN', { proposed_files: operation.proposed_files, reason: redactAiContext(plan.recommendation || ''), expected_effect: redactAiContext(plan.expected_result || '') });
     await step('SAFETY_CHECK', { proposed_files: operation.proposed_files });
-    emit('patch', 'running', `Applying the smallest patch (${files.length} proposed file(s)); verification will check the actual changed files…`);
+    emit('upgrading', 'running', `Applying the smallest patch (${files.length} proposed file(s)); verification will check the actual changed files…`);
     try {
       const result = await applyUpgrade({
         project, projects, snapshots, plan, request,
         // The user explicitly requested this upgrade; ask only for decisions
         // the plan says cannot safely be inferred, not confirmation per edit.
         approved: true,
-        operation, validateRuntime,
+        operation, validateRuntime, emit,
       });
       const brief = `${plan.completion_message || '✓ Upgrade verified.'}\nFiles verified: ${result.files.join(', ')}`;
-      emit('verify', 'done', brief);
+      emit('completed', 'done', brief);
       await projects.saveMetadata(project, 'upgrade-plan.json', {
         ...plan, request, status: 'verified', changedFiles: result.files,
-        checkpointId: result.checkpointId, sourceHash: result.sourceHash,
+        checkpointId: result.checkpointId,
+        beforeSourceHash: plan.beforeWorkspaceHash,
+        afterSourceHash: result.sourceHash,
+        sourceCommit: baseline.githubSource?.commitSha || null,
+        validation: result.runtime || result.verification,
         completedAt: new Date().toISOString(),
       });
       return terminal('DONE', {
         projectId: project.id, status: 'completed', upgrade: true, plan,
         files: result.files, verification: result.verification,
         checkpointId: result.checkpointId, attempts: attempt + 1, brief,
-      }, { fingerprint: operation.fingerprint, changedFiles: result.files, workspaceHash: result.sourceHash, validation: result.verification });
+        sourceCommit: baseline.githubSource?.commitSha || null,
+        beforeSourceHash: plan.beforeWorkspaceHash,
+        afterSourceHash: result.sourceHash,
+        runtime: result.runtime,
+      }, { fingerprint: operation.fingerprint, changedFiles: result.files, workspaceHash: result.sourceHash, validation: operation.validation });
     } catch (err) {
       if (err.code === 'UPGRADE_BASELINE_STALE') {
         if (attempt === MAX_AI_REPAIRS - 1) {
@@ -558,7 +631,29 @@ export async function runRuleUpgrade({ project, projects, snapshots, ai, request
   const sourceDir = projects.sourceDir(project.slug);
   const operation = createRepairOperation({ jobId, projectId: project.id, kind: 'rule-upgrade', request: redactAiContext(request) });
   operation.workspace_hash_before = await sourceFingerprint(sourceDir);
+  const initialBaseline = await projects.readMetadata(project, 'upgrade-baseline.json', {});
+  operation.github_source = initialBaseline.githubSource ? {
+    owner: initialBaseline.githubSource.owner,
+    repo: initialBaseline.githubSource.repo,
+    branch: initialBaseline.githubSource.branch,
+    commit_sha: initialBaseline.githubSource.commitSha,
+    source_hash: initialBaseline.githubSource.sourceHash,
+  } : null;
   await persistRepairOperation(projects, project, operation);
+  if (typeof validateRuntime !== 'function') {
+    finishRepairOperation(operation, 'NEEDS_USER_ACTION', {
+      error: 'A live runtime/preview validator is required before a Rule Upgrade can be marked complete.',
+      workspace_hash_after: await sourceFingerprint(sourceDir),
+    });
+    await persistRepairOperation(projects, project, operation);
+    return {
+      status: 'needs_user_action',
+      needsUserAction: 'The live preview validator is unavailable, so this Rule Upgrade cannot be safely completed.',
+      execution: { status: 'NEEDS_USER_ACTION', tasks: [] },
+      operationId: operation.operation_id,
+      terminalState: 'NEEDS_USER_ACTION',
+    };
+  }
   const history = await projects.readMetadata(project, 'upgrade-rule-execution.json', {});
   const previous = Array.isArray(history?.history) ? history.history : [];
   const initialContext = await relevantContext(sourceDir, parsed.requiredCapabilities.join(' '));

@@ -16,6 +16,7 @@ import { inferAction, parseGithubRepoUrl } from '../scripts/ops.js';
 import { createProjectZip } from '../projects/exporter.js';
 import { gcDocker } from '../docker/cleanup.js';
 import { createAccessAuth } from '../security/access-auth.js';
+import { resolveUpgradeRepository } from '../upgrade/source.js';
 
 export function registerRoutes(r, app) {
   const { cfg, db, jobs, projects, snapshots, github, releases, runner, ai } = app;
@@ -437,7 +438,7 @@ export function registerRoutes(r, app) {
 
   r.post('/api/projects/upgrade/github', (req, res) => {
     const parsed = parseGithubRepoUrl(req.body?.url);
-    if (!parsed) return res.status(400).json({ error: 'Use a public GitHub repository URL.' });
+    if (!parsed) return res.status(400).json({ error: 'Use a GitHub repository URL. Private repositories require GitHub credentials in Settings.' });
     const url = parsed.url;
     if (!ensureFree(null, res)) return;
     const job = jobs.enqueue({ type: 'upgrade_github_import', payload: { url } });
@@ -514,7 +515,13 @@ export function registerRoutes(r, app) {
   r.get('/api/projects/:id/upgrade', async (req, res) => {
     const p = projects.get(req.params.id);
     if (!p) return res.status(404).json({ error: 'Project not found' });
+    const [upgradeSource, release, pending] = await Promise.all([
+      projects.readMetadata(p, 'upgrade-source.json', {}),
+      projects.readMetadata(p, 'release.json', {}),
+      projects.readMetadata(p, 'release-pending.json', {}),
+    ]);
     res.json({
+      source: resolveUpgradeRepository(upgradeSource, release, pending),
       baseline: await projects.readMetadata(p, 'upgrade-baseline.json', null),
       knowledge: await projects.readMetadata(p, 'upgrade-knowledge.json', null),
       plan: await projects.readMetadata(p, 'upgrade-plan.json', null),

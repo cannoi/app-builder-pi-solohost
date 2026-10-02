@@ -5,6 +5,17 @@ import os from 'node:os';
 import path from 'node:path';
 import { inspectUpgrade, applyUpgrade, executeUpgradeRequest } from '../src/upgrade/engine.js';
 import { writeSafeFile } from '../src/utils/fsx.js';
+import { sourceFingerprint } from '../src/projects/source-version.js';
+
+async function passingRuntime(root) {
+  return {
+    status: 'passed',
+    health: true,
+    e2e: { status: 'passed' },
+    previewPath: '/preview/upgrade-test/',
+    sourceHash: await sourceFingerprint(root),
+  };
+}
 
 function fakeProject(root) {
   const meta = new Map();
@@ -69,6 +80,7 @@ test('Upgrade applies only the approved files and keeps low-risk scope', async (
     projects,
     snapshots,
     request: 'Change the heading',
+    validateRuntime: async () => passingRuntime(root),
     plan: {
       risk: 'low',
       root_cause: 'The heading is static in index.html.',
@@ -95,6 +107,7 @@ test('Upgrade preserves syntax failures in unchanged files in final verification
       projects,
       snapshots,
       request: 'Change the heading',
+      validateRuntime: async () => passingRuntime(root),
       plan: {
         risk: 'low',
         files: [{ path: 'index.html', content: '<h1>Updated app</h1>' }],
@@ -130,6 +143,7 @@ test('Upgrade detects a broken router, retries from fresh syntax evidence, and a
     let aiCalls = 0;
     const result = await executeUpgradeRequest({
       project, projects, snapshots, request: 'Fix the router syntax and keep array parsing safe.',
+      validateRuntime: async () => passingRuntime(root),
       ai: { async completeJson() {
         if (aiCalls === 0) {
           assert.equal(await fs.readFile(routerPath, 'utf8'), 'export function safeParseArray(value) { try { return JSON.parse(value); }\n');
@@ -163,6 +177,7 @@ test('Upgrade stops after rollback when the same evidence has made no progress',
     await inspectUpgrade({ project, projects, snapshots, log: { info() {} } });
     const result = await executeUpgradeRequest({
       project, projects, snapshots, request: 'Fix the syntax error',
+      validateRuntime: async () => passingRuntime(root),
       ai: { async completeJson() {
         aiCalls += 1;
         return { json: { risk: 'low', files: [{ path: 'router.js', content: 'export function safeParseArray(value) { try {' }] } };
@@ -191,6 +206,7 @@ test('Upgrade refreshes stale source before applying the same plan', async () =>
     await inspectUpgrade({ project, projects, snapshots, log: { info() {} } });
     const result = await executeUpgradeRequest({
       project, projects, snapshots, request: 'Change the heading',
+      validateRuntime: async () => passingRuntime(root),
       ai: { async completeJson() {
         if (aiCalls++ === 0) await fs.writeFile(indexPath, '<h1>External edit</h1>');
         return { json: { risk: 'high', files: [{ path: 'index.html', content: '<h1>Upgraded</h1>' }] } };
@@ -293,6 +309,7 @@ test('Upgrade treats an empty AI proposal as terminal NO_CHANGE without retrying
     await inspectUpgrade({ project, projects, snapshots, log: { info() {} } });
     const result = await executeUpgradeRequest({
       project, projects, snapshots, request: 'Keep the current app',
+      validateRuntime: async () => passingRuntime(root),
       ai: { async completeJson() { aiCalls += 1; return { json: { files: [] } }; } },
     });
     assert.equal(aiCalls, 1);
@@ -300,6 +317,26 @@ test('Upgrade treats an empty AI proposal as terminal NO_CHANGE without retrying
     assert.equal(await fs.readFile(target, 'utf8'), '<h1>Existing</h1>');
     const operations = await projects.readMetadata(project, 'repair-operations.json', []);
     assert.equal(operations.at(-1).terminal_state, 'NO_CHANGE');
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test('Upgrade requires live checks tied to the final source before it can proceed', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'paf-upgrade-no-runtime-validator-'));
+  const target = path.join(root, 'index.html');
+  const original = '<h1>Existing</h1>';
+  await fs.writeFile(target, original);
+  const { project, projects, snapshots } = fakeProject(root);
+  let aiCalls = 0;
+  try {
+    const result = await executeUpgradeRequest({
+      project, projects, snapshots, request: 'Change the heading',
+      ai: { async completeJson() { aiCalls += 1; return { json: { risk: 'low', files: [{ path: 'index.html', content: '<h1>Updated</h1>' }] } }; } },
+    });
+    assert.equal(aiCalls, 0);
+    assert.equal(result.terminalState, 'NEEDS_USER_ACTION');
+    assert.equal(await fs.readFile(target, 'utf8'), original);
   } finally {
     await fs.rm(root, { recursive: true, force: true });
   }
@@ -315,6 +352,7 @@ test('Upgrade runs deterministic start-script repair before its first AI proposa
   try {
     const result = await executeUpgradeRequest({
       project, projects, snapshots, request: 'Improve the app',
+      validateRuntime: async () => passingRuntime(root),
       ai: { async completeJson() {
         aiCalls += 1;
         const pkg = JSON.parse(await fs.readFile(packagePath, 'utf8'));
@@ -351,6 +389,33 @@ test('Upgrade rolls back and verifies the exact source hash when runtime validat
     assert.equal(operations.at(-1).terminal_state, 'ROLLED_BACK');
     assert.equal(operations.at(-1).rollback.verified, true);
     assert.equal(operations.at(-1).rollback.expected_hash, operations.at(-1).rollback.restored_hash);
+  } finally {
+    await snapshots.cleanup();
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test('Upgrade rolls back instead of completing when the preview smoke test is skipped', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'paf-upgrade-preview-skipped-'));
+  const target = path.join(root, 'index.html');
+  const original = '<h1>Original</h1>';
+  await fs.writeFile(target, original);
+  const { project, projects } = fakeProject(root);
+  const snapshots = realSnapshots(root);
+  try {
+    await inspectUpgrade({ project, projects, snapshots, log: { info() {} } });
+    await assert.rejects(() => applyUpgrade({
+      project, projects, snapshots, request: 'Change the heading',
+      plan: { risk: 'low', files: [{ path: 'index.html', content: '<h1>Updated</h1>' }] },
+      validateRuntime: async () => ({
+        ...(await passingRuntime(root)),
+        e2e: { status: 'skipped' },
+      }),
+    }), /rolled back/);
+    assert.equal(await fs.readFile(target, 'utf8'), original);
+    const operations = await projects.readMetadata(project, 'repair-operations.json', []);
+    assert.equal(operations.at(-1).terminal_state, 'ROLLED_BACK');
+    assert.equal(operations.at(-1).validation.runtime.e2e, 'skipped');
   } finally {
     await snapshots.cleanup();
     await fs.rm(root, { recursive: true, force: true });

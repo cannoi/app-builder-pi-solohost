@@ -51,6 +51,40 @@ export class GitHubManager {
 
   configured() { return Boolean((this.cfg.github?.token || this.cfg.githubToken) && this.cfg.github?.owner); }
 
+  async fetchRepositorySource(owner, repo, { ref = null } = {}) {
+    const repoPath = `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
+    const metadata = await this.api('GET', repoPath);
+    const branch = ref || metadata.default_branch;
+    if (!branch) throw new Error(`GitHub repository ${owner}/${repo} has no default branch.`);
+    const commit = await this.api('GET', `${repoPath}/commits/${encodeURIComponent(branch)}`);
+    const commitSha = String(commit.sha || '');
+    if (!/^[a-f0-9]{40}$/i.test(commitSha)) throw new Error('GitHub did not return a valid commit SHA for the repository source.');
+    const archiveHeaders = this.headers();
+    if (!this.getToken()) delete archiveHeaders.Authorization;
+    const response = await fetch(`${API}${repoPath}/zipball/${encodeURIComponent(commitSha)}`, {
+      headers: archiveHeaders,
+      signal: AbortSignal.timeout(60000),
+    });
+    if (!response.ok) {
+      const detail = (await response.text()).slice(0, 240);
+      throw Object.assign(new Error(`GitHub source archive download failed (HTTP ${response.status}). ${detail}`), { status: response.status });
+    }
+    const declaredSize = Number(response.headers.get('content-length') || 0);
+    if (declaredSize > 100 * 1024 * 1024) throw new Error('GitHub source archive exceeds the 100 MB safety limit.');
+    const archive = Buffer.from(await response.arrayBuffer());
+    if (archive.length > 100 * 1024 * 1024) throw new Error('GitHub source archive exceeds the 100 MB safety limit.');
+    return {
+      archive,
+      owner: metadata.owner?.login || owner,
+      repo: metadata.name || repo,
+      url: metadata.html_url || `https://github.com/${owner}/${repo}`,
+      branch,
+      commitSha,
+      private: Boolean(metadata.private),
+      fetchedAt: new Date().toISOString(),
+    };
+  }
+
   headers() {
     return {
       Authorization: `Bearer ${this.cfg.github?.token || this.cfg.githubToken}`,
@@ -319,7 +353,9 @@ export class GitHubManager {
   }
 
   async api(method, pathname, body) {
-    const res = await fetch(`${API}${pathname}`, { method, headers: { ...this.headers(), ...(body ? { 'Content-Type': 'application/json' } : {}) }, body: body ? JSON.stringify(body) : undefined });
+    const headers = this.headers();
+    if (!this.getToken()) delete headers.Authorization;
+    const res = await fetch(`${API}${pathname}`, { method, headers: { ...headers, ...(body ? { 'Content-Type': 'application/json' } : {}) }, body: body ? JSON.stringify(body) : undefined });
     const text = await res.text();
     if (!res.ok) { const err = new Error(`GitHub ${res.status}: ${text.slice(0, 300)}`); err.status = res.status; err.code = classifyGitHubError(res.status, text); throw err; }
     return text ? JSON.parse(text) : {};
