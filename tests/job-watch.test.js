@@ -63,3 +63,10 @@ test('active jobs keep a persisted heartbeat during long-running handlers', () =
   assert.match(queue, /UPDATE jobs SET updated_at/);
   assert.match(queue, /clearInterval\(heartbeat\)/);
 });
+
+test('upgrade jobs are paused, not permanently failed, across Builder restart', () => {
+  const queue = fs.readFileSync(new URL('../src/jobs/queue.js', import.meta.url), 'utf8');
+  assert.match(queue, /startsWith\('upgrade_'\)/);
+  assert.match(queue, /'paused'/);
+  assert.match(queue, /Continue Upgrade to resume from the saved session/);
+});

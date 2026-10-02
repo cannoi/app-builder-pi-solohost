@@ -77,7 +77,10 @@ export async function runDare({ sourceDir, logs = '', extra = {}, history = [] }
   const changed = diffManifest(before, after);
 
   // Never claim a repair when the file set changed outside the declared patch.
-  const declared = new Set((result.files || []).map(normalizeFile));
+  const derivedFiles = [];
+  if (['deps', 'lockfile'].includes(action.repair) && changed.includes('package-lock.json') && !(result.files || []).includes('package-lock.json')) derivedFiles.push('package-lock.json');
+  result.derivedFiles = derivedFiles;
+  const declared = new Set([...(result.files || []), ...derivedFiles].map(normalizeFile));
   const unexpected = changed.filter((file) => !declared.has(normalizeFile(file)));
   if (unexpected.length) {
     return report({

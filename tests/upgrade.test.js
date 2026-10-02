@@ -69,11 +69,23 @@ test('Upgrade inspection appends history as an array', async () => {
   await fs.rm(root, { recursive: true, force: true });
 });
 
-test('Upgrade rejects non-low-risk plans before modifying source', async () => {
+test('Upgrade executes a required high-risk plan automatically when verification stays healthy', async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'paf-upgrade-'));
   await fs.writeFile(path.join(root, 'index.html'), '<h1>Existing app</h1>');
   const { project, projects, snapshots } = fakeProject(root);
-  await assert.rejects(() => applyUpgrade({ project, projects, snapshots, request: 'Rewrite architecture', plan: { risk: 'high', files: [{ path: 'index.html', content: '<h1>bad</h1>' }] } }), /NEEDS_USER_ACTION/);
+  await inspectUpgrade({ project, projects, snapshots, log: { info() {} } });
+  const result = await applyUpgrade({ project, projects, snapshots, request: 'Required architecture change', plan: { risk: 'high', files: [{ path: 'index.html', content: '<h1>Upgraded app</h1>' }], expected_result: 'Heading changes.' } });
+  assert.deepEqual(result.files, ['index.html']);
+  assert.equal(await fs.readFile(path.join(root, 'index.html'), 'utf8'), '<h1>Upgraded app</h1>');
+  await fs.rm(root, { recursive: true, force: true });
+});
+
+test('Upgrade still rolls back a high-risk plan when verification regresses', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'paf-upgrade-'));
+  await fs.writeFile(path.join(root, 'index.html'), '<h1>Existing app</h1>');
+  const { project, projects, snapshots } = fakeProject(root);
+  await inspectUpgrade({ project, projects, snapshots, log: { info() {} } });
+  await assert.rejects(() => applyUpgrade({ project, projects, snapshots, request: 'Break the app', plan: { risk: 'high', files: [{ path: 'package.json', content: '{bad' }] } }));
   assert.equal(await fs.readFile(path.join(root, 'index.html'), 'utf8'), '<h1>Existing app</h1>');
   await fs.rm(root, { recursive: true, force: true });
 });

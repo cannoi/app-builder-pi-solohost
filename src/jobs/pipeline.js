@@ -22,7 +22,7 @@ import { runDare, formatDareReport } from '../dare/engine.js';
 import { shouldBlockRepeatedAction, nextRepeatState, repairFingerprint } from './loop-guard.js';
 import { mergeVerificationState } from './verification.js';
 import { maskSecrets } from '../utils/mask.js';
-import { inspectUpgrade, diagnoseUpgradeRequest, applyUpgrade, runRuleUpgrade } from '../upgrade/engine.js';
+import { inspectUpgrade, diagnoseUpgradeRequest, applyUpgrade, runRuleUpgrade, beginUpgradeSession, resumeUpgrade, isUpgradePauseError } from '../upgrade/engine.js';
 import { diagnoseProject, buildAdvisorReport } from '../diagnose/project.js';
 import { refreshProjectBrain, rememberFailedRepair, wasRepairTried } from '../diagnose/brain.js';
 
@@ -76,10 +76,15 @@ export function registerPipeline(app) {
     const response = await fetch(archiveUrl, { headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'pi-app-factory-upgrade' } });
     if (!response.ok) throw new Error(`GitHub public repository could not be downloaded (HTTP ${response.status}).`);
     const buffer = Buffer.from(await response.arrayBuffer());
+    let sourceCommit = 'HEAD';
+    try {
+      const commitResponse = await fetch(`https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/commits/HEAD`, { headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'pi-app-factory-upgrade' } });
+      if (commitResponse.ok) sourceCommit = String((await commitResponse.json())?.sha || 'HEAD');
+    } catch {}
     const project = await projects.create({ idea: `Upgrade existing GitHub app: ${owner}/${repo}`, name: repo, analysis: { name: repo, slug: repo, recommended_stack: {} }, plan: { mode: 'upgrade-existing' } });
     jobs.attachProject(job.id, project.id);
     await importZipBuffer(buffer, projects.sourceDir(project.slug), { replace: true });
-    await projects.saveMetadata(project, 'upgrade-source.json', { type: 'github-public', url, owner, repo, importedAt: new Date().toISOString() });
+    await projects.saveMetadata(project, 'upgrade-source.json', { type: 'github-public', url, owner, repo, ref: 'HEAD', commit: sourceCommit, importedAt: new Date().toISOString() });
     projects.setStatus(project, 'UPGRADE_INSPECTING');
     emit('import', 'done', 'GitHub source imported. Starting the independent Upgrade Workshop.');
     emit('inspect', 'running', 'Inspecting the imported app and creating an upgrade baseline…');
@@ -125,40 +130,117 @@ export function registerPipeline(app) {
     const baseline = await projects.readMetadata(project, 'upgrade-baseline.json', null);
     if (!baseline) throw new Error('Upgrade baseline is missing. Inspect the app first.');
     projects.setStatus(project, 'UPGRADE_DIAGNOSING');
+    const request = String(job.payload.request || '').trim();
     const ruleText = String(job.payload.ruleText || '').trim();
-    const pastedRule = /RULE_NAME|REQUIRED CAPABILITIES|REQUIRED_CAPABILITIES/i.test(String(job.payload.request || ''));
-    // A Rule is an execution contract, not a one-shot AI prompt. When a Rule is
-    // supplied, the Builder owns planning, task ordering, checkpoints, verification
-    // and re-planning. There is intentionally no Apply Upgrade gate for safe steps.
+    const pastedRule = /RULE_NAME|REQUIRED CAPABILITIES|REQUIRED_CAPABILITIES/i.test(request);
+    const existingSession = await projects.readMetadata(project, 'upgrade-session.json', null);
+    const wasResumed = Boolean(existingSession?.status === 'paused' && existingSession?.resumable && existingSession?.request === request);
+    const session = await beginUpgradeSession({ project, projects, request, mode: (ruleText || pastedRule) ? 'rule' : 'normal' });
     if (ruleText || pastedRule) {
-      const result = await runRuleUpgrade({ project, projects, snapshots, ai, request: job.payload.request, ruleText: ruleText || job.payload.request, emit });
-      projects.setStatus(projects.get(project.id), result.needsUserAction ? 'UPGRADE_WAITING_INPUT' : (result.status === 'completed' ? 'UPGRADE_READY' : 'UPGRADE_READY'));
-      return result;
+      try {
+        const result = await runRuleUpgrade({ project, projects, snapshots, ai, request, ruleText: ruleText || request, emit, resume: wasResumed && session.mode === 'rule' });
+        const currentSession = await projects.readMetadata(project, 'upgrade-session.json', {});
+        if (result.status === 'completed') {
+          await projects.saveMetadata(project, 'upgrade-session.json', { ...currentSession, status: 'completed', resumable: false, phase: 'complete', completedSteps: [...new Set([...(currentSession.completedSteps || []), ...(result.execution?.tasks || []).filter((t) => ['done','satisfied'].includes(t.status)).map((t) => t.id)])], finishedAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
+        } else if (!result.needsUserAction) {
+          await projects.saveMetadata(project, 'upgrade-session.json', { ...currentSession, status: 'paused', resumable: true, phase: 'rule', updatedAt: new Date().toISOString() });
+        }
+        projects.setStatus(projects.get(project.id), result.needsUserAction ? 'UPGRADE_WAITING_INPUT' : 'UPGRADE_READY');
+        return { ...result, session: await projects.readMetadata(project, 'upgrade-session.json', {}) };
+      } catch (err) {
+        if (isUpgradePauseError(err)) {
+          const paused = await projects.readMetadata(project, 'upgrade-rule-execution.json', {});
+          const currentSession = await projects.readMetadata(project, 'upgrade-session.json', {});
+          await projects.saveMetadata(project, 'upgrade-session.json', { ...currentSession, status: 'paused', resumable: true, mode: 'rule', phase: 'rule', currentStep: paused?.tasks?.find((t) => t.status === 'pending')?.id || currentSession.currentStep || 'rule', lastError: { code: String(err.code || 'PAUSED_AI_UNAVAILABLE'), message: String(err.message || err).slice(0, 1200), at: new Date().toISOString() }, updatedAt: new Date().toISOString() });
+          projects.setStatus(projects.get(project.id), 'UPGRADE_READY');
+          emit('pause', 'done', `⏸ Upgrade paused safely: ${String(err.message || err).slice(0, 220)}. Resume to continue from the saved task.`);
+          return { projectId: project.id, paused: true, resumable: true, execution: paused, session: await projects.readMetadata(project, 'upgrade-session.json', {}), brief: 'Upgrade paused safely. Verified work was kept. Resume to continue from the saved task.' };
+        }
+        throw err;
+      }
     }
-    emit('diagnose', 'running', 'Diagnosing the request against the real app baseline…');
-    const plan = await diagnoseUpgradeRequest({ project, projects, ai, request: job.payload.request, ruleText: '' });
-    await projects.saveMetadata(project, 'upgrade-plan.json', { ...plan, request: job.payload.request, createdAt: new Date().toISOString() });
-    const secretStop = /secret|credential|wallet|private key/i.test(String(plan.needs_user_action || ''));
-    if (secretStop) {
-      projects.setStatus(projects.get(project.id), 'UPGRADE_WAITING_INPUT');
-      emit('recommend', 'done', plan.needs_user_action);
-      return { projectId: project.id, plan, needsUserAction: true, needsApproval: false, brief: plan.needs_user_action };
+    const existingPlan = await projects.readMetadata(project, 'upgrade-plan.json', null);
+    if (existingPlan && wasResumed && session.status === 'running' && session.phase !== 'plan') {
+      emit('patch', 'running', 'Continuing from the saved Upgrade plan. No completed step will be repeated.');
+      try {
+        const applied = await resumeUpgrade({ project: projects.get(project.id), projects, snapshots, ai, request, emit });
+        projects.setStatus(projects.get(project.id), 'UPGRADE_READY');
+        return applied;
+      } catch (err) {
+        if (isUpgradePauseError(err)) {
+          await projects.saveMetadata(project, 'upgrade-session.json', await projects.readMetadata(project, 'upgrade-session.json', {}));
+          projects.setStatus(projects.get(project.id), 'UPGRADE_READY');
+          emit('pause', 'done', `⏸ Upgrade paused safely: ${String(err.message || err).slice(0, 220)}. Resume to continue.`);
+          return { projectId: project.id, paused: true, resumable: true, session: await projects.readMetadata(project, 'upgrade-session.json', {}), brief: 'Upgrade paused safely. Verified work was kept. Resume to continue.' };
+        }
+        throw err;
+      }
     }
-    emit('patch', 'running', 'Applying the upgrade. No extra confirmation is required.');
+    emit('diagnose', 'running', 'Inspecting the real app and creating the Upgrade plan…');
     try {
-      const applied = await applyUpgrade({ project: projects.get(project.id), projects, snapshots, plan, request: job.payload.request, approved: true, ruleExecution: true });
+      const plan = await diagnoseUpgradeRequest({ project, projects, ai, request, ruleText: '' });
+      await projects.saveMetadata(project, 'upgrade-plan.json', { ...plan, request, createdAt: new Date().toISOString() });
+      await projects.updateMetadata?.(project, 'upgrade-session.json', {});
+      const secretStop = /secret|credential|wallet|private key/i.test(String(plan.needs_user_action || ''));
+      if (secretStop) {
+        projects.setStatus(projects.get(project.id), 'UPGRADE_WAITING_INPUT');
+        emit('recommend', 'done', plan.needs_user_action);
+        return { projectId: project.id, plan, needsUserAction: true, needsApproval: false, brief: plan.needs_user_action };
+      }
+      emit('patch', 'running', 'Applying the upgrade. No extra confirmation is required.');
+      const applied = await applyUpgrade({ project: projects.get(project.id), projects, snapshots, plan, request, approved: true, ruleExecution: true });
+      const sessionNow = await projects.readMetadata(project, 'upgrade-session.json', {});
+      await projects.saveMetadata(project, 'upgrade-session.json', { ...sessionNow, status: 'completed', resumable: false, phase: 'complete', currentStep: 'verify', completedSteps: [...new Set([...(sessionNow.completedSteps || []), 'diagnose', 'apply', 'verify'])], changedFiles: [...new Set([...(sessionNow.changedFiles || []), ...(applied.files || [])])], finalHash: applied.sourceHash || sessionNow.workingHash || null, finishedAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
       projects.setStatus(projects.get(project.id), 'UPGRADE_READY');
       emit('verify', 'done', `Upgrade verified. ${applied.files.length} file(s) changed. Rollback is available if you want the previous version.`);
-      return { projectId: project.id, plan, execution: applied, needsApproval: false, brief: plan.recommendation || 'Upgrade completed.', next: 'Open preview or Publish. Use Rollback if this is not what you wanted.' };
+      return { projectId: project.id, plan, execution: applied, session: await projects.readMetadata(project, 'upgrade-session.json', {}), needsApproval: false, brief: plan.recommendation || 'Upgrade completed.', next: 'Open preview or Publish. Use Rollback if this is not what you wanted.' };
     } catch (err) {
-      const message = String(err.message || err);
-      if (message.startsWith('NEEDS_USER_ACTION')) {
-        projects.setStatus(projects.get(project.id), 'UPGRADE_WAITING_INPUT');
-        emit('recommend', 'done', message);
-        return { projectId: project.id, plan, needsUserAction: true, needsApproval: false, brief: message };
+      if (isUpgradePauseError(err)) {
+        const sessionPaused = await projects.readMetadata(project, 'upgrade-session.json', {});
+        await projects.saveMetadata(project, 'upgrade-session.json', { ...sessionPaused, status: 'paused', resumable: true, lastError: { code: String(err.code || 'PAUSED_AI_UNAVAILABLE'), message: String(err.message || err).slice(0, 1200), at: new Date().toISOString() }, updatedAt: new Date().toISOString() });
+        projects.setStatus(projects.get(project.id), 'UPGRADE_READY');
+        emit('pause', 'done', `⏸ Upgrade paused safely: ${String(err.message || err).slice(0, 220)}. Resume to continue from the saved plan.`);
+        return { projectId: project.id, paused: true, resumable: true, session: await projects.readMetadata(project, 'upgrade-session.json', {}), plan: await projects.readMetadata(project, 'upgrade-plan.json', null), brief: 'Upgrade paused safely. No verified work was rolled back. Resume to continue from the saved plan.' };
+      }
+      const currentSession = await projects.readMetadata(project, 'upgrade-session.json', {});
+      if (currentSession?.phase === 'apply') {
+        await projects.saveMetadata(project, 'upgrade-plan-last-failed.json', await projects.readMetadata(project, 'upgrade-plan.json', null));
+        await projects.saveMetadata(project, 'upgrade-session.json', { ...currentSession, status: 'paused', resumable: true, phase: 'plan', currentStep: 'diagnose', lastError: { code: String(err.code || 'UPGRADE_VERIFY_FAILED'), message: String(err.message || err).slice(0, 1200), at: new Date().toISOString() }, updatedAt: new Date().toISOString() });
       }
       projects.setStatus(projects.get(project.id), 'UPGRADE_READY');
-      emit('verify', 'failed', message);
+      throw err;
+    }
+  });
+
+  jobs.on('upgrade_resume', async (job, { emit }) => {
+    const project = mustProject(job.payload.projectId);
+    const session = await projects.readMetadata(project, 'upgrade-session.json', null);
+    if (!session?.resumable) throw new Error('No resumable Upgrade session is available.');
+    projects.setStatus(projects.get(project.id), 'UPGRADE_DIAGNOSING');
+    const resumed = await projects.readMetadata(project, 'upgrade-session.json', {});
+    await projects.saveMetadata(project, 'upgrade-session.json', { ...resumed, status: 'running', lastError: null, updatedAt: new Date().toISOString() });
+    try {
+      if (session.mode === 'rule') {
+        const ruleState = await projects.readMetadata(project, 'upgrade-rule-execution.json', {});
+        const ruleText = await projects.readMetadata(project, 'upgrade-rule.json', {});
+        const result = await runRuleUpgrade({ project, projects, snapshots, ai, request: session.request, ruleText: ruleText?.rule?.source || session.request, emit, resume: true });
+        projects.setStatus(projects.get(project.id), 'UPGRADE_READY');
+        return result;
+      }
+      const result = await resumeUpgrade({ project, projects, snapshots, ai, request: session.request, emit });
+      projects.setStatus(projects.get(project.id), 'UPGRADE_READY');
+      return result;
+    } catch (err) {
+      if (isUpgradePauseError(err)) {
+        const current = await projects.readMetadata(project, 'upgrade-session.json', {});
+        await projects.saveMetadata(project, 'upgrade-session.json', { ...current, status: 'paused', resumable: true, lastError: { code: String(err.code || 'PAUSED_AI_UNAVAILABLE'), message: String(err.message || err).slice(0, 1200), at: new Date().toISOString() }, updatedAt: new Date().toISOString() });
+        projects.setStatus(projects.get(project.id), 'UPGRADE_READY');
+        emit('pause', 'done', `⏸ Provider unavailable. Verified work is preserved. Resume will continue from ${current.currentStep || 'the saved step'}.`);
+        return { projectId: project.id, paused: true, resumable: true, session: await projects.readMetadata(project, 'upgrade-session.json', {}), brief: 'Upgrade remains paused and resumable. Verified work was preserved.' };
+      }
+      const currentSession = await projects.readMetadata(project, 'upgrade-session.json', {});
+      await projects.saveMetadata(project, 'upgrade-session.json', { ...currentSession, status: 'paused', resumable: true, phase: currentSession?.phase === 'apply' ? 'plan' : (currentSession?.phase || 'plan'), currentStep: currentSession?.phase === 'apply' ? 'diagnose' : (currentSession?.currentStep || 'diagnose'), lastError: { code: String(err.code || 'UPGRADE_PAUSED'), message: String(err.message || err).slice(0, 1200), at: new Date().toISOString() }, updatedAt: new Date().toISOString() });
+      projects.setStatus(projects.get(project.id), 'UPGRADE_READY');
       throw err;
     }
   });
@@ -166,7 +248,7 @@ export function registerPipeline(app) {
   jobs.on('upgrade_apply', async (job, { emit }) => {
     const project = mustProject(job.payload.projectId);
     projects.setStatus(project, 'UPGRADING');
-    emit('patch', 'running', 'Applying only the approved upgrade files…');
+    emit('patch', 'running', 'Applying the saved Upgrade plan…');
     const plan = job.payload.plan || await projects.readMetadata(project, 'upgrade-plan.json', {});
     const result = await applyUpgrade({ project: projects.get(project.id), projects, snapshots, plan, request: job.payload.request || plan.request || '', approved: job.payload.approved === true });
     projects.setStatus(projects.get(project.id), 'UPGRADE_READY');

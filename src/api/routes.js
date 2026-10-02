@@ -322,7 +322,8 @@ export function registerRoutes(r, app) {
     const workPlan = await projects.readMetadata(p, 'work-plan.json', null);
     const workHistory = await projects.workHistory(p);
     const handoff = await projects.readMetadata(p, 'handoff.json', {});
-    res.json({ ...brief(p), files, analysis, plan, tests, security, runtime, snapshots: snaps, releases: rels, chat, attachments, workPlan, workHistory, handoff });
+    const upgradeSession = await projects.readMetadata(p, 'upgrade-session.json', null);
+    res.json({ ...brief(p), files, analysis, plan, tests, security, runtime, snapshots: snaps, releases: rels, chat, attachments, workPlan, workHistory, handoff, upgradeSession });
   });
 
   r.post('/api/chat', async (req, res) => {
@@ -495,11 +496,20 @@ export function registerRoutes(r, app) {
   r.post('/api/projects/:id/upgrade/apply', (req, res) => {
     const p = projects.get(req.params.id);
     if (!p) return res.status(404).json({ error: 'Project not found' });
-    if (req.body?.approved !== true) return res.status(400).json({ error: 'Upgrade approval is required.' });
     if (!ensureFree(p.id, res)) return;
     const job = jobs.enqueue({ type: 'upgrade_apply', projectId: p.id, payload: { projectId: p.id, request: req.body?.request || '', plan: req.body?.plan || null, approved: true } });
     setImmediate(() => jobs.kick(job));
-    res.status(202).json({ jobId: job.id, message: 'Approved upgrade started.' });
+    res.status(202).json({ jobId: job.id, message: 'Upgrade execution started.' });
+  });
+
+  r.post('/api/projects/:id/upgrade/resume', (req, res) => {
+    const p = projects.get(req.params.id);
+    if (!p) return res.status(404).json({ error: 'Project not found' });
+    if (!ensureFree(p.id, res)) return;
+    const session = null;
+    const job = jobs.enqueue({ type: 'upgrade_resume', projectId: p.id, payload: { projectId: p.id } });
+    setImmediate(() => jobs.kick(job));
+    res.status(202).json({ jobId: job.id, message: 'Upgrade resume started from the saved session.' });
   });
 
   r.get('/api/projects/:id/upgrade', async (req, res) => {
@@ -511,6 +521,8 @@ export function registerRoutes(r, app) {
       plan: await projects.readMetadata(p, 'upgrade-plan.json', null),
       history: await projects.readMetadata(p, 'upgrade-history.json', []),
       repairs: await projects.readMetadata(p, 'upgrade-repair-history.json', []),
+      session: await projects.readMetadata(p, 'upgrade-session.json', null),
+      ruleExecution: await projects.readMetadata(p, 'upgrade-rule-execution.json', null),
       diagnosis: await projects.readMetadata(p, 'project-diagnosis.json', null),
       advisor: await projects.readMetadata(p, 'builder-advisor.json', null),
     });

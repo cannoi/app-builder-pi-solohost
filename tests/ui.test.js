@@ -9,7 +9,7 @@ test('settings modal can be hidden and all setup buttons exist', () => {
   assert.match(css, /\.modal\[hidden\]\{display:none!important\}/);
   assert.match(html, /id="settings"[^>]*hidden/);
   assert.match(html, /id="saveSettings"/);
-  assert.match(html, /app\.js\?v=feedback-direct-1/);
+  assert.match(html, /app\.js\?v=feedback-1\.4\.61/);
   assert.match(html, /styles\.css\?v=1\.4\.35/);
   assert.match(html, /No docker\.sock/);
   assert.match(html, /GitHub token/);
@@ -191,4 +191,15 @@ test('chat compacting collapses repeated GHCR smoke errors', () => {
   const js = fs.readFileSync(new URL('../public/app.js', import.meta.url), 'utf8');
   assert.match(js, /function compactNotice/);
   assert.match(js, /shouldSkipNotice/);
+});
+
+test('Upgrade UI resumes saved work instead of presenting an approval gate', () => {
+  const js = fs.readFileSync(new URL('../public/app.js', import.meta.url), 'utf8');
+  assert.match(js, /Continue Upgrade/);
+  assert.match(js, /upgrade\/resume/);
+  const start = js.indexOf('function renderUpgradePlan');
+  const end = js.indexOf('async function startDiagnose', start);
+  const block = js.slice(start, end);
+  assert.doesNotMatch(block, /Apply high-risk upgrade/);
+  assert.doesNotMatch(block, /Apply Upgrade/);
 });

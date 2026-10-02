@@ -59,7 +59,7 @@ export class JobQueue {
     // finish()/fail()/requestCancel(). Otherwise Publish disappears from chat
     // as soon as the first validate step emits "done".
     const current = this.db.get('SELECT status FROM jobs WHERE id = ?', jobId);
-    const terminal = current && ['done', 'failed', 'cancelled'].includes(current.status);
+    const terminal = current && ['done', 'failed', 'cancelled', 'paused'].includes(current.status);
     if (!terminal) {
       const nextStatus = status === 'queued' ? 'queued' : 'running';
       this.db.run(
@@ -133,9 +133,14 @@ export class JobQueue {
   }
 
   resumeInterrupted() {
-    const rows = this.db.all(`SELECT id FROM jobs WHERE status IN ('queued','running')`);
+    const rows = this.db.all(`SELECT id,type FROM jobs WHERE status IN ('queued','running')`);
     for (const row of rows) {
-      this.fail(row.id, 'Interrupted by application restart. Re-run the action.');
+      if (String(row.type || '').startsWith('upgrade_')) {
+        this.db.run('UPDATE jobs SET status=?, error=?, updated_at=? WHERE id=?', 'paused', 'Upgrade interrupted by application restart. The saved Upgrade session can be resumed.', new Date().toISOString(), row.id);
+        this.emit(row.id, 'paused', 'done', 'Upgrade paused safely after restart. Continue Upgrade to resume from the saved session.');
+      } else {
+        this.fail(row.id, 'Interrupted by application restart. Re-run the action.');
+      }
     }
     return rows.length;
   }

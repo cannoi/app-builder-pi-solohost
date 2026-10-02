@@ -223,6 +223,31 @@ async function loadProjects() {
   select.innerHTML = '<option value="">New app</option>' + state.projects.map((p) => `<option value="${p.id}">${esc(p.name)}</option>`).join('');
   select.value = state.projectId || '';
 }
+function renderUpgradeSession(session) {
+  if (!session) return;
+  const box = document.createElement('div'); box.className = 'msg ai';
+  const title = document.createElement('div'); title.style.fontWeight = '700';
+  title.textContent = session.status === 'paused' ? '⏸ Upgrade paused — work is saved' : '🔧 Upgrade progress';
+  box.appendChild(title);
+  const body = document.createElement('div'); body.className = 'small';
+  const completed = (session.completedSteps || []).join(', ') || 'none';
+  const files = (session.changedFiles || []).join(', ') || 'none';
+  body.textContent = `Step: ${session.currentStep || '—'}\nCompleted: ${completed}\nFiles changed: ${files}${session.lastError?.message ? `\nPause reason: ${session.lastError.message}` : ''}`;
+  body.style.whiteSpace = 'pre-wrap'; box.appendChild(body);
+  const row = document.createElement('div'); row.className = 'actionCard';
+  if (session.resumable && session.status === 'paused') {
+    const resume = document.createElement('button'); resume.className = 'primary'; resume.textContent = '▶ Continue Upgrade';
+    resume.onclick = async () => {
+      if (state.busy) return;
+      setBusy(true, 'Continuing Upgrade from the saved plan…');
+      try { const r = await api(`/api/projects/${state.projectId}/upgrade/resume`, { method: 'POST', body: '{}' }); watch(r.jobId); }
+      catch (e) { handleJobActionError(e); }
+    };
+    row.appendChild(resume);
+  }
+  box.appendChild(row); $('chat').appendChild(box); if (chatNearBottom()) $('chat').scrollTop = $('chat').scrollHeight;
+}
+
 async function openProject(id, announce = true) {
   state.projectId = id; rememberProject(id); await loadProjects();
   const p = await api(`/api/projects/${id}`);
@@ -247,6 +272,7 @@ async function openProject(id, announce = true) {
       : `I’m ready to build ${p.name}. Tell me what you want next.`);
   }
   if (p.workPlan?.steps?.length) renderWorkPlan(p.workPlan);
+  if (p.upgradeSession && ['paused','running'].includes(p.upgradeSession.status)) renderUpgradeSession(p.upgradeSession);
   if (Array.isArray(p.workHistory) && p.workHistory.length) renderWorkHistory(p.workHistory);
   if (announce) add('system', `Project: ${p.name}`);
   setLive(p.runtime?.status === 'passed');
@@ -391,22 +417,11 @@ function renderUpgradeBaseline(result) {
 }
 function renderUpgradePlan(plan, request) {
   if (!plan) return;
-  const risk = String(plan.risk || 'unknown').toLowerCase();
   const box = document.createElement('div'); box.className = 'msg ai';
-  const title = document.createElement('div'); title.textContent = '🔧 Upgrade Plan'; title.style.fontWeight = '700'; box.appendChild(title);
+  const title = document.createElement('div'); title.textContent = '🔧 Upgrade Plan saved'; title.style.fontWeight = '700'; box.appendChild(title);
   const body = document.createElement('div'); body.className = 'small';
-  body.textContent = `Problem: ${plan.root_cause || '—'}\n\nRecommended: ${plan.recommendation || '—'}\n\nRisk: ${plan.risk || 'unknown'}\n\nFiles: ${(plan.files || []).map(f => typeof f === 'string' ? f : f.path).join(', ') || 'none'}\n\nExpected: ${plan.expected_result || '—'}`;
-  body.style.whiteSpace = 'pre-wrap'; box.appendChild(body);
-  const row = document.createElement('div'); row.className = 'actionCard';
-  const apply = document.createElement('button'); apply.className = 'primary';
-  apply.textContent = risk === 'high' ? 'Apply high-risk upgrade' : 'Apply Upgrade';
-  apply.onclick = async () => {
-    if (state.busy) return;
-    setBusy(true, 'Applying the minimal upgrade…');
-    try { const r = await api(`/api/projects/${state.projectId}/upgrade/apply`, { method: 'POST', body: JSON.stringify({ approved: true, request, plan }) }); watch(r.jobId); }
-    catch (e) { handleJobActionError(e); }
-  };
-  row.appendChild(apply); box.appendChild(row); $('chat').appendChild(box); if (chatNearBottom()) $('chat').scrollTop = $('chat').scrollHeight;
+  body.textContent = `Problem: ${plan.root_cause || '—'}\n\nRecommended: ${plan.recommendation || '—'}\n\nRisk: ${plan.risk || 'unknown'}\n\nFiles: ${(plan.files || []).map(f => typeof f === 'string' ? f : f.path).join(', ') || 'none'}\n\nExpected: ${plan.expected_result || '—'}\n\nThe Builder will continue automatically. If an AI provider stops, the saved plan remains available to Continue Upgrade.`;
+  body.style.whiteSpace = 'pre-wrap'; box.appendChild(body); $('chat').appendChild(box); if (chatNearBottom()) $('chat').scrollTop = $('chat').scrollHeight;
 }
 
 async function startDiagnose() {
@@ -607,6 +622,12 @@ async function watch(jobId, { preserveEvents = false, resetFailures = true } = {
         add('ai', result.brief || `Rule ${state.status}. ${state.cycle || 0} cycle(s) completed.`);
         if (result.needsUserAction) add('ai', `🔑 ${result.needsUserAction}`);
         else if (pending.length) add('ai', `Next: Builder stopped safely with ${pending.length} task(s) remaining. No identical repair was repeated.`);
+      }
+      if (result.session) renderUpgradeSession(result.session);
+      if (result.paused && result.resumable) {
+        setBusy(false);
+        renderUpgradeSession(result.session || result.execution || null);
+        if (result.brief) add('ai', result.brief);
       }
       if (job.status === 'failed') {
         const failure = String(job.error || 'The action failed.');

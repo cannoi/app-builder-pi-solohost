@@ -38,3 +38,17 @@ test('gateway combines two selected models as builder and reviewer for code task
   assert.equal(result.council.reviewer, 'gemini');
   assert.equal(result.council.review.accept, true);
 });
+
+test('completeJson retries when JSON parses but violates the caller schema', async () => {
+  const cfg = { ai: { provider: 'deepseek', mode: 'single', deepseekKey: 'x', geminiKey: 'y', deepseekModel: 'fast', geminiModel: 'review' } };
+  const db = { setting(k, d) { return d; }, run() {}, setSetting() {} };
+  const gateway = new AIGateway({ cfg, db, log: { warn() {} } });
+  let calls = 0;
+  gateway.hub.execute = async () => {
+    calls += 1;
+    return { provider: 'deepseek', model: 'fast', text: calls === 1 ? '{"files":"server.js"}' : '{"recommendation":"patch","expected_result":"works","files":[{"path":"server.js","content":"ok"}]}' };
+  };
+  const result = await gateway.completeJson({ task: 'UPGRADE_WORKSHOP', prompt: 'upgrade', validateJson: (v) => typeof v.recommendation === 'string' && typeof v.expected_result === 'string' && Array.isArray(v.files) && v.files.every((f) => typeof f?.path === 'string' && typeof f?.content === 'string') });
+  assert.equal(result.json.recommendation, 'patch');
+  assert.equal(calls, 2);
+});

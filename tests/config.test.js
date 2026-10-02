@@ -1,4 +1,5 @@
 import test from 'node:test';
+import fs from 'node:fs';
 import assert from 'node:assert/strict';
 import { loadConfig, publicConfig, validateConfig } from '../src/config/index.js';
 import { maskKey, maskSecrets, looksLikeSecret } from '../src/utils/mask.js';
@@ -9,7 +10,8 @@ import { isSafeRelPath } from '../src/utils/fsx.js';
 
 test('config loads without crashing when optional keys are missing', () => {
   const cfg = loadConfig();
-  assert.equal(cfg.version, '1.4.59');
+  const pkg = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
+  assert.equal(cfg.version, pkg.version);
   assert.equal(cfg.runtime.mode, 'auto');
   assert.equal(cfg.ai.provider, 'deepseek');
   assert.equal(cfg.ai.deepseekModel, 'deepseek-v4-flash');

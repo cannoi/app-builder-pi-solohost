@@ -112,12 +112,14 @@ export class AIGateway {
     if (council) return this.completeCouncil(opts);
     const first = await this.complete({ ...opts, json: true });
     let parsed = extractJson(first.text);
-    if (parsed) return { ...first, json: parsed };
+    if (parsed && (!opts.validateJson || opts.validateJson(parsed))) return { ...first, json: parsed };
+
     const strictPrompt = `${opts.prompt}\n\nJSON OUTPUT CONTRACT:\n- Return exactly one valid JSON object.\n- No markdown fences.\n- No commentary before or after JSON.\n- If uncertain, return {"root_cause":"FORMAT_ERROR","files":[],"explanation":"Unable to produce valid JSON."}.`;
     try {
       const retry = await this.complete({ ...opts, json: true, prompt: strictPrompt });
       parsed = extractJson(retry.text);
-      if (parsed) return { ...retry, json: parsed, fallbackFrom: first.provider };
+      if (parsed && (!opts.validateJson || opts.validateJson(parsed))) return { ...retry, json: parsed, fallbackFrom: first.provider };
+
     } catch (err) {
       this.log.warn('AI JSON retry failed', { error: err.message });
     }
@@ -127,7 +129,7 @@ export class AIGateway {
   async completeSelectedPair(opts, pair) {
     const draft = await this.complete({ ...opts, json: true, modelRef: pair[0] });
     const parsed = extractJson(draft.text);
-    if (!parsed) throw Object.assign(new Error(`AI response format was invalid. ${draft.provider || 'Builder'} did not return valid JSON. No files were changed.`), { code: 'AI_BAD_JSON' });
+    if (!parsed || (opts.validateJson && !opts.validateJson(parsed))) throw Object.assign(new Error(`AI response format was invalid. ${draft.provider || 'Builder'} did not return the required JSON contract. No files were changed.`), { code: 'AI_BAD_JSON' });
     const reviewPromptText = reviewPrompt(opts.task, parsed);
     try {
       const review = await this.complete({ task: 'CODE_REVIEW', prompt: reviewPromptText, json: true, modelRef: pair[1], projectId: opts.projectId });
@@ -147,7 +149,7 @@ export class AIGateway {
     if (!firstProvider) return this.complete({ ...opts, json: true }).then((r) => ({ ...r, json: extractJson(r.text) }));
     const draft = await this.complete({ ...opts, json: true, prompt: `${opts.prompt}\n\nCouncil draft: return JSON only.` });
     const parsed = extractJson(draft.text);
-    if (!parsed) throw Object.assign(new Error('Builder returned invalid JSON'), { code: 'AI_BAD_JSON' });
+    if (!parsed || (opts.validateJson && !opts.validateJson(parsed))) throw Object.assign(new Error('Builder returned invalid JSON contract'), { code: 'AI_BAD_JSON' });
     return { ...draft, json: parsed, council: { builder: draft.provider, reviewer: null, review: { accept: true, score: 80, issues: [], reason: 'Provider Hub handled the request.' } } };
   }
 

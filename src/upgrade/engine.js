@@ -8,12 +8,25 @@ import { runDare } from '../dare/engine.js';
 import { findMissingNodeModules } from '../projects/deps-fix.js';
 import { writeGeneratedFiles } from '../projects/generator.js';
 import { parseRule, capabilityGap, formatRuleStatus, buildRuleTasks, normalizeExecution } from './rules.js';
+import { readUpgradeSession, createUpgradeSession, updateUpgradeSession, pauseUpgradeSession, resumeUpgradeSession, completeUpgradeSession } from './session.js';
 
 const MAX_SAFE_REPAIRS = 2;
+const MAX_AUTO_UPGRADE_FILES = 24;
+const MAX_AUTO_UPGRADE_BYTES = 6 * 1024 * 1024;
+
+export function isUpgradePauseError(err) {
+  const code = String(err?.code || '');
+  const message = String(err?.message || err || '');
+  return code === 'AI_UNAVAILABLE' || code === 'AI_BAD_JSON' || /HTTP (408|409|425|429|500|502|503|504)\b|timeout|timed out|fetch failed|ECONNRESET|ECONNREFUSED|ENOTFOUND|UNAVAILABLE|overloaded|temporar/i.test(message);
+}
+
 
 export async function inspectUpgrade({ project, projects, snapshots, log }) {
   const sourceDir = projects.sourceDir(project.slug);
-  const before = await fileManifest(sourceDir);
+  let before = await fileManifest(sourceDir);
+  const remoteSource = await projects.readMetadata(project, 'upgrade-source.json', {});
+  const remoteBaselineManifest = before;
+  const remoteSourceHash = manifestHash(remoteBaselineManifest);
   const stack = await discoverStack(sourceDir);
   const security = await scanProject(sourceDir);
   const staticResult = await runStaticTests(sourceDir);
@@ -41,7 +54,7 @@ export async function inspectUpgrade({ project, projects, snapshots, log }) {
     }
     const after = await fileManifest(sourceDir);
     const changed = diffManifest(before, after);
-    const allowed = new Set((repair.files || []).map(normalize));
+    const allowed = new Set([...(repair.files || []), ...(repair.expectedFiles || []), ...(repair.derivedFiles || [])].map(normalize));
     const unexpected = changed.filter((f) => !allowed.has(normalize(f)));
     if (unexpected.length) {
       await snapshots.restore(project, checkpoint.id);
@@ -61,6 +74,7 @@ export async function inspectUpgrade({ project, projects, snapshots, log }) {
     };
     repairHistory = [...repairHistory, entry].slice(-20);
     safeRepairs.push(entry);
+    before = after;
     // Re-run DARE against the new source state. History prevents a repeat patch.
   }
 
@@ -71,6 +85,9 @@ export async function inspectUpgrade({ project, projects, snapshots, log }) {
   const baseline = {
     createdAt: new Date().toISOString(),
     sourceHash: manifestHash(after),
+    remoteSourceHash,
+    sourceCommit: remoteSource.commit || remoteSource.ref || 'HEAD',
+    workingHash: manifestHash(after),
     fileCount: after.length,
     stack,
     health: refreshed.health,
@@ -86,6 +103,54 @@ export async function inspectUpgrade({ project, projects, snapshots, log }) {
   });
   log?.info?.('Upgrade baseline created', { project: project.slug, files: after.length, safeRepairs: safeRepairs.length });
   return { baseline, knowledge, issues: refreshed.issues, safeRepairs, ready: true };
+}
+
+export async function beginUpgradeSession({ project, projects, request, mode = 'normal', ruleName = '' }) {
+  const existing = await readUpgradeSession(projects, project);
+  const baseline = await projects.readMetadata(project, 'upgrade-baseline.json', {});
+  const source = await projects.readMetadata(project, 'upgrade-source.json', {});
+  if (existing && existing.request === String(request || '').trim() && existing.status === 'paused' && existing.resumable) {
+    return resumeUpgradeSession(projects, project);
+  }
+  return createUpgradeSession(projects, project, {
+    sourceCommit: baseline.sourceCommit || source.commit || source.ref || 'HEAD',
+    baselineHash: baseline.remoteSourceHash || baseline.sourceHash || '',
+    request, mode, ruleName,
+    steps: [
+      { id: 'diagnose', label: 'Inspect and plan' },
+      { id: 'apply', label: 'Apply verified changes' },
+      { id: 'verify', label: 'Verify and finalize' },
+    ],
+  });
+}
+
+export async function resumeUpgrade({ project, projects, snapshots, ai, request = '', emit = () => {} }) {
+  const session = await readUpgradeSession(projects, project);
+  if (!session?.resumable) throw new Error('No resumable Upgrade session is available.');
+  const plan = await projects.readMetadata(project, 'upgrade-plan.json', null);
+  const req = String(request || session.request || '').trim();
+  if (session.phase === 'verify' && session.workingHash && plan) {
+    const finished = await completeUpgradeSession(projects, project, { finalHash: session.workingHash, changedFiles: session.changedFiles || [], completedSteps: ['apply', 'verify'] });
+    emit('verify', 'done', `Upgrade resumed from the saved verification checkpoint. ${(session.changedFiles || []).length} file(s) were already verified.`);
+    return { projectId: project.id, plan, session: finished, needsApproval: false, brief: plan.recommendation || 'Upgrade resumed from the saved verification checkpoint.' };
+  }
+  if (!plan) {
+    await updateUpgradeSession(projects, project, { phase: 'plan', currentStep: 'diagnose', provider: null });
+    emit('diagnose', 'running', 'Resuming the saved Upgrade plan from the last unfinished step…');
+    const result = await diagnoseUpgradeRequest({ project, projects, ai, request: req, ruleText: '' });
+    await projects.saveMetadata(project, 'upgrade-plan.json', { ...result, request: req, createdAt: new Date().toISOString() });
+    await updateUpgradeSession(projects, project, { phase: 'apply', currentStep: 'apply', planHash: sha256(JSON.stringify(result)), provider: result.provider || null, stepId: 'diagnose', step: { status: 'done', result: 'Plan created and persisted.' }, completedSteps: ['diagnose'] });
+    return resumeUpgrade({ project, projects, snapshots, ai, request: req, emit });
+  }
+  await updateUpgradeSession(projects, project, { phase: 'apply', currentStep: 'apply', planHash: sha256(JSON.stringify(plan)), stepId: 'apply', step: { status: 'running' } });
+  emit('patch', 'running', 'Continuing from the saved Upgrade plan. No completed step will be repeated.');
+  const applied = await applyUpgrade({ project, projects, snapshots, plan, request: req, approved: true, ruleExecution: true });
+  const changed = applied.files || [];
+  await updateUpgradeSession(projects, project, { phase: 'verify', currentStep: 'verify', changedFiles: changed, workingHash: applied.sourceHash || null, verification: applied.verification || [], stepId: 'apply', step: { status: 'done', files: changed, result: 'Verified changes applied.' }, completedSteps: ['apply'] });
+  await updateUpgradeSession(projects, project, { stepId: 'verify', step: { status: 'running' } });
+  const finished = await completeUpgradeSession(projects, project, { finalHash: applied.sourceHash || null, changedFiles: changed, stepId: 'verify', step: { status: 'done', result: 'Upgrade verified.' }, completedSteps: ['verify'] });
+  emit('verify', 'done', `Upgrade resumed and completed. ${changed.length} file(s) changed.`);
+  return { projectId: project.id, plan, execution: applied, session: finished, needsApproval: false, brief: plan.recommendation || 'Upgrade completed from the saved session.' };
 }
 
 export async function diagnoseUpgradeRequest({ project, projects, ai, request, ruleText = '', taskBrief = null }) {
@@ -149,8 +214,14 @@ Return JSON only with:
   "alternatives": [{"name":"...","risk":"...","scope":"..."}]
 }
 Rules: do not invent facts; do not propose dependency-wide upgrades; do not modify secrets, credentials, database schema, auth, payment, wallet, or Docker architecture unless explicitly required and marked high risk. If the rule lists required secrets, set needs_user_action instead of writing secrets into source.`;
-  const result = await ai.completeJson({ task: 'UPGRADE_WORKSHOP', system: 'You are the Upgrade Workshop. Inspect first, diagnose from evidence, recommend the smallest effective change, and preserve the existing app.', prompt, projectId: project.id });
-  return { ...(result.json || {}), rule: parsed.valid ? parsed : null, gap, ruleStatus: parsed.valid ? formatRuleStatus(parsed, gap) : '' };
+  const result = await ai.completeJson({
+    task: 'UPGRADE_WORKSHOP',
+    system: 'You are the Upgrade Workshop. Inspect first, diagnose from evidence, recommend the smallest effective change, and preserve the existing app.',
+    prompt,
+    projectId: project.id,
+    validateJson: validateUpgradePlan,
+  });
+  return { ...(result.json || {}), rule: parsed.valid ? parsed : null, gap, ruleStatus: parsed.valid ? formatRuleStatus(parsed, gap) : '', provider: result.provider || null };
 }
 
 export async function applyUpgrade({ project, projects, snapshots, plan, request, approved = false, ruleExecution = false }) {
@@ -164,10 +235,14 @@ export async function applyUpgrade({ project, projects, snapshots, plan, request
   void approved; void ruleExecution; void risk;
   const files = Array.isArray(plan.files) ? plan.files.filter((f) => f && f.path && typeof f.content === 'string') : [];
   if (!files.length) throw new Error('Upgrade plan contains no file changes.');
-  if (files.length > 8) throw new Error('Upgrade scope is too large for an automatic minimal patch.');
+  if (files.length > MAX_AUTO_UPGRADE_FILES) throw new Error(`Upgrade scope is too large for an automatic patch (${MAX_AUTO_UPGRADE_FILES} files max).`);
+  const totalBytes = files.reduce((sum, f) => sum + Buffer.byteLength(f.content, 'utf8'), 0);
+  if (totalBytes > MAX_AUTO_UPGRADE_BYTES) throw new Error('Upgrade patch is too large for an automatic change set.');
   const sourceDir = projects.sourceDir(project.slug);
   const before = await fileManifest(sourceDir);
   const checkpoint = await snapshots.create(project, 'before-upgrade');
+  const session = await readUpgradeSession(projects, project);
+  if (session) await updateUpgradeSession(projects, project, { phase: 'apply', currentStep: 'apply', checkpoints: [checkpoint.id], stepId: 'apply', step: { status: 'running' } });
   for (const f of files) {
     const rel = normalize(f.path);
     if (!rel || rel.startsWith('/') || rel.includes('..') || fileClass(rel) === 'ABSOLUTELY_PROTECTED') throw new Error(`Upgrade attempted to modify a protected or unsafe file: ${rel}`);
@@ -176,7 +251,8 @@ export async function applyUpgrade({ project, projects, snapshots, plan, request
   const written = await writeGeneratedFiles(sourceDir, files);
   const after = await fileManifest(sourceDir);
   const changed = diffManifest(before, after);
-  const unexpected = changed.filter((f) => !written.map(normalize).includes(normalize(f)));
+  const expectedFiles = [...written, ...(plan.expected_files || plan.expectedFiles || []), ...(plan.derived_files || plan.derivedFiles || [])].map(normalize);
+  const unexpected = changed.filter((f) => !expectedFiles.includes(normalize(f)));
   if (unexpected.length) {
     await snapshots.restore(project, checkpoint.id);
     throw new Error(`Upgrade rolled back: unexpected files changed: ${unexpected.join(', ')}`);
@@ -193,11 +269,13 @@ export async function applyUpgrade({ project, projects, snapshots, plan, request
     kind: 'upgrade', at: new Date().toISOString(), request, rootCause: plan.root_cause,
     files: written, verification: verified.health, checkpointId: checkpoint.id, result: 'verified',
   });
-  await projects.saveMetadata(project, 'upgrade-baseline.json', { ...baseline, updatedAt: new Date().toISOString(), sourceHash: manifestHash(after), knownIssues: verified.issues });
-  return { ok: true, files: written, verification: verified.health, checkpointId: checkpoint.id };
+  const sourceHash = manifestHash(after);
+  await projects.saveMetadata(project, 'upgrade-baseline.json', { ...baseline, updatedAt: new Date().toISOString(), sourceHash, workingHash: sourceHash, knownIssues: verified.issues });
+  if (session) await updateUpgradeSession(projects, project, { phase: 'verify', currentStep: 'verify', workingHash: sourceHash, changedFiles: written, verification: [verified.health], checkpoints: [checkpoint.id], stepId: 'apply', step: { status: 'done', files: written, result: 'Verified changes applied.' }, completedSteps: ['apply'] });
+  return { ok: true, files: written, sourceHash, verification: verified.health, checkpointId: checkpoint.id };
 }
 
-export async function runRuleUpgrade({ project, projects, snapshots, ai, request = '', ruleText = '', emit = () => {} }) {
+export async function runRuleUpgrade({ project, projects, snapshots, ai, request = '', ruleText = '', emit = () => {}, resume = false }) {
   const parsed = parseRule(ruleText || request);
   if (!parsed.valid) throw new Error(parsed.error);
 
@@ -210,23 +288,27 @@ export async function runRuleUpgrade({ project, projects, snapshots, ai, request
   const initialContext = await relevantContext(sourceDir, parsed.requiredCapabilities.join(' '));
   let gap = capabilityGap(parsed, initialContext);
   let tasks = buildRuleTasks(parsed, gap).slice(0, execution.maxTasks);
-  const state = {
-    rule: parsed.name,
-    version: parsed.version,
-    execution,
-    status: 'running',
-    cycle: 0,
-    tasks,
-    history: previous.slice(-80),
-    startedAt: new Date().toISOString(),
-  };
+  const state = resume && history?.rule === parsed.name && Array.isArray(history.tasks)
+    ? { ...history, execution, status: 'running', updatedAt: new Date().toISOString() }
+    : {
+      rule: parsed.name,
+      version: parsed.version,
+      execution,
+      status: 'running',
+      cycle: 0,
+      tasks,
+      history: previous.slice(-80),
+      startedAt: new Date().toISOString(),
+    };
+  tasks = state.tasks;
   await projects.saveMetadata(project, 'upgrade-rule-execution.json', state);
   emit('rule', 'running', `🧭 Rule loaded: ${parsed.name}. Builder will plan and execute ${tasks.filter(t => t.status === 'pending').length} task(s).`);
 
   const seen = new Set(previous.map((x) => `${x.capability}|${x.sourceHash}|${x.patchHash || ''}`));
   let userAction = '';
   let completed = 0;
-  for (let cycle = 1; cycle <= execution.maxCycles; cycle += 1) {
+  const firstCycle = resume ? Math.max(1, Number(state.cycle || 0) + 1) : 1;
+  for (let cycle = firstCycle; cycle <= execution.maxCycles; cycle += 1) {
     state.cycle = cycle;
     const context = await relevantContext(sourceDir, parsed.requiredCapabilities.join(' '));
     gap = capabilityGap(parsed, context);
@@ -269,8 +351,17 @@ export async function runRuleUpgrade({ project, projects, snapshots, ai, request
       }
       plan = await diagnoseUpgradeRequest({ project, projects, ai, request: taskRequest, ruleText: '', taskBrief: { capability: task.capability, why: parsed.goal } });
     } catch (err) {
-      task.status = 'blocked'; task.error = String(err.message || err).slice(0, 500);
-      await projects.saveMetadata(project, 'upgrade-rule-execution.json', state);
+      if (isUpgradePauseError(err)) {
+        task.status = 'pending'; task.error = String(err.message || err).slice(0, 500);
+        state.status = 'paused';
+        state.pausedAt = new Date().toISOString();
+        state.pauseReason = { code: String(err.code || 'PAUSED_AI_UNAVAILABLE'), message: task.error };
+        state.updatedAt = new Date().toISOString();
+        await projects.saveMetadata(project, 'upgrade-rule-execution.json', state);
+      } else {
+        task.status = 'blocked'; task.error = String(err.message || err).slice(0, 500);
+        await projects.saveMetadata(project, 'upgrade-rule-execution.json', state);
+      }
       throw err;
     }
     if (plan.needs_user_action) {
@@ -280,13 +371,7 @@ export async function runRuleUpgrade({ project, projects, snapshots, ai, request
       if (execution.stopOnUserAction) break;
       continue;
     }
-    const risk = String(plan.risk || 'high').toLowerCase();
-    if (risk === 'high') {
-      task.status = 'waiting_user'; task.needsUserAction = 'This step is high risk and needs your confirmation.';
-      userAction = task.needsUserAction;
-      emit('input', 'done', `⏸ ${userAction}`);
-      break;
-    }
+    // Risk alone is never an approval gate. Required high-risk changes execute with checkpoint/verification; only explicit secret/destructive/unsafe conditions stop for user action.
     const before = await fileManifest(sourceDir);
     const sourceHash = manifestHash(before);
     const patchHash = sha256(JSON.stringify(plan.files || []));
@@ -346,6 +431,15 @@ export async function runRuleUpgrade({ project, projects, snapshots, ai, request
         ? `✓ Rule completed: ${parsed.name}`
         : `⚠ Rule stopped safely after ${completed} verified task(s). No failed repair was repeated.`,
   };
+}
+
+function validateUpgradePlan(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  if (typeof value.recommendation !== 'string' || typeof value.expected_result !== 'string') return false;
+  if (!Array.isArray(value.files)) return false;
+  if (value.files.some((f) => !f || typeof f.path !== 'string' || typeof f.content !== 'string')) return false;
+  if (value.verification != null && !Array.isArray(value.verification)) return false;
+  return true;
 }
 
 async function inspectState(sourceDir) {
