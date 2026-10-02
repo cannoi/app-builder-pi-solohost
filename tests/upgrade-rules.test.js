@@ -11,6 +11,18 @@ test('parses the bundled media-center rule', () => {
   assert.ok(rule.requiredCapabilities.includes('Playback'));
 });
 
+test('module integration rules require SoloHost environment and safe authorization', () => {
+  const feedback = parseRule(fs.readFileSync(new URL('../modules/rules/feedback.md', import.meta.url), 'utf8'));
+  const kernel = parseRule(fs.readFileSync(new URL('../modules/rules/ai-kernel.md', import.meta.url), 'utf8'));
+  assert.equal(feedback.valid, true, feedback.error);
+  assert.equal(kernel.valid, true, kernel.error);
+  assert.ok(feedback.requiredCapabilities.some((item) => /SHFH_HUB_URL.*SHFH_HUB_ID.*SHFH_INGEST_TOKEN/i.test(item)));
+  assert.match(feedback.source, /config_options\.yml/);
+  assert.match(feedback.source, /Do not ask app users/);
+  assert.match(feedback.source, /Do not add a public unauthenticated proxy/);
+  assert.ok(kernel.requiredCapabilities.some((item) => /authorized/i.test(item)));
+});
+
 test('rejects a rule that embeds a live-looking secret', () => {
   const rule = parseRule('RULE_NAME: X\nGOAL: demo\nREQUIRED CAPABILITIES:\n- Chat\nOPENAI_API_KEY=sk-abcdefghijklmnopqrstuvwxyz0123456789');
   assert.equal(rule.valid, false);
@@ -28,7 +40,7 @@ test('capability gap keeps missing playback when source has only search', () => 
 test('upgrade workshop accepts rule file attachments', () => {
   const js = fs.readFileSync(new URL('../public/app.js', import.meta.url), 'utf8');
   assert.match(js, /ruleText/);
-  assert.match(js, /attach a Rule file/);
+  assert.match(js, /attach Rule files/i);
 });
 
 import { normalizeExecution, buildRuleTasks } from '../src/upgrade/rules.js';

@@ -18,6 +18,16 @@ const BLOCKED = [
   /\bdocker\.sock\b/,
 ];
 
+const PROTECTED_FILE = /(?:^|\/)(?:\.env(?:\.[^/]*)?|(?:secrets|credentials|private)\.[^/]*|[^/]*\.(?:pem|key)|id_rsa(?:\.[^/]*)?)$/i;
+
+export function isProtectedFilePath(file) {
+  const normalized = String(file || '').replace(/\\/g, '/').replace(/^\.\/+/, '');
+  return !normalized || normalized.startsWith('/')
+    || /^[a-z]:\//i.test(normalized)
+    || normalized.split('/').includes('..')
+    || PROTECTED_FILE.test(normalized);
+}
+
 export function classifyAction(action) {
   const safe = new Set([
     'read_project', 'analyze', 'generate_code', 'modify_files',

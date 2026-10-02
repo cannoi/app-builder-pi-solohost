@@ -9,6 +9,16 @@
   <link rel="stylesheet" href="/styles.css?v=1.4.35">
 <style>.paf-made-by{position:fixed;right:8px;bottom:8px;width:min(72px,12vw);max-width:12vw;height:auto;object-fit:contain;opacity:.5;background:transparent;padding:0;border:0;box-shadow:none;filter:none;pointer-events:none;z-index:30}</style>
 </head><body>
+  <div id="authGate" class="modal" hidden>
+    <form id="authForm" class="sheet">
+      <div class="sheetHead"><h2>App Builder sign in</h2></div>
+      <p id="authMessage" class="info">Enter your Builder access password.</p>
+      <label id="authPasswordLabel">Access password
+        <input id="authPassword" type="password" autocomplete="current-password" required>
+      </label>
+      <button id="authSubmit" class="primary wide" type="submit">Sign in</button>
+    </form>
+  </div>
   <div id="app"><header class="hero">
   <img src="/banner.png" alt="App Builder — Pi SoloHost">
 </header>
@@ -122,7 +132,7 @@
       <!-- SUPPORT -->
       <div class="group">
         <span class="groupLabel">💛 Support</span>
-        <button type="button" id="feedbackBtn" data-action="feedback">💬 Feedback <span id="feedbackBadge" class="feedbackBadge" hidden>0</span></button>
+        <button type="button" id="feedbackBtn" data-action="feedback">💬 Feedback</button>
         <button
           type="button"
           id="supportBtn"
@@ -250,7 +260,7 @@
         <h2>💬 Feedback</h2>
         <button id="closeFeedback" class="iconBtn" type="button">✕</button>
       </div>
-      <p class="info">Send a bug, idea, or improvement. Feedback is queued locally if the Hub is temporarily offline.</p>
+      <p class="info">Send feedback to the Builder team. Hub credentials are managed by the app owner and are never shown here.</p>
       <label class="feedbackField">Type
         <select id="feedbackType"><option value="bug">Bug</option><option value="improvement" selected>Improvement</option><option value="question">Question</option></select>
       </label>
@@ -258,7 +268,6 @@
         <textarea id="feedbackMessage" rows="5" placeholder="Tell us what happened…"></textarea>
       </label>
       <button id="sendFeedback" class="primary wide" type="button">Send feedback</button>
-      <div id="feedbackNotices" class="info compactInfo" hidden></div>
     </div>
   </div>
   <!-- SETTINGS MODAL -->  <div id="settings" class="modal" hidden><div class="sheet">
@@ -355,6 +364,7 @@
   </div>
 
   <button id="saveSettings" class="primary wide">Save</button>
+  <button id="signOut" class="wide" type="button">Sign out</button>
 
   <div class="advisorBox">
     <h3>🧭 AI Advisor</h3>
@@ -374,7 +384,7 @@
 
 </div>
 
-  </div>  <script src="/shfh-client.js?v=2.2"></script><script src="/app.js?v=feedback-1.4.61"></script><img
+  </div>  <script src="/app.js?v=feedback-proxy-1.4.62"></script><img
 class="paf-made-by"
 src="/made-by.png"
 alt="Made with App Builder — Pi SoloHost">

@@ -8,7 +8,7 @@ import { ensureMissingDependencies, findMissingNodeModules } from '../projects/d
 import { listFiles } from '../utils/fsx.js';
 
 const execFileAsync = promisify(execFile);
-const MAX_ATTEMPTS_PER_FINGERPRINT = 1;
+const MAX_ATTEMPTS_PER_FINGERPRINT = 2;
 
 export async function runDare({ sourceDir, logs = '', extra = {}, history = [] } = {}) {
   const before = await fileManifest(sourceDir);
@@ -22,7 +22,7 @@ export async function runDare({ sourceDir, logs = '', extra = {}, history = [] }
   // Run a lightweight deterministic preflight even before a runtime log exists.
   // This prevents predictable container-contract failures from reaching AI.
   const preflightMode = /SOLOHOST_(?:RELEASE|UPGRADE)_PREFLIGHT/i.test(extraText);
-  if (!action && (fp === 'NONE' || fp === 'UNKNOWN' || preflightMode)) {
+  if (!action && (fp === 'NONE' || fp.startsWith('UNKNOWN_RUNTIME_ERROR:') || preflightMode)) {
     action = await preflightScan(sourceDir);
   }
 
@@ -58,7 +58,7 @@ export async function runDare({ sourceDir, logs = '', extra = {}, history = [] }
     return report({
       ok: false, stopped: true, alreadyFixed: attempted.some((h) => h.result === 'patched'), fingerprint: actionFp, layer,
       reason: 'Loop protection stopped another automatic repair of the same error.',
-      next: actionFp === 'GHCR_PACKAGE_WRITE_PERMISSION' || actionFp === 'GHCR_LOGIN_FAILED' ? 'USER_ACTION' : 'AI',
+      next: actionFp.startsWith('GHCR_PERMISSION:') || actionFp === 'GHCR_PACKAGE_WRITE_PERMISSION' || actionFp === 'GHCR_LOGIN_FAILED' ? 'USER_ACTION' : 'AI',
       history: previous,
       before,
       sourceHash,
@@ -155,11 +155,11 @@ async function matchRule(sourceDir, fp, logs) {
     return { ruleId: 'NODE_MODULE_MISSING', risk: 'SAFE', repair: 'deps', reason: `Missing dependency: ${fp.slice('NODE_MODULE_MISSING:'.length)}` };
   }
   if (fp === 'NPM_SCRIPT_MISSING:start') return missingStartScript(sourceDir);
-  if (fp === 'DOCKER_LOCALHOST_BIND') return localhostBind(sourceDir);
+  if (fp === 'PORT_BIND_LOCALHOST' || fp === 'DOCKER_LOCALHOST_BIND') return localhostBind(sourceDir);
   if (fp === 'SQLITE_DIRECTORY_MISSING') return sqliteDirectoryRepair(sourceDir, logs);
   if (fp === 'SQLITE_WRITE_PERMISSION') return { ruleId: 'SQLITE_WRITE_PERMISSION', risk: 'UNSAFE', reason: 'SQLite is present but the database path is not writable. Builder will not change permissions automatically.', next: 'USER_ACTION' };
   if (fp.startsWith('RUNTIME_FILESYSTEM_PERMISSION')) return await runtimeFilesystemPermissionRepair(sourceDir, fp, logs);
-  if (fp === 'GHCR_PACKAGE_WRITE_PERMISSION') {
+  if (fp === 'GHCR_PERMISSION:packages:write' || fp === 'GHCR_PACKAGE_WRITE_PERMISSION') {
     const wf = await workflowPackagesWrite(sourceDir);
     return wf || { ruleId: 'GHCR_PACKAGE_WRITE_PERMISSION', risk: 'UNSAFE', reason: 'GitHub account/repository does not allow package publishing. Builder will not change account permissions.', next: 'USER_ACTION' };
   }
@@ -176,8 +176,8 @@ async function matchRule(sourceDir, fp, logs) {
   if (fp === 'NODE_ENGINE_MISMATCH') {
     return await nodeEngineRepair(sourceDir, logs);
   }
-  if (fp === 'NPM_LOCKFILE_OUT_OF_SYNC') {
-    return { ruleId: 'NPM_LOCKFILE_OUT_OF_SYNC', risk: 'MEDIUM', repair: 'lockfile', reason: 'The package manifest and lockfile are out of sync.' };
+  if (fp === 'LOCKFILE_MISMATCH' || fp === 'NPM_LOCKFILE_OUT_OF_SYNC') {
+    return { ruleId: 'LOCKFILE_MISMATCH', fingerprint: 'LOCKFILE_MISMATCH', risk: 'MEDIUM', repair: 'lockfile', reason: 'The package manifest and lockfile are out of sync.' };
   }
   if (/build-from-source/i.test(logs)) {
     const sourceBuild = await forcedSourceBuildPreflight(sourceDir);
@@ -223,11 +223,11 @@ async function applyAction(sourceDir, action, history) {
   if (action.repair === 'lockfile') {
     const result = await refreshLockfile(sourceDir);
     if (!result.ok) {
-      return report({ ok: false, fingerprint: 'NPM_LOCKFILE_OUT_OF_SYNC', layer: 'DEPENDENCY_ERROR', ruleId: 'NPM_LOCKFILE_OUT_OF_SYNC', reason: result.reason, next: 'AI', history });
+      return report({ ok: false, fingerprint: 'LOCKFILE_MISMATCH', layer: 'DEPENDENCY_ERROR', ruleId: 'LOCKFILE_MISMATCH', reason: result.reason, next: 'AI', history });
     }
     return report({
-      ok: true, fingerprint: 'NPM_LOCKFILE_OUT_OF_SYNC', layer: 'DEPENDENCY_ERROR',
-      ruleId: 'NPM_LOCKFILE_OUT_OF_SYNC', files: [result.lockfile],
+      ok: true, fingerprint: 'LOCKFILE_MISMATCH', layer: 'DEPENDENCY_ERROR',
+      ruleId: 'LOCKFILE_MISMATCH', files: [result.lockfile],
       reason: `Refreshed ${result.lockfile} without running project scripts.`,
       next: 'CONTINUE', history,
     });
@@ -240,7 +240,7 @@ async function applyAction(sourceDir, action, history) {
 
   if (action.repair === 'bind-all' && action.file) {
     await patchListenBind(path.join(sourceDir, action.file));
-    return report({ ok: true, fingerprint: 'DOCKER_LOCALHOST_BIND', layer: 'CONTAINER_ERROR', ruleId: 'DOCKER_LOCALHOST_BIND', files: [action.file], reason: 'HTTP server now listens on 0.0.0.0 so the container can be reached.', next: 'CONTINUE', history });
+    return report({ ok: true, fingerprint: 'PORT_BIND_LOCALHOST', layer: 'CONTAINER_ERROR', ruleId: 'PORT_BIND_LOCALHOST', files: [action.file], reason: 'HTTP server now listens on 0.0.0.0 so the container can be reached.', next: 'CONTINUE', history });
   }
 
   if (action.repair === 'debian-native-base' && action.file) {
@@ -270,7 +270,7 @@ async function applyAction(sourceDir, action, history) {
 
   if (action.repair === 'workflow-packages') {
     const file = await ensureWorkflowPackagesWrite(sourceDir);
-    return report({ ok: true, fingerprint: 'GHCR_PACKAGE_WRITE_PERMISSION', layer: 'GHCR_ERROR', ruleId: 'GH_ACTIONS_PERMISSION_MISSING', files: [file], reason: 'Added only packages: write to the image workflow.', next: 'CONTINUE', history });
+    return report({ ok: true, fingerprint: 'GHCR_PERMISSION:packages:write', layer: 'GHCR_ERROR', ruleId: 'GH_ACTIONS_PERMISSION_MISSING', files: [file], reason: 'Added only packages: write to the image workflow.', next: 'CONTINUE', history });
   }
 
   if (action.repair === 'filesystem-permission' && action.dockerfile && action.path && action.user) {
@@ -361,7 +361,7 @@ async function localhostBind(sourceDir) {
     if (!/\.(js|mjs|cjs|jsx|ts|tsx)$/.test(rel) || rel.startsWith('node_modules/')) continue;
     const text = await fs.readFile(path.join(sourceDir, rel), 'utf8').catch(() => '');
     if (/\.listen\s*\([^)]*(['"]127\.0\.0\.1['"]|['"]localhost['"])/.test(text)) {
-      return { ruleId: 'DOCKER_LOCALHOST_BIND', fingerprint: 'DOCKER_LOCALHOST_BIND', layer: 'CONTAINER_ERROR', risk: 'MEDIUM', repair: 'bind-all', file: rel, reason: `${rel} binds the HTTP server to localhost.` };
+      return { ruleId: 'PORT_BIND_LOCALHOST', fingerprint: 'PORT_BIND_LOCALHOST', layer: 'CONTAINER_ERROR', risk: 'MEDIUM', repair: 'bind-all', file: rel, reason: `${rel} binds the HTTP server to localhost.` };
     }
   }
   return null;
@@ -588,7 +588,7 @@ async function workflowPackagesWrite(sourceDir) {
   if (!text) return null;
   if (/^\s*packages:\s*write\s*$/m.test(text)) return null;
   if (!/(?:docker\/login-action|docker\/build-push-action|ghcr\.io)/i.test(text)) return null;
-  return { ruleId: 'GH_ACTIONS_PERMISSION_MISSING', fingerprint: 'GHCR_PACKAGE_WRITE_PERMISSION', layer: 'GHCR_ERROR', risk: 'SAFE', repair: 'workflow-packages', reason: 'The GHCR image workflow is missing packages: write.' };
+  return { ruleId: 'GH_ACTIONS_PERMISSION_MISSING', fingerprint: 'GHCR_PERMISSION:packages:write', layer: 'GHCR_ERROR', risk: 'SAFE', repair: 'workflow-packages', reason: 'The GHCR image workflow is missing packages: write.' };
 }
 
 async function ensureWorkflowPackagesWrite(sourceDir) {

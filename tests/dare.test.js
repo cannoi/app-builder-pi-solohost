@@ -16,7 +16,7 @@ test('fingerprints cannot-find-module variants as NODE_MODULE_MISSING', () => {
 
 test('fingerprints scoped packages and recognizes Node built-ins correctly', () => {
   assert.equal(fingerprintError("Error: Cannot find module '@scope/pkg/subpath'"), 'NODE_MODULE_MISSING:@scope/pkg');
-  assert.equal(fingerprintError("Error: Cannot find module 'node:fs'"), 'UNKNOWN');
+  assert.equal(fingerprintError("Error: Cannot find module 'node:fs'"), 'UNKNOWN_RUNTIME_ERROR:error:-cannot-find-module-<value>');
   assert.equal(isBuiltinModule('node:fs'), true);
   assert.equal(isBuiltinModule('node:test'), true);
 });
@@ -55,7 +55,12 @@ test('DARE only creates the proven SQLite data directory', async () => {
 });
 
 test('unknown app logic is not auto-patched', () => {
-  assert.equal(fingerprintError('TypeError: Cannot read properties of undefined (reading foo)'), 'APP_LOGIC_UNKNOWN');
+  assert.equal(fingerprintError('TypeError: Cannot read properties of undefined (reading foo)'), 'UNKNOWN_RUNTIME_ERROR:typeerror:-cannot-read-properties-of-undefined-reading-foo');
+});
+
+test('runtime fingerprints normalize localhost binding and GHCR package permissions', () => {
+  assert.equal(fingerprintError("Error: listen(8080, '127.0.0.1')"), 'PORT_BIND_LOCALHOST');
+  assert.equal(fingerprintError('denied: permission denied to write packages to ghcr.io'), 'GHCR_PERMISSION:packages:write');
 });
 
 test('DARE adds missing sqlite3 without AI', async () => {

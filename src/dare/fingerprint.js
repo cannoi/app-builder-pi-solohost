@@ -25,14 +25,14 @@ export function fingerprintError(text = '') {
     if (root && !isBuiltinModule(root)) return `NODE_MODULE_MISSING:${root}`;
   }
 
-  if (/lock file|lockfile|out of sync|npm ci.*package-lock/i.test(t)) return 'NPM_LOCKFILE_OUT_OF_SYNC';
+  if (/lock file|lockfile|out of sync|npm ci.*package-lock/i.test(t)) return 'LOCKFILE_MISMATCH';
   if (/missing script:\s*['"]?start['"]?/i.test(t)) return 'NPM_SCRIPT_MISSING:start';
   if (/eaddrinuse|address already in use/i.test(t)) return 'DOCKER_PORT_NOT_LISTENING';
   if (/\.listen\s*\([^)]*(['"]127\.0\.0\.1['"]|['"]localhost['"])\s*\)/i.test(t)
-      || /listen.*(?:127\.0\.0\.1|localhost)/i.test(t)) return 'DOCKER_LOCALHOST_BIND';
+      || /listen.*(?:127\.0\.0\.1|localhost)/i.test(t)) return 'PORT_BIND_LOCALHOST';
 
   if (/permission denied.*(?:packages|ghcr)|insufficient_scope.*ghcr|403.*ghcr|denied.*(?:write|push).*ghcr|write:packages/i.test(t)) {
-    return 'GHCR_PACKAGE_WRITE_PERMISSION';
+    return 'GHCR_PERMISSION:packages:write';
   }
   if (/(?:unauthorized|authentication required|login failed|denied)/i.test(t) && /ghcr/i.test(t)) return 'GHCR_LOGIN_FAILED';
 
@@ -67,16 +67,29 @@ export function fingerprintError(text = '') {
   if (/http 404|status code 404/i.test(t)) return 'HTTP_404';
   if (/http 5\d\d|status code 5/i.test(t)) return 'HTTP_5XX';
   if (/not ready|health check.*fail|health.*unavailable/i.test(t)) return 'HTTP_NOT_READY';
-  if (/typeerror: cannot read propert/i.test(t)) return 'APP_LOGIC_UNKNOWN';
-
-  return t.trim() ? 'UNKNOWN' : 'NONE';
+  if (!t.trim()) return 'NONE';
+  return `UNKNOWN_RUNTIME_ERROR:${normalizeUnknown(t)}`;
 }
 
 export function classifyLayer(fp = '') {
-  if (fp.startsWith('NODE_MODULE_MISSING') || fp === 'NATIVE_DEPENDENCY_BUILD_FAILURE' || fp === 'NPM_LOCKFILE_OUT_OF_SYNC' || fp.startsWith('NPM_SCRIPT_MISSING')) return 'DEPENDENCY_ERROR';
+  if (fp.startsWith('NODE_MODULE_MISSING') || fp === 'NATIVE_DEPENDENCY_BUILD_FAILURE' || fp === 'LOCKFILE_MISMATCH' || fp === 'NPM_LOCKFILE_OUT_OF_SYNC' || fp.startsWith('NPM_SCRIPT_MISSING')) return 'DEPENDENCY_ERROR';
   if (fp.startsWith('GHCR') || fp === 'GH_ACTIONS_PERMISSION_MISSING') return 'GHCR_ERROR';
-  if (fp.startsWith('DOCKER') || fp.startsWith('COMPOSE') || fp.startsWith('HTTP')) return 'CONTAINER_ERROR';
+  if (fp.startsWith('DOCKER') || fp.startsWith('PORT_BIND_LOCALHOST') || fp.startsWith('COMPOSE') || fp.startsWith('HTTP')) return 'CONTAINER_ERROR';
   if (fp.startsWith('SQLITE') || fp.startsWith('RUNTIME_FILESYSTEM_PERMISSION')) return 'RUNTIME_ERROR';
-  if (fp === 'APP_LOGIC_UNKNOWN') return 'SOURCE_ERROR';
   return 'UNKNOWN';
+}
+
+function normalizeUnknown(text) {
+  return String(text || '')
+    .toLowerCase()
+    .replace(/https?:\/\/\S+/g, 'url')
+    .replace(/[a-z]:\\[^\s:'"]+/gi, '<path>')
+    .replace(/(?:\/[\w.-]+){2,}/g, '<path>')
+    .replace(/\b[0-9a-f]{8}-[0-9a-f-]{27,}\b/gi, '<id>')
+    .replace(/\b\d+\b/g, '#')
+    .replace(/['"`][^'"`\r\n]{1,80}['"`]/g, '<value>')
+    .replace(/[^a-z0-9<>:_-]+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '')
+    .slice(0, 160) || 'unclassified';
 }

@@ -29,15 +29,36 @@ export function isSafeRelPath(rel) {
 
 export async function writeSafeFile(root, rel, content) {
   if (!isSafeRelPath(rel)) throw new Error(`Unsafe path rejected: ${rel}`);
-  const target = path.join(root, rel);
-  const resolved = path.resolve(target);
-  const rootResolved = path.resolve(root);
+  const requestedRoot = path.resolve(root);
+  await ensureDir(requestedRoot);
+  const rootResolved = await fs.realpath(requestedRoot);
+  const resolved = path.resolve(rootResolved, rel);
   if (!resolved.startsWith(rootResolved + path.sep) && resolved !== rootResolved) {
     throw new Error('Path escaped project root');
   }
-  await ensureDir(path.dirname(resolved));
+  const segments = path.relative(rootResolved, resolved).split(path.sep).filter(Boolean);
+  let parent = rootResolved;
+  for (const segment of segments.slice(0, -1)) {
+    parent = path.join(parent, segment);
+    const stat = await lstatIfExists(parent);
+    if (stat?.isSymbolicLink()) throw new Error(`Path traverses a symbolic link: ${rel}`);
+    if (stat && !stat.isDirectory()) throw new Error(`Path parent is not a directory: ${rel}`);
+    if (!stat) await fs.mkdir(parent);
+  }
+  const targetStat = await lstatIfExists(resolved);
+  if (targetStat?.isSymbolicLink()) throw new Error(`Cannot replace a symbolic link: ${rel}`);
+  if (targetStat && !targetStat.isFile()) throw new Error(`Target is not a file: ${rel}`);
   await fs.writeFile(resolved, content ?? '');
   return resolved;
+}
+
+async function lstatIfExists(file) {
+  try {
+    return await fs.lstat(file);
+  } catch (err) {
+    if (err.code === 'ENOENT') return null;
+    throw err;
+  }
 }
 
 export async function listFiles(root, acc = [], prefix = '') {

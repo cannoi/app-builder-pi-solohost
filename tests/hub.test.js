@@ -6,6 +6,7 @@ import path from 'node:path';
 import { classifyProviderError, isTransient } from '../src/ai/hub/errors.js';
 import { PROVIDER_CATALOG, taskComplexity } from '../src/ai/hub/catalog.js';
 import { AIProviderHub } from '../src/ai/hub/hub.js';
+import { forwardHubFeedback } from '../src/feedback/proxy.js';
 
 function memDb() {
   const store = new Map();
@@ -67,37 +68,82 @@ test('hub stores a selected model pair without AUTO/PROVIDER/MANUAL modes', () =
   assert.deepEqual(state.preferredModels, ['gemini-a', 'deepseek-b']);
 });
 
-test('Feedback Hub integration is optional and never embeds an ingest token', () => {
+test('Feedback Hub credentials are configured by the owner and never exposed in the Builder UI', () => {
   const html = fs.readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
   const js = fs.readFileSync(new URL('../public/app.js', import.meta.url), 'utf8');
+  const routes = fs.readFileSync(new URL('../src/api/routes.js', import.meta.url), 'utf8');
+  const config = fs.readFileSync(new URL('../src/config/loader.js', import.meta.url), 'utf8');
+  const server = fs.readFileSync(new URL('../src/server.js', import.meta.url), 'utf8');
+  const compose = fs.readFileSync(new URL('../docker-compose.yml', import.meta.url), 'utf8');
+  const options = fs.readFileSync(new URL('../config_options.yml', import.meta.url), 'utf8');
+  const solohostCompose = fs.readFileSync(new URL('../solohost/docker-compose.yml', import.meta.url), 'utf8');
+  const solohostOptions = fs.readFileSync(new URL('../solohost/config_options.yml', import.meta.url), 'utf8');
+  const envExample = fs.readFileSync(new URL('../.env.example', import.meta.url), 'utf8');
   assert.match(html, /id="feedbackBtn"/);
-  assert.match(html, /id="feedbackBadge"/);
-  assert.match(js, /SHFH\.create/);
-  assert.match(js, /ingestToken:\s*''/);
+  assert.doesNotMatch(html, /feedbackHubUrl|feedbackHubId|feedbackIngestToken/);
+  assert.match(js, /api\('\/api\/feedback\/submit'/);
+  assert.doesNotMatch(js, /SHFH\.create|feedbackHubUrl|feedbackHubId|feedbackIngestToken/);
+  assert.match(routes, /r\.post\('\/api\/feedback\/submit'/);
+  assert.match(config, /hubUrl: process\.env\.SHFH_HUB_URL/);
+  assert.match(config, /hubId: process\.env\.SHFH_HUB_ID/);
+  assert.match(config, /ingestToken: process\.env\.SHFH_INGEST_TOKEN/);
+  for (const name of ['SHFH_HUB_URL', 'SHFH_HUB_ID', 'SHFH_INGEST_TOKEN']) {
+    assert.match(compose, new RegExp(`${name}: "\\$\\{${name}:-\\}"`));
+    assert.match(options, new RegExp(`name: ${name}`));
+    assert.match(solohostCompose, new RegExp(`${name}: "\\$\\{${name}:-\\}"`));
+    assert.match(solohostOptions, new RegExp(`name: ${name}`));
+    assert.match(envExample, new RegExp(`^${name}=$`, 'm'));
+  }
+  assert.match(options, /name: SHFH_INGEST_TOKEN[\s\S]*?type: password/);
+  assert.match(server, /retiredFeedbackKeys/);
+  assert.match(server, /retiredFeedbackKeys/);
+  assert.match(server, /delete saved\[key\]/);
+  assert.doesNotMatch(routes + config + js + html + compose + options + solohostCompose + solohostOptions + envExample, /14\.176\.78\.46|FH-CANNOI-0905428801SH|cannoi_[A-Za-z0-9]{20,}/);
   assert.doesNotMatch(js, /cannoi_[A-Za-z0-9]{20,}/);
+  assert.ok(routes.indexOf('r.use(accessAuth.middleware)') < routes.indexOf("r.post('/api/feedback/submit'"));
 });
 
-test('Feedback send uses the Hub SDK and official form fallback', () => {
-  const js = fs.readFileSync(new URL('../public/app.js', import.meta.url), 'utf8');
-  const routes = fs.readFileSync(new URL('../src/api/routes.js', import.meta.url), 'utf8');
-  assert.match(js, /state\.feedbackHub\.sendFeedback\(\{ type, message \}\)/);
-  assert.doesNotMatch(js, /\/api\/feedback\/submit/);
-  assert.match(js, /window\.open\(FEEDBACK_HUB_URL \+ '\/feedback'/);
-  assert.match(routes, /\/api\/feedback/);
+test('Feedback proxy keeps Hub credentials server-side and submits only bounded feedback', async () => {
+  const calls = [];
+  const config = { hubUrl: 'https://hub.example', hubId: 'hub-1', ingestToken: 'ingest-test-token' };
+  const result = await forwardHubFeedback({
+    config,
+    type: 'question',
+    message: 'Is this available?',
+    locale: 'en',
+    fetchImpl: async (url, options) => {
+      calls.push({ url: String(url), options });
+      return { ok: true };
+    },
+  });
+  assert.deepEqual(result, { ok: true });
+  assert.equal(calls[0].url, 'https://hub.example/api/feedback');
+  assert.equal(calls[0].options.headers.Authorization, 'Bearer ingest-test-token');
+  assert.equal(calls[0].options.headers['X-SHFH-Hub-ID'], 'hub-1');
+  assert.doesNotMatch(calls[0].url, /ingest-test-token|hub-1/);
+  assert.deepEqual(JSON.parse(calls[0].options.body), {
+    schema_version: '2.2',
+    app_id: 'app-builder-pi-solohost',
+    app_name: 'App Builder — Pi SoloHost',
+    version: '1.4.61',
+    platform: 'solohost',
+    locale: 'en',
+    event: 'feedback',
+    hub_id: 'hub-1',
+    type: 'question',
+    rating: 0,
+    message: 'Is this available?',
+  });
+  await assert.rejects(forwardHubFeedback({ config: { ...config, hubUrl: 'http://hub.example' }, type: 'bug', message: 'x' }), /HTTPS/);
+  await assert.rejects(forwardHubFeedback({ config: {}, type: 'bug', message: 'x' }), (err) => err.code === 'FEEDBACK_NOT_CONFIGURED');
 });
 
-
-test('Feedback Hub client keeps Hub identity internal and sends directly through SDK', () => {
-  const html = fs.readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
-  const js = fs.readFileSync(new URL('../public/app.js', import.meta.url), 'utf8');
+test('Feedback Hub config endpoint returns metadata and submit route never returns credentials', () => {
   const routes = fs.readFileSync(new URL('../src/api/routes.js', import.meta.url), 'utf8');
-  assert.doesNotMatch(html, /id="feedbackHubUrl"/);
-  assert.doesNotMatch(html, /id="feedbackAppId"/);
-  assert.match(js, /const FEEDBACK_HUB_URL\s*=\s*['"]http:\/\/14\.176\.78\.46:8090['"]/);
-  assert.match(js, /const FEEDBACK_APP_ID\s*=\s*['"]app-builder-pi-solohost['"]/);
-  assert.match(js, /state\.feedbackHub\.sendFeedback\(\{ type, message \}\)/);
-  assert.doesNotMatch(js, /api\/feedback\/submit/);
-  assert.doesNotMatch(html, /name="password"|id="feedbackPassword"/i);
-  assert.match(js, /ingestToken:\s*''/);
-  assert.doesNotMatch(js, /cannoi_[A-Za-z0-9]{20,}/);
+  const js = fs.readFileSync(new URL('../public/app.js', import.meta.url), 'utf8');
+  const configRoute = routes.slice(routes.indexOf("r.get('/api/shfh-config'"), routes.indexOf("r.post('/api/feedback/submit'"));
+  const submitRoute = routes.slice(routes.indexOf("r.post('/api/feedback/submit'"), routes.indexOf("r.get('/api/ai/hub'"));
+  assert.match(configRoute, /configured: Boolean\(hub\.hubUrl && hub\.hubId && hub\.ingestToken\)/);
+  assert.match(submitRoute, /forwardHubFeedback\(\{ config: cfg\.feedbackHub/);
+  assert.match(js, /api\('\/api\/feedback\/submit'/);
 });

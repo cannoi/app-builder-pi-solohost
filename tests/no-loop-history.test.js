@@ -18,6 +18,26 @@ test('repeat guard blocks the same failed action after one automatic attempt in 
   assert.equal(shouldBlockRepeatedAction(history, 'release-tests-failed', now + 11 * 60_000, 10 * 60_000, 1), false);
 });
 
+test('repeat guard stops identical fingerprint, workspace, and validation evidence immediately', () => {
+  const now = Date.now();
+  const history = {
+    fingerprint: 'UNKNOWN_RUNTIME_ERROR:typeerror',
+    attempts: 1,
+    lastAt: new Date(now).toISOString(),
+    workspaceHash: 'workspace-a',
+    validationHash: 'validation-a',
+  };
+  assert.equal(shouldBlockRepeatedAction(history, history.fingerprint, now, undefined, 2, {
+    workspaceHash: 'workspace-a', validationHash: 'validation-a',
+  }), true);
+  assert.equal(shouldBlockRepeatedAction(history, history.fingerprint, now, undefined, 2, {
+    workspaceHash: 'workspace-b', validationHash: 'validation-a',
+  }), false);
+  assert.equal(shouldBlockRepeatedAction(history, history.fingerprint, now, undefined, 2, {
+    workspaceHash: 'workspace-a', validationHash: 'validation-b',
+  }), false);
+});
+
 
 test('repair fingerprint follows the concrete runtime error, not changing user wording', () => {
   const runtime = { error: "Error: EACCES: permission denied, mkdir '/app/data'", logs: '' };
@@ -33,6 +53,25 @@ test('verification after Improve replaces stale test results used by Publish', (
   assert.equal(next.dockerBuild.status, 'passed');
   assert.equal(next.scan.critical, 0);
   assert.equal(next.e2e.status, 'passed');
+});
+
+test('verification merge clears stale preview evidence after source changes', () => {
+  const old = {
+    sourceHash: 'old-source',
+    previewSourceHash: 'old-source',
+    preview: { status: 'passed' },
+    dockerBuild: { status: 'passed' },
+  };
+  const next = mergeVerificationState(old, {
+    sourceHash: 'new-source',
+    previewSourceHash: null,
+    preview: null,
+    dockerBuild: null,
+  });
+  assert.equal(next.sourceHash, 'new-source');
+  assert.equal(next.previewSourceHash, null);
+  assert.equal(next.preview, null);
+  assert.equal(next.dockerBuild, null);
 });
 
 test('project work history persists across Builder sessions', async () => {

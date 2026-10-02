@@ -10,6 +10,12 @@ fixed_values:
   - name: PODMAN_API_URL
     value: ""
 fields:
+  - name: BUILDER_ACCESS_PASSWORD
+    label: Builder access password
+    type: password
+    preserve_if_blank: true
+    help: "Required to open Builder. Use at least 16 characters and keep it private."
+
   - name: AI_PROVIDER
     label: AI provider
     type: select
@@ -44,3 +50,21 @@ fields:
     type: password
     preserve_if_blank: true
     help: "Required only for GitHub publishing. Keep this token private."
+
+  - name: SHFH_HUB_URL
+    label: Feedback Hub URL
+    type: text
+    preserve_if_blank: true
+    help: "Optional HTTPS origin for the Builder Feedback Hub."
+
+  - name: SHFH_HUB_ID
+    label: Feedback Hub ID
+    type: text
+    preserve_if_blank: true
+    help: "Optional Hub identifier. Kept in SoloHost environment, not app code."
+
+  - name: SHFH_INGEST_TOKEN
+    label: Feedback Hub ingest token
+    type: password
+    preserve_if_blank: true
+    help: "Optional client-ingest credential. Kept server-side in SoloHost environment."

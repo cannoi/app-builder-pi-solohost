@@ -42,6 +42,8 @@ Use named volumes for persistent application data when needed.
 
 Every `${VAR}` referenced by `docker-compose.yml` must be declared in `config_options.yml`. Supported installer field types include `text`, `password`, `number`, `select`, and `hidden`.
 
+Feedback Hub integrations use `SHFH_HUB_URL`, `SHFH_HUB_ID`, and `SHFH_INGEST_TOKEN` as SoloHost environment fields. Keep their values out of source, GitHub, ZIPs, and browser code; use a `password` field for the ingest token and send feedback through an existing authorized server route.
+
 ## Publishing validation
 
 The authoritative hosted validator is:

@@ -1,8 +1,5 @@
 const $ = (id) => document.getElementById(id);
-const FEEDBACK_HUB_URL = 'http://14.176.78.46:8090';
-const FEEDBACK_APP_ID = 'app-builder-pi-solohost';
-const FEEDBACK_APP_NAME = 'App Builder — Pi SoloHost';
-const state = { projectId: null, projects: [], busy: false, jobId: null, poll: null, pollFailures: 0, seenEvents: 0, files: [], settings: null, feedbackHub: null, feedbackSnapshot: null, feedbackSync: null, pollInFlight: false, pollInFlightJobId: null, watchSeq: 0, lastNotice: '' };
+const state = { projectId: null, projects: [], busy: false, jobId: null, poll: null, pollFailures: 0, seenEvents: 0, files: [], settings: null, pollInFlight: false, pollInFlightJobId: null, watchSeq: 0, lastNotice: '' };
 
 async function api(url, options = {}) {
   const r = await fetch(url, { headers: { 'Content-Type': 'application/json', ...(options.headers || {}) }, ...options });
@@ -14,6 +11,38 @@ async function api(url, options = {}) {
     throw err;
   }
   return data;
+}
+async function authenticateBuilder() {
+  const response = await fetch('/api/auth/status', { cache: 'no-store' });
+  const status = await response.json();
+  if (status.authenticated) return true;
+  const gate = $('authGate');
+  const message = $('authMessage');
+  gate.hidden = false;
+  if (!status.configured) {
+    $('authPasswordLabel').hidden = true;
+    $('authSubmit').hidden = true;
+    message.textContent = 'Builder access is locked until the operator sets BUILDER_ACCESS_PASSWORD (at least 16 characters) in SoloHost settings and restarts the app.';
+    return false;
+  }
+  $('authForm').onsubmit = async (event) => {
+    event.preventDefault();
+    $('authSubmit').disabled = true;
+    try {
+      await api('/api/auth/login', {
+        method: 'POST',
+        body: JSON.stringify({ password: $('authPassword').value }),
+      });
+      window.location.reload();
+    } catch (err) {
+      message.textContent = err.message || 'Sign-in failed. Please try again.';
+    } finally {
+      $('authSubmit').disabled = false;
+      $('authPassword').value = '';
+    }
+  };
+  $('authPassword').focus();
+  return false;
 }
 function compactNotice(text) {
   const raw = String(text || '').replace(/\s+/g, ' ').trim();
@@ -99,8 +128,15 @@ async function downloadScript(kind) {
 }
 function event(stage, status, message) {
   const shown = compactNotice(message);
-  if (shouldSkipNotice(`${status}:${shown}`)) return;
-  const el = document.createElement('div'); el.className = `event ${status}`; el.textContent = `${status === 'done' ? '✓' : status === 'failed' ? '⚠' : '•'} ${shown}`;
+  if (shouldSkipNotice(`${stage}:${status}:${shown}`)) return;
+  const labels = {
+    inspecting: 'INSPECTING', inspect: 'INSPECTING', baseline: 'BASELINE',
+    planning: 'PLANNING', diagnose: 'PLANNING', upgrading: 'UPGRADING', patch: 'UPGRADING',
+    validating: 'VALIDATING', validate: 'VALIDATING', testing: 'TESTING', preview: 'PREVIEW',
+    completed: 'COMPLETED',
+  };
+  const label = labels[String(stage || '').toLowerCase()];
+  const el = document.createElement('div'); el.className = `event ${status}`; el.textContent = `${status === 'done' ? '✓' : status === 'failed' ? '⚠' : '•'} ${label ? `${label} · ` : ''}${shown}`;
   $('chat').appendChild(el); if (chatNearBottom()) $('chat').scrollTop = $('chat').scrollHeight; else maybeJump();
 }
 function toast(message) { add('system', message); }
@@ -270,7 +306,7 @@ async function sendMessage() {
   if (message) { add('user', message); $('message').value = ''; }
   const githubUrl = parseGithubInput(message);
   if (githubUrl && !files.length) {
-    setBusy(true, 'Importing public GitHub source…');
+    setBusy(true, 'Fetching the current GitHub commit…');
     try {
       const r = await api('/api/projects/upgrade/github', { method: 'POST', body: JSON.stringify({ url: githubUrl }) });
       add('ai', '🔧 GitHub source imported into the independent Upgrade Workshop.');
@@ -343,14 +379,27 @@ function parseGithubInput(text) {
 }
 async function startUpgrade() {
   if (!state.projectId) {
-    const request = await askSafeAction('UPGRADE FROM GITHUB', 'Paste a public GitHub repository URL.');
+    const request = await askSafeAction('UPGRADE FROM GITHUB', 'Paste a GitHub repository URL. Private repositories need GitHub credentials in Settings.');
     if (!request) return;
     const url = parseGithubInput(request.text) || request.text.trim();
-    setBusy(true, 'Importing public GitHub source…');
+    setBusy(true, 'Fetching the current GitHub commit…');
     try { const r = await api('/api/projects/upgrade/github', { method: 'POST', body: JSON.stringify({ url }) }); add('ai', '🔧 GitHub source imported into the independent Upgrade Workshop.'); watch(r.jobId); }
     catch (e) { handleJobActionError(e); }
     return;
   }
+  try {
+    const upgrade = await api(`/api/projects/${state.projectId}/upgrade`);
+    if (!upgrade.source) {
+      const request = await askSafeAction('LINK GITHUB SOURCE', 'Paste the GitHub repository URL. The repository will open as a separate Upgrade project; this unlinked project will remain unchanged.');
+      if (!request) return;
+      const url = parseGithubInput(request.text) || request.text.trim();
+      setBusy(true, 'Fetching the current GitHub commit…');
+      const result = await api('/api/projects/upgrade/github', { method: 'POST', body: JSON.stringify({ url }) });
+      add('ai', '🔧 GitHub source imported into a new Upgrade project. The original project was not changed.');
+      watch(result.jobId);
+      return;
+    }
+  } catch (e) { handleJobActionError(e); return; }
   setBusy(true, 'Inspecting the existing app…');
   try {
     const r = await api(`/api/projects/${state.projectId}/upgrade/inspect`, { method: 'POST', body: '{}' });
@@ -359,26 +408,66 @@ async function startUpgrade() {
   } catch (e) { handleJobActionError(e); }
 }
 async function askUpgradeRequest() {
-  const request = await askSafeAction('UPGRADE WORKSHOP', 'Describe the upgrade, or attach a Rule file (.rule .yaml .json .md).');
+  const request = await askUpgradeChoice();
   if (!request) return;
-  setBusy(true, 'Loading the Rule and inspecting the app…');
+  setBusy(true, 'Working toward your requested upgrade…');
   try {
     let ruleText = '';
     for (const file of request.files || []) {
       if (/\.(rule|ya?ml|json|md)$/i.test(file.name || '')) ruleText += `${await file.text()}\n`;
     }
-    const r = await api(`/api/projects/${state.projectId}/upgrade/request`, { method: 'POST', body: JSON.stringify({ request: request.text, ruleText }) });
+    const r = await api(`/api/projects/${state.projectId}/upgrade/request`, { method: 'POST', body: JSON.stringify({ request: request.text, ruleText, modulePack: request.modulePack || '' }) });
     watch(r.jobId);
   } catch (e) { handleJobActionError(e); }
+}
+function askUpgradeChoice() {
+  return new Promise((resolve) => {
+    const wrap = document.createElement('div'); wrap.className = 'modal';
+    wrap.innerHTML = `<div class="sheet"><div class="sheetHead"><h2>UPGRADE</h2><button class="iconBtn" type="button">✕</button></div><p class="info">Choose a module or describe a focused upgrade. Module installation is checkpointed and rolled back if verification fails. Feedback Hub credentials are configured once by the app owner in SoloHost settings, never in the app UI or source.</p><div class="actionCard"><button type="button" data-pack="ai">✦ Add AI App Kernel</button><button type="button" data-pack="feedback">💬 Add Feedback Hub</button></div><textarea rows="4" style="width:100%;box-sizing:border-box" placeholder="Or describe the upgrade…"></textarea><div class="inputRow" style="margin-top:10px"><button type="button" class="attach modalAttach" title="Attach Rule files">📎</button><input class="modalFiles" type="file" multiple hidden accept=".zip,.txt,.md,.json,.yaml,.yml,.rule,.js,.ts,.html,.css"><span class="modalFileNames muted">No files</span></div><div class="actionCard"><button class="primary wide" type="button">Send</button></div></div>`;
+    document.body.appendChild(wrap);
+    const input = wrap.querySelector('textarea');
+    const fileInput = wrap.querySelector('.modalFiles');
+    const close = () => { wrap.remove(); resolve(null); };
+    wrap.querySelector('.iconBtn').onclick = close;
+    wrap.querySelector('.modalAttach').onclick = () => fileInput.click();
+    fileInput.onchange = () => {
+      const files = Array.from(fileInput.files || []);
+      wrap.querySelector('.modalFileNames').textContent = files.length ? files.map((file) => `📎 ${file.name}`).join(' · ') : 'No files';
+    };
+    wrap.querySelectorAll('[data-pack]').forEach((button) => {
+      button.onclick = () => {
+        const modulePack = button.dataset.pack;
+        wrap.remove();
+        resolve({
+          modulePack,
+          text: modulePack === 'feedback'
+            ? 'Integrate Feedback. Read SHFH_HUB_URL, SHFH_HUB_ID, and SHFH_INGEST_TOKEN from the app server environment. Add empty SoloHost config fields and Compose references. Never ask app users for Hub settings or expose credentials in client code.'
+            : 'Integrate the supplied AI App Kernel using the existing app authorization and database.',
+          files: [],
+        });
+      };
+    });
+    wrap.querySelector('.primary').onclick = () => {
+      const files = Array.from(fileInput.files || []);
+      const text = input.value.trim();
+      if (!text && !files.length) { input.focus(); return; }
+      wrap.remove();
+      resolve({ text: text || 'Apply the attached Rule to this app.', files, modulePack: '' });
+    };
+    input.focus();
+  });
 }
 function renderUpgradeBaseline(result) {
   const health = result.baseline?.health?.status || result.knowledge?.runtime?.status || 'HEALTHY';
   const issues = result.issues || result.baseline?.knownIssues || [];
   const findings = issues.filter((i) => i.id !== 'healthy');
+  const githubSource = result.source || result.baseline?.githubSource || {};
+  const commit = githubSource.commitSha || githubSource.commit_sha || '';
   add('ai', [
     '✓ App inspected',
+    `✓ GitHub source pinned: ${githubSource.owner || '?'} / ${githubSource.repo || '?'}${commit ? ` @ ${commit.slice(0, 12)}` : ''}`,
     '✓ Security checked',
-    '✓ Runtime checked',
+    '• Build/start/HTTP/browser preview will be verified after the requested changes.',
     '✓ Existing features mapped',
     '✓ Baseline created',
     '',
@@ -389,26 +478,6 @@ function renderUpgradeBaseline(result) {
     'Your app is ready for upgrade.',
   ].join('\n'));
 }
-function renderUpgradePlan(plan, request) {
-  if (!plan) return;
-  const risk = String(plan.risk || 'unknown').toLowerCase();
-  const box = document.createElement('div'); box.className = 'msg ai';
-  const title = document.createElement('div'); title.textContent = '🔧 Upgrade Plan'; title.style.fontWeight = '700'; box.appendChild(title);
-  const body = document.createElement('div'); body.className = 'small';
-  body.textContent = `Problem: ${plan.root_cause || '—'}\n\nRecommended: ${plan.recommendation || '—'}\n\nRisk: ${plan.risk || 'unknown'}\n\nFiles: ${(plan.files || []).map(f => typeof f === 'string' ? f : f.path).join(', ') || 'none'}\n\nExpected: ${plan.expected_result || '—'}`;
-  body.style.whiteSpace = 'pre-wrap'; box.appendChild(body);
-  const row = document.createElement('div'); row.className = 'actionCard';
-  const apply = document.createElement('button'); apply.className = 'primary';
-  apply.textContent = risk === 'high' ? 'Apply high-risk upgrade' : 'Apply Upgrade';
-  apply.onclick = async () => {
-    if (state.busy) return;
-    setBusy(true, 'Applying the minimal upgrade…');
-    try { const r = await api(`/api/projects/${state.projectId}/upgrade/apply`, { method: 'POST', body: JSON.stringify({ approved: true, request, plan }) }); watch(r.jobId); }
-    catch (e) { handleJobActionError(e); }
-  };
-  row.appendChild(apply); box.appendChild(row); $('chat').appendChild(box); if (chatNearBottom()) $('chat').scrollTop = $('chat').scrollHeight;
-}
-
 async function startDiagnose() {
   if (!state.projectId) { add('ai', '🩺 Open or create an app first.'); return; }
   setBusy(true, 'Diagnosing the real project…');
@@ -595,11 +664,12 @@ async function watch(jobId, { preserveEvents = false, resetFailures = true } = {
           await loadProjects();
           await openProject(result.projectId, false);
         }
-        renderUpgradeBaseline(result);
-        if (state.projectId) await askUpgradeRequest();
-      }
-      if (job.status === 'done' && job.type === 'upgrade_request' && result.plan && !result.execution) {
-        renderUpgradePlan(result.plan, result.plan.request || '');
+        if (result.terminalState === 'NEEDS_USER_ACTION' || result.needsUserAction || result.ready === false) {
+          if (result.brief) add('ai', result.brief);
+        } else {
+          renderUpgradeBaseline(result);
+          if (state.projectId) await askUpgradeRequest();
+        }
       }
       if (job.status === 'done' && job.type === 'upgrade_request' && result.execution) {
         const state = result.execution;
@@ -629,6 +699,7 @@ async function watch(jobId, { preserveEvents = false, resetFailures = true } = {
       if (result.brief) add('ai', result.brief);
       else if (result.reply) add('ai', result.reply);
       else if (state.projectId) { await loadProjects(); }
+      if (job.type === 'upgrade_request') await loadProjects();
       summarizeResult(result, job.status);
       if (result.guide) renderGuide(result.guide);
       const live = extractRuntime(result);
@@ -936,7 +1007,6 @@ async function loadSettings() {
   try {
     state.settings = await api('/api/settings');
     $('setGhOwner').value = state.settings.github?.owner || '';
-    await initFeedbackHub();
     $('settingsState').textContent = '';
     await loadHub();
   } catch {}
@@ -1025,67 +1095,11 @@ $('chat').addEventListener('scroll', maybeJump);
 setBusy(false, 'Ready');
 $('chat').addEventListener('click', (e) => { const b = e.target.closest('[data-container]'); if (b) inspectNamedContainer(b.dataset.container); });
 
-async function loadFeedbackConfig() {
-  try {
-    const cfg = await api('/api/shfh-config');
-    if (cfg && cfg.enabled !== false) state.feedbackConfig = cfg;
-  } catch {
-    state.feedbackConfig = { hubUrl: FEEDBACK_HUB_URL, appId: FEEDBACK_APP_ID, appName: FEEDBACK_APP_NAME, ingestToken: '', formUrl: FEEDBACK_HUB_URL + '/feedback', version: '1.4.61', platform: 'solohost', enabled: true };
-  }
-  return state.feedbackConfig;
-}
-async function initFeedbackHub() {
-  if (!window.SHFH) return;
-  const cfg = state.feedbackConfig || await loadFeedbackConfig();
-  const hubUrl = cfg?.hubUrl || FEEDBACK_HUB_URL;
-  const appId = cfg?.appId || FEEDBACK_APP_ID;
-  if (!hubUrl || !appId || cfg?.enabled === false) { state.feedbackHub = null; updateFeedbackBadge(0); return; }
-  try {
-    state.feedbackHub = window.SHFH.create({
-      hubUrl,
-      ingestToken: cfg.ingestToken || '',
-      appId,
-      appName: cfg.appName || FEEDBACK_APP_NAME,
-      version: cfg.version || state.settings?.version || '1.4.61',
-      platform: cfg.platform || 'solohost',
-      locale: state.settings?.locale || 'en',
-    });
-    await syncFeedbackHub();
-    if (!state.feedbackSync) state.feedbackSync = setInterval(syncFeedbackHub, 60000);
-    state.feedbackSync.unref?.();
-  } catch {
-    state.feedbackHub = null;
-    updateFeedbackBadge(0);
-  }
-}
-async function syncFeedbackHub() {
-  if (!state.feedbackHub) return;
-  try {
-    const snap = await state.feedbackHub.sync();
-    state.feedbackSnapshot = snap;
-    updateFeedbackBadge((snap.notices || []).length);
-  } catch {}
-}
-function updateFeedbackBadge(count) {
-  const badge = $('feedbackBadge');
-  if (!badge) return;
-  const n = Math.max(0, Number(count) || 0);
-  badge.hidden = n === 0;
-  badge.textContent = n > 99 ? '99+' : String(n);
-}
 async function openFeedback() {
   const modal = $('feedbackModal');
   if (!modal) return;
+  $('feedbackMessage').value = '';
   modal.hidden = false;
-  await syncFeedbackHub();
-  const notices = state.feedbackSnapshot?.notices || [];
-  const box = $('feedbackNotices');
-  if (box) {
-    box.hidden = !notices.length;
-    box.textContent = notices.length ? notices.map((n) => `🔔 ${n.title || 'Feedback update'}\n${n.body || ''}`).join('\n\n') : '';
-  }
-  if (state.feedbackHub) for (const n of notices) await state.feedbackHub.markRead(n.id).catch(() => {});
-  updateFeedbackBadge(0);
 }
 async function sendFeedbackHub() {
   const message = String($('feedbackMessage')?.value || '').trim();
@@ -1093,35 +1107,12 @@ async function sendFeedbackHub() {
   const type = $('feedbackType')?.value || 'improvement';
   const btn = $('sendFeedback');
   if (btn) { btn.disabled = true; btn.textContent = 'Sending…'; }
-  const cfg = state.feedbackConfig || await loadFeedbackConfig();
-  const formUrl = cfg?.formUrl || (FEEDBACK_HUB_URL + '/feedback');
   try {
-    if (!state.feedbackHub) await initFeedbackHub();
-    let result = null;
-    if (state.feedbackHub) result = await state.feedbackHub.sendFeedback({ type, message });
-    if (!result?.ok) {
-      result = await api('/api/feedback/submit', { method: 'POST', body: JSON.stringify({
-        type, message,
-        anonymousId: state.feedbackHub?.anonymousId || '',
-        installedAt: state.feedbackHub?.installedAt || '',
-        locale: state.settings?.locale || 'en',
-      }) });
-    }
-    if (result?.ok) {
-      $('feedbackMessage').value = '';
-      add('system', 'Feedback sent. Thank you.');
-      await syncFeedbackHub();
-      return;
-    }
-    if (result?.queued) {
-      $('feedbackMessage').value = '';
-      add('system', 'Feedback saved. It will be sent when the Hub is reachable.');
-      return;
-    }
-    throw new Error(result?.error || 'Feedback could not be sent.');
+    await api('/api/feedback/submit', { method: 'POST', body: JSON.stringify({ type, message }) });
+    $('feedbackMessage').value = '';
+    add('system', 'Feedback sent. Thank you.');
   } catch (err) {
-    add('ai', 'Feedback Hub is unavailable. Opening the official form.');
-    window.open(formUrl, '_blank', 'noopener');
+    add('ai', err.message || 'Feedback Hub is unavailable.');
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = 'Send feedback'; }
   }
@@ -1150,13 +1141,29 @@ function bindSupport() {
   });
 }
 bindSupport();
-$('closeFeedback') && ($('closeFeedback').onclick = () => { $('feedbackModal').hidden = true; });
+$('closeFeedback') && ($('closeFeedback').onclick = () => {
+  $('feedbackModal').hidden = true;
+  $('feedbackMessage').value = '';
+});
 $('sendFeedback') && ($('sendFeedback').onclick = sendFeedbackHub);
+$('signOut') && ($('signOut').onclick = async () => {
+  try {
+    await api('/api/auth/logout', { method: 'POST', body: '{}' });
+    window.location.reload();
+  } catch (err) {
+    add('ai', err.message || 'Could not sign out.');
+  }
+});
 
-Promise.all([loadStatus(), loadProjects(), loadSettings(), loadFeedbackConfig()]).then(async () => {
-  await initFeedbackHub();
+authenticateBuilder().then((authenticated) => {
+  if (!authenticated) return;
+  return Promise.all([loadStatus(), loadProjects(), loadSettings()]).then(async () => {
   const id = savedProjectId();
   if (id && state.projects.some((p) => p.id === id)) await openProject(id, false);
   else if (state.projects[0]?.id) await openProject(state.projects[0].id, false);
   else renderWelcome();
-}).catch(() => renderWelcome());
+  });
+}).catch(() => {
+  $('authGate').hidden = false;
+  $('authMessage').textContent = 'Could not check Builder sign-in. Check the connection, then reload the page.';
+});

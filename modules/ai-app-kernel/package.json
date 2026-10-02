@@ -1,0 +1,14 @@
+{
+  "name": "ai-app-kernel",
+  "version": "1.1.4",
+  "private": false,
+  "type": "module",
+  "description": "Portable AI control kernel: auto provider/model from token, sticky routing, local providers, schema + tools + actions.",
+  "main": "src/index.js",
+  "exports": {
+    ".": "./src/index.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

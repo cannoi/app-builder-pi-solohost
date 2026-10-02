@@ -95,6 +95,11 @@ process.on('SIGINT', () => shutdown('SIGINT'));
 function hydrateSecrets(cfg, db) {
   const saved = db.setting('runtimeSecrets', null);
   if (!saved || typeof saved !== 'object') return;
+  const retiredFeedbackKeys = ['FEEDBACK_HUB_URL', 'SHFH_HUB_URL', 'SHFH_HUB_ID', 'SHFH_INGEST_TOKEN'];
+  if (retiredFeedbackKeys.some((key) => Object.prototype.hasOwnProperty.call(saved, key))) {
+    for (const key of retiredFeedbackKeys) delete saved[key];
+    db.setSetting('runtimeSecrets', saved);
+  }
   if (saved.AI_PROVIDER) { process.env.AI_PROVIDER = saved.AI_PROVIDER; cfg.ai.provider = saved.AI_PROVIDER; }
   if (saved.AI_MODE) { process.env.AI_MODE = saved.AI_MODE; cfg.ai.mode = saved.AI_MODE === 'council' ? 'council' : 'single'; }
   if (saved.GEMINI_API_KEY) { process.env.GEMINI_API_KEY = saved.GEMINI_API_KEY; cfg.ai.geminiKey = saved.GEMINI_API_KEY; }
@@ -103,7 +108,6 @@ function hydrateSecrets(cfg, db) {
   if (saved.DEEPSEEK_MODEL) { process.env.DEEPSEEK_MODEL = normalizeDeepSeekModel(saved.DEEPSEEK_MODEL); cfg.ai.deepseekModel = normalizeDeepSeekModel(saved.DEEPSEEK_MODEL); }
   if (saved.GITHUB_TOKEN) { process.env.GITHUB_TOKEN = saved.GITHUB_TOKEN; cfg.github.token = saved.GITHUB_TOKEN; }
   if (saved.GITHUB_OWNER) { process.env.GITHUB_OWNER = saved.GITHUB_OWNER; cfg.github.owner = saved.GITHUB_OWNER; }
-  if (saved.FEEDBACK_HUB_URL) { process.env.FEEDBACK_HUB_URL = saved.FEEDBACK_HUB_URL; cfg.feedbackHub.url = String(saved.FEEDBACK_HUB_URL).replace(/\/$/, ''); }
   if (saved.FEEDBACK_APP_ID) { process.env.FEEDBACK_APP_ID = saved.FEEDBACK_APP_ID; cfg.feedbackHub.appId = String(saved.FEEDBACK_APP_ID); }
   const podmanUrl = saved.PODMAN_API_URL || saved.SANDBOX_PODMAN_API_URL || saved.CONTAINER_SANDBOX_PODMAN_API_URL || '';
   if (podmanUrl) { process.env.PODMAN_API_URL = podmanUrl; cfg.runtime.podman.apiUrl = podmanUrl; }

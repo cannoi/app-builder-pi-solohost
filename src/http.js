@@ -18,20 +18,31 @@ const MIME = {
 
 export function createApp() {
   const routes = [];
+  const middleware = [];
 
   function add(method, route, handler) {
     const { regex, keys } = compile(route);
     routes.push({ method, regex, keys, handler, route });
   }
 
+  async function authorize(req, res) {
+    for (const handler of middleware) {
+      if (await handler(req, res) === false) return false;
+    }
+    return true;
+  }
+
   const app = {
     get: (r, h) => add('GET', r, h),
     post: (r, h) => add('POST', r, h),
-    use() {},
+    use: (handler) => middleware.push(handler),
+    authorize,
     async handle(req, res) {
       const url = new URL(req.url, 'http://localhost');
       req.path = url.pathname;
       req.query = Object.fromEntries(url.searchParams);
+      wrapRes(res);
+      if (!await authorize(req, res)) return;
       if (['POST', 'PUT', 'PATCH'].includes(req.method)) {
         const raw = await readBody(req);
         req.rawBody = raw;
@@ -39,7 +50,6 @@ export function createApp() {
       } else {
         req.body = {};
       }
-      wrapRes(res);
       for (const route of routes) {
         if (route.method !== req.method) continue;
         const m = url.pathname.match(route.regex);
@@ -68,6 +78,10 @@ export function listen(app, { port, bind, publicDir, log, preview = null }) {
     try {
       const url = new URL(req.url, 'http://localhost');
       if (preview && url.pathname.startsWith('/preview/')) {
+        req.path = url.pathname;
+        req.query = Object.fromEntries(url.searchParams);
+        wrapRes(res);
+        if (!await app.authorize(req, res)) return;
         await preview(req, res, url);
         return;
       }

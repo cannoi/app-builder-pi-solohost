@@ -15,9 +15,20 @@ import { normalizeDeepSeekModel } from '../ai/providers/deepseek.js';
 import { inferAction, parseGithubRepoUrl } from '../scripts/ops.js';
 import { createProjectZip } from '../projects/exporter.js';
 import { gcDocker } from '../docker/cleanup.js';
+import { createAccessAuth } from '../security/access-auth.js';
+import { resolveUpgradeRepository } from '../upgrade/source.js';
+import { forwardHubFeedback } from '../feedback/proxy.js';
 
 export function registerRoutes(r, app) {
   const { cfg, db, jobs, projects, snapshots, github, releases, runner, ai } = app;
+  const accessAuth = createAccessAuth(cfg.security?.accessPassword);
+  r.use(accessAuth.middleware);
+  r.get('/api/auth/status', (req, res) => res.json({
+    configured: accessAuth.configured,
+    authenticated: accessAuth.isAuthenticated(req),
+  }));
+  r.post('/api/auth/login', (req, res) => accessAuth.login(req, res));
+  r.post('/api/auth/logout', (req, res) => accessAuth.logout(req, res));
 
   const ensureFree = (projectId, res) => {
     if (!jobs.isBusy(projectId)) return true;
@@ -75,17 +86,17 @@ export function registerRoutes(r, app) {
 
   r.post('/api/settings', async (req, res) => {
     const body = req.body || {};
-    const allowed = ['AI_PROVIDER', 'AI_MODE', 'GEMINI_API_KEY', 'GEMINI_MODEL', 'DEEPSEEK_API_KEY', 'DEEPSEEK_MODEL', 'GITHUB_TOKEN', 'GITHUB_OWNER', 'APP_LOCALE', 'PODMAN_API_URL', 'SANDBOX_PODMAN_API_URL', 'CONTAINER_SANDBOX_PODMAN_API_URL', 'FEEDBACK_HUB_URL', 'FEEDBACK_APP_ID'];
+    const allowed = ['AI_PROVIDER', 'AI_MODE', 'GEMINI_API_KEY', 'GEMINI_MODEL', 'DEEPSEEK_API_KEY', 'DEEPSEEK_MODEL', 'GITHUB_TOKEN', 'GITHUB_OWNER', 'APP_LOCALE', 'PODMAN_API_URL', 'SANDBOX_PODMAN_API_URL', 'CONTAINER_SANDBOX_PODMAN_API_URL', 'FEEDBACK_APP_ID'];
     const applied = [];
     const stored = db.setting('runtimeSecrets', {}) || {};
+    for (const key of ['FEEDBACK_HUB_URL', 'SHFH_HUB_URL', 'SHFH_HUB_ID', 'SHFH_INGEST_TOKEN']) delete stored[key];
     const oldGeminiKey = stored.GEMINI_API_KEY || cfg.ai.geminiKey || '';
     const oldProvider = String(cfg.ai.provider || 'deepseek').toLowerCase();
     const oldGeminiModel = String(cfg.ai.geminiModel || '');
     const oldDeepseekModel = String(cfg.ai.deepseekModel || '');
     for (const key of allowed) {
       // Empty secret fields mean "keep the existing value", not "erase it".
-      // Non-secret Feedback Hub settings are allowed to be cleared explicitly.
-      if ((key === 'FEEDBACK_HUB_URL' || key === 'FEEDBACK_APP_ID') && body[key] != null && String(body[key]).trim() === '') {
+      if (key === 'FEEDBACK_APP_ID' && body[key] != null && String(body[key]).trim() === '') {
         delete process.env[key];
         delete stored[key];
         applied.push(key);
@@ -111,7 +122,6 @@ export function registerRoutes(r, app) {
     cfg.github.token = process.env.GITHUB_TOKEN || cfg.github.token;
     cfg.github.owner = process.env.GITHUB_OWNER || cfg.github.owner;
     cfg.runtime.podman.apiUrl = process.env.PODMAN_API_URL || process.env.SANDBOX_PODMAN_API_URL || process.env.CONTAINER_SANDBOX_PODMAN_API_URL || cfg.runtime.podman.apiUrl || '';
-    cfg.feedbackHub.url = String(process.env.FEEDBACK_HUB_URL || cfg.feedbackHub.url || '').replace(/\/$/, '');
     cfg.feedbackHub.appId = String(process.env.FEEDBACK_APP_ID || cfg.feedbackHub.appId || 'app-builder-pi-solohost');
     runner.configurePodman?.(cfg.runtime.podman.apiUrl);
     ai.refresh();
@@ -127,57 +137,30 @@ export function registerRoutes(r, app) {
 
   r.get('/api/shfh-config', (_req, res) => {
     const hub = cfg.feedbackHub || {};
-    const hubUrl = String(hub.url || 'http://14.176.78.46:8090').replace(/\/$/, '');
     res.json({
-      hubId: hub.hubId || 'FH-CANNOI-0905428801SH',
-      hubUrl,
-      formUrl: hubUrl + '/feedback',
-      ingestToken: hub.ingestToken || '',
       appId: hub.appId || 'app-builder-pi-solohost',
       appName: hub.appName || 'App Builder — Pi SoloHost',
       version: cfg.version,
       platform: 'solohost',
       enabled: hub.enabled !== false,
+      configured: Boolean(hub.hubUrl && hub.hubId && hub.ingestToken),
     });
   });
 
   r.post('/api/feedback/submit', async (req, res) => {
-    const hubUrl = String(cfg.feedbackHub?.url || 'http://14.176.78.46:8090').replace(/\/$/, '');
-    if (!hubUrl) return res.status(503).json({ ok: false, error: 'Feedback Hub is not configured.' });
     const message = String(req.body?.message || '').trim();
-    if (!message) return res.status(400).json({ ok: false, error: 'Feedback message is required.' });
-    const type = ['bug', 'improvement', 'question'].includes(String(req.body?.type)) ? String(req.body.type) : 'improvement';
-    const payload = {
-      schema_version: '2.2',
-      app_id: cfg.feedbackHub.appId || 'app-builder-pi-solohost',
-      app_name: 'App Builder — Pi SoloHost',
-      version: cfg.version,
-      platform: 'solohost',
-      anonymous_id: String(req.body?.anonymousId || ''),
-      installed_at: String(req.body?.installedAt || ''),
-      locale: String(req.body?.locale || cfg.locale || 'en'),
-      event: 'feedback',
-      type,
-      rating: Number(req.body?.rating) || 0,
-      message,
-    };
+    const type = String(req.body?.type || 'improvement');
+    if (!message || message.length > 5000) return res.status(400).json({ error: 'Enter feedback of up to 5,000 characters.' });
+    if (!['bug', 'improvement', 'question'].includes(type)) return res.status(400).json({ error: 'Unsupported feedback type.' });
+    if (cfg.feedbackHub?.enabled === false) return res.status(503).json({ error: 'Feedback is temporarily unavailable.' });
     try {
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 12000);
-      const upstream = await fetch(hubUrl + '/api/feedback', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Accept: 'application/json', ...(cfg.feedbackHub?.ingestToken ? { Authorization: 'Bearer ' + cfg.feedbackHub.ingestToken } : {}) },
-        body: JSON.stringify(payload),
-        signal: controller.signal,
-      });
-      clearTimeout(timer);
-      const text = await upstream.text();
-      let data = {};
-      try { data = JSON.parse(text); } catch {}
-      if (!upstream.ok) return res.status(502).json({ ok: false, error: data.error || ('Feedback Hub HTTP ' + upstream.status) });
-      return res.json({ ok: true, upstream: data });
+      await forwardHubFeedback({ config: cfg.feedbackHub, type, message, locale: cfg.locale });
+      return res.json({ ok: true });
     } catch (err) {
-      return res.status(502).json({ ok: false, error: err?.name === 'AbortError' ? 'Feedback Hub timeout.' : 'Feedback Hub is unreachable.' });
+      const configured = err.code !== 'FEEDBACK_NOT_CONFIGURED';
+      return res.status(configured ? 502 : 503).json({
+        error: configured ? 'Feedback could not be delivered. Please try again later.' : 'Feedback is not configured by the app owner yet.',
+      });
     }
   });
 
@@ -428,7 +411,7 @@ export function registerRoutes(r, app) {
 
   r.post('/api/projects/upgrade/github', (req, res) => {
     const parsed = parseGithubRepoUrl(req.body?.url);
-    if (!parsed) return res.status(400).json({ error: 'Use a public GitHub repository URL.' });
+    if (!parsed) return res.status(400).json({ error: 'Use a GitHub repository URL. Private repositories require GitHub credentials in Settings.' });
     const url = parsed.url;
     if (!ensureFree(null, res)) return;
     const job = jobs.enqueue({ type: 'upgrade_github_import', payload: { url } });
@@ -486,8 +469,18 @@ export function registerRoutes(r, app) {
     if (!ensureFree(p.id, res)) return;
     const request = String(req.body?.request || '').trim();
     const ruleText = String(req.body?.ruleText || '').trim();
-    if (!request && !ruleText) return res.status(400).json({ error: 'Tell me what you want to improve, or attach a Rule file.' });
-    const job = jobs.enqueue({ type: 'upgrade_request', projectId: p.id, payload: { projectId: p.id, request: request || 'Apply the attached Rule to this existing app.', ruleText } });
+    const modulePack = req.body?.modulePack === 'ai' || req.body?.modulePack === 'feedback' ? req.body.modulePack : '';
+    if (!request && !ruleText && !modulePack) return res.status(400).json({ error: 'Tell me what you want to improve, or attach a Rule file.' });
+    const moduleRequest = modulePack === 'ai'
+      ? 'Integrate the supplied AI App Kernel using the existing app authorization and database.'
+      : modulePack === 'feedback'
+        ? 'Integrate Feedback using server-side SHFH_HUB_URL, SHFH_HUB_ID, and SHFH_INGEST_TOKEN environment variables. Add empty SoloHost config fields and compose references; do not prompt app users or store credentials in source.'
+        : '';
+    const job = jobs.enqueue({
+      type: 'upgrade_request',
+      projectId: p.id,
+      payload: { projectId: p.id, request: request || moduleRequest || 'Apply the attached Rule to this existing app.', ruleText, modulePack },
+    });
     setImmediate(() => jobs.kick(job));
     res.status(202).json({ jobId: job.id, message: 'Upgrade diagnosis started.' });
   });
@@ -505,7 +498,13 @@ export function registerRoutes(r, app) {
   r.get('/api/projects/:id/upgrade', async (req, res) => {
     const p = projects.get(req.params.id);
     if (!p) return res.status(404).json({ error: 'Project not found' });
+    const [upgradeSource, release, pending] = await Promise.all([
+      projects.readMetadata(p, 'upgrade-source.json', {}),
+      projects.readMetadata(p, 'release.json', {}),
+      projects.readMetadata(p, 'release-pending.json', {}),
+    ]);
     res.json({
+      source: resolveUpgradeRepository(upgradeSource, release, pending),
       baseline: await projects.readMetadata(p, 'upgrade-baseline.json', null),
       knowledge: await projects.readMetadata(p, 'upgrade-knowledge.json', null),
       plan: await projects.readMetadata(p, 'upgrade-plan.json', null),

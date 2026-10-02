@@ -166,6 +166,17 @@ function rewriteExternalHtml(html, baseUrl, slug) {
   return out;
 }
 
+export function externalResponseHeaders(upstreamHeaders, contentType) {
+  const headers = { ...upstreamHeaders };
+  for (const key of ['content-length', 'content-encoding', 'x-frame-options', 'content-security-policy', 'content-security-policy-report-only', 'set-cookie']) delete headers[key];
+  headers['cache-control'] = 'no-store';
+  headers['x-content-type-options'] = 'nosniff';
+  if (String(contentType || '').toLowerCase().includes('text/html')) {
+    headers['content-security-policy'] = 'sandbox allow-scripts allow-popups';
+  }
+  return headers;
+}
+
 async function proxyExternal(req, res, externalUrl, project, redirects = 0) {
   const safe = validateExternalUrl(externalUrl);
   if (!safe || redirects > EXTERNAL_MAX_REDIRECTS) return false;
@@ -186,12 +197,11 @@ async function proxyExternal(req, res, externalUrl, project, redirects = 0) {
       up.on('data', (c) => { bytes += c.length; if (bytes <= EXTERNAL_MAX_BYTES) chunks.push(c); else request.destroy(); });
       up.on('end', () => {
         if (bytes > EXTERNAL_MAX_BYTES || status >= 400) { resolve(false); return; }
-        const headers = { ...up.headers };
-        for (const k of ['content-length','content-encoding','x-frame-options','content-security-policy','set-cookie']) delete headers[k];
-        const type = String(headers['content-type'] || '');
+        const type = String(up.headers['content-type'] || '');
+        const headers = externalResponseHeaders(up.headers, type);
         let body = Buffer.concat(chunks);
         if (type.includes('text/html')) body = Buffer.from(rewriteExternalHtml(body.toString('utf8'), u.href, project.slug), 'utf8');
-        res.writeHead(status, { ...headers, 'cache-control': 'no-store' }); res.end(body); resolve(true);
+        res.writeHead(status, headers); res.end(body); resolve(true);
       });
     });
     request.on('timeout', () => request.destroy());
