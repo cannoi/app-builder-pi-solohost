@@ -1,3 +1,4 @@
+import { normalizeArray } from '../utils/validate.js';
 import { uuid } from '../utils/ids.js';
 
 const FILE = 'upgrade-session.json';
@@ -56,10 +57,10 @@ export async function updateUpgradeSession(projects, project, patch = {}) {
     ...current,
     ...patch,
     updatedAt: stamp,
-    changedFiles: unique([...(current.changedFiles || []), ...(patch.changedFiles || [])]),
-    checkpoints: unique([...(current.checkpoints || []), ...(patch.checkpoints || [])]),
-    completedSteps: unique([...(current.completedSteps || []), ...(patch.completedSteps || [])]),
-    verification: [...(current.verification || []), ...(patch.verification || [])].slice(-30),
+    changedFiles: unique([...normalizeArray(current.changedFiles), ...normalizeArray(patch.changedFiles)]),
+    checkpoints: unique([...normalizeArray(current.checkpoints), ...normalizeArray(patch.checkpoints)]),
+    completedSteps: unique([...normalizeArray(current.completedSteps), ...normalizeArray(patch.completedSteps)]),
+    verification: [...normalizeArray(current.verification), ...normalizeArray(patch.verification)].slice(-30),
   };
   if (patch.stepId) {
     next.steps = (current.steps || []).map((step) => step.id === patch.stepId

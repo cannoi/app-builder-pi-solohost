@@ -9,6 +9,7 @@ import { findMissingNodeModules } from '../projects/deps-fix.js';
 import { writeGeneratedFiles } from '../projects/generator.js';
 import { parseRule, capabilityGap, formatRuleStatus, buildRuleTasks, normalizeExecution } from './rules.js';
 import { readUpgradeSession, createUpgradeSession, updateUpgradeSession, pauseUpgradeSession, resumeUpgradeSession, completeUpgradeSession } from './session.js';
+import { normalizeArray } from '../utils/validate.js';
 
 const MAX_SAFE_REPAIRS = 2;
 const MAX_AUTO_UPGRADE_FILES = 24;
@@ -17,7 +18,7 @@ const MAX_AUTO_UPGRADE_BYTES = 6 * 1024 * 1024;
 export function isUpgradePauseError(err) {
   const code = String(err?.code || '');
   const message = String(err?.message || err || '');
-  return code === 'AI_UNAVAILABLE' || code === 'AI_BAD_JSON' || /HTTP (408|409|425|429|500|502|503|504)\b|timeout|timed out|fetch failed|ECONNRESET|ECONNREFUSED|ENOTFOUND|UNAVAILABLE|overloaded|temporar/i.test(message);
+  return code === 'AI_UNAVAILABLE' || code === 'AI_BAD_JSON' || code === 'AI_RESPONSE_MALFORMED' || code === 'AI_NO_CHANGE' || /HTTP (408|409|425|429|500|502|503|504)\b|timeout|timed out|fetch failed|ECONNRESET|ECONNREFUSED|ENOTFOUND|UNAVAILABLE|overloaded|temporar|invalid JSON|FORMAT_ERROR/i.test(message);
 }
 
 
@@ -234,7 +235,7 @@ export async function applyUpgrade({ project, projects, snapshots, plan, request
   // automatically with a checkpoint. Only secret/destructive work stops.
   void approved; void ruleExecution; void risk;
   const files = Array.isArray(plan.files) ? plan.files.filter((f) => f && f.path && typeof f.content === 'string') : [];
-  if (!files.length) throw new Error('Upgrade plan contains no file changes.');
+  if (!files.length) throw Object.assign(new Error('Upgrade plan contains no file changes.'), { code: 'AI_NO_CHANGE', recoverable: true });
   if (files.length > MAX_AUTO_UPGRADE_FILES) throw new Error(`Upgrade scope is too large for an automatic patch (${MAX_AUTO_UPGRADE_FILES} files max).`);
   const totalBytes = files.reduce((sum, f) => sum + Buffer.byteLength(f.content, 'utf8'), 0);
   if (totalBytes > MAX_AUTO_UPGRADE_BYTES) throw new Error('Upgrade patch is too large for an automatic change set.');
@@ -435,10 +436,15 @@ export async function runRuleUpgrade({ project, projects, snapshots, ai, request
 
 function validateUpgradePlan(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  // Normalize optional array fields in-place so callers never see non-iterables
+  if (value.files != null) value.files = normalizeArray(value.files);
+  if (value.verification != null) value.verification = normalizeArray(value.verification);
+  if (value.expected_files != null) value.expected_files = normalizeArray(value.expected_files);
+  if (value.alternatives != null) value.alternatives = normalizeArray(value.alternatives);
+  if (value.missing_capabilities != null) value.missing_capabilities = normalizeArray(value.missing_capabilities);
   if (typeof value.recommendation !== 'string' || typeof value.expected_result !== 'string') return false;
   if (!Array.isArray(value.files)) return false;
   if (value.files.some((f) => !f || typeof f.path !== 'string' || typeof f.content !== 'string')) return false;
-  if (value.verification != null && !Array.isArray(value.verification)) return false;
   return true;
 }
 

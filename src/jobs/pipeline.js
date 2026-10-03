@@ -1640,7 +1640,7 @@ export function registerPipeline(app) {
               continue;
             }
             if (checkpoint?.id) await snapshots.restore(project, checkpoint.id).catch(() => {});
-            emit('rollback', 'done', 'The deterministic repair did not improve verification, so the previous checkpoint was restored.');
+            emit('rollback', 'done', 'Deterministic repair did not improve verification. Checkpoint restored; next strategy will be tried.');
             staticResult = await runStaticTests(source);
             nodeResult = await runNodeTests(source, 45000);
           } else if (dare.userAction) {
@@ -1678,7 +1678,7 @@ export function registerPipeline(app) {
       const afterFailureScore = failureScore(staticResult, nodeResult);
       if (checkpoint?.snapshot?.id && afterFailureScore > beforeFailureScore) {
         await snapshots.restore(project, checkpoint.snapshot.id).catch(() => {});
-        emit('rollback', 'done', 'The AI repair made the checks worse, so I restored the previous working state.');
+        emit('rollback', 'done', 'AI repair made checks worse. Previous working state restored; Builder continues with other safe options if available.');
         staticResult = await runStaticTests(source);
         nodeResult = await runNodeTests(source, 45000);
       }
@@ -1856,7 +1856,7 @@ export function registerPipeline(app) {
           }
         }
         if (dareCheckpoint?.id) await snapshots.restore(project, dareCheckpoint.id).catch(() => {});
-        emit('rollback', 'done', 'The deterministic repair did not reach a verified running state, so the previous checkpoint was restored.');
+        emit('rollback', 'done', 'Deterministic repair did not reach a verified running state. Checkpoint restored; Builder is trying the next safe strategy.');
       }
     } catch (err) {
       if (dareCheckpoint?.id) await snapshots.restore(project, dareCheckpoint.id).catch(() => {});
@@ -1891,7 +1891,14 @@ export function registerPipeline(app) {
     const networkContext = networkPreflight ? `\nBUILDER NETWORK PREFLIGHT:\n${JSON.stringify(networkPreflight)}\n` : '';
     const securityContext = security.findings?.length ? `\nSECURITY FINDINGS (treat as concrete repair requirements):\n${security.copy_for_ai}\n` : '';
     const r = await ai.completeJson({ task: 'DEBUGGING', system: SYSTEM, prompt: patchPrompt(project, '', relevant + recentContext + networkContext + securityContext + `\nATTACHMENTS (canonical project storage):\n${attachContext}\nATTACHMENT INDEX:\n${JSON.stringify(attachList)}`, feedback), projectId: project.id, images: await imageInputsFromAttachments(projects.projectDir(project)) });
-    if (!r.json?.files?.length) throw new Error('AI did not propose a code change.');
+    if (!r.json?.files?.length) {
+      const evidenceFail = (baselineScore > 0) || (security?.critical > 0) || (baselineStatic?.status === 'failed') || (baselineNode?.status === 'failed');
+      if (!evidenceFail) {
+        emit('repair', 'done', 'AI found no code change needed and current checks look healthy.');
+        return { feedback, rootCause: r.json?.root_cause || '', explanation: r.json?.explanation || 'No code change proposed; evidence already healthy.', files: [], tested: { staticResult: baselineStatic, nodeResult: baselineNode, scan: security }, runtime: null, noChange: true };
+      }
+      throw Object.assign(new Error('AI did not propose a code change while evidence still shows failures. Provide new runtime evidence or try another provider.'), { code: 'AI_NO_CHANGE', recoverable: true });
+    }
     const declaredRisk = String(r.json.risk || 'medium').toLowerCase();
     if (declaredRisk !== 'low') throw new Error('NEEDS_USER_ACTION: AI marked this change as medium/high risk. No files were changed; review and confirm the requested change before applying it.');
     const patchCheckpoint = await applySafeAiPatch({ sourceDir: source, files: r.json.files, project, snapshots, reason: 'ai-improve' });
@@ -1908,7 +1915,7 @@ export function registerPipeline(app) {
       const latest = patchCheckpoint?.snapshot || snapshots.list(project.id)[0];
       if (latest?.id) {
         await snapshots.restore(project, latest.id).catch(() => {});
-        emit('rollback', 'done', 'The change did not produce a verified step forward, so I restored the previous checkpoint.');
+        emit('rollback', 'done', 'Change did not produce a verified step forward. Checkpoint restored; Builder will evaluate remaining strategies.');
         const restored = await inspectOnly(project, emit);
         runtime = null;
         return { feedback, rootCause: r.json.root_cause || '', explanation: 'Change rolled back because verification regressed.', files: [], tested: { staticResult: restored.staticResult, nodeResult: restored.nodeResult, scan: restored.scan }, runtime };
@@ -1920,7 +1927,7 @@ export function registerPipeline(app) {
       const latest = patchCheckpoint?.snapshot || snapshots.list(project.id)[0];
       if (latest?.id) {
         await snapshots.restore(project, latest.id).catch(() => {});
-        emit('rollback', 'done', 'The live regression after this change was not verified, so I restored the previous checkpoint.');
+        emit('rollback', 'done', 'Live regression after this change was not verified. Checkpoint restored; remaining strategies will be considered.');
         const restored = await inspectOnly(project, emit);
         runtime = null;
         tested.staticResult = restored.staticResult; tested.nodeResult = restored.nodeResult; tested.scan = restored.scan;
@@ -2021,7 +2028,7 @@ export function registerPipeline(app) {
         runtime = await runProject(project, emit);
         if (runtime.status === 'passed') return { ...runtime, dare };
         if (dareCheckpoint?.id) await snapshots.restore(project, dareCheckpoint.id).catch(() => {});
-        emit('rollback', 'done', 'The deterministic repair did not produce a passing preview, so the previous checkpoint was restored before AI diagnosis.');
+        emit('rollback', 'done', 'Deterministic repair did not produce a passing preview. Checkpoint restored; continuing with AI diagnosis.');
       } else if (dare.userAction) {
         runtime.brief = formatDareReport(dare);
         return runtime;
@@ -2220,7 +2227,8 @@ function friendlyAiError(err) {
   if (/HTTP 429|quota|rate limit|resource exhausted/i.test(m)) return `AI quota/rate limit was reached. ${detail || 'The request was throttled.'} Builder will try another configured provider when available.`;
   if (/HTTP 402|Insufficient Balance|billing/i.test(m)) return `The AI provider requires available credit. ${detail || 'Use another configured provider/key.'}`;
   if (/timeout|timed out|fetch failed|ECONNRESET|ECONNREFUSED|ENOTFOUND|network/i.test(m)) return `AI connection failed. ${detail || 'No files were changed.'} Builder will retry transient failures and switch provider when possible.`;
-  if (/AI_BAD_JSON|invalid JSON|FORMAT_ERROR/i.test(m)) return 'The AI returned an invalid work format. No files were changed; Builder will retry with the strict JSON contract.';
+  if (/AI_RESPONSE_MALFORMED|AI_BAD_JSON|invalid JSON|FORMAT_ERROR/i.test(m) || err?.code === 'AI_RESPONSE_MALFORMED') return 'AI provider temporarily returned an invalid format. No verified work was rolled back; Builder retries or falls back when another provider is available.';
+  if (err?.code === 'AI_NO_CHANGE' || /did not propose a code change/i.test(m)) return 'AI proposed no code change while checks still fail. Builder will not loop the same request; provide new evidence or switch provider.';
   return detail
     ? `AI could not complete this step. No files were changed. Details: ${detail}`
     : 'AI could not complete this step. No files were changed. Save a valid provider key/model, then retry.';

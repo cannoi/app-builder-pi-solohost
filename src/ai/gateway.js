@@ -1,6 +1,6 @@
 import { GeminiProvider } from './providers/gemini.js';
 import { DeepSeekProvider } from './providers/deepseek.js';
-import { extractJson } from '../utils/validate.js';
+import { extractJson, normalizeAIResponse, normalizeArray } from '../utils/validate.js';
 import { uuid } from '../utils/ids.js';
 import { pickRoles, recordTrust, reviewPrompt, scoreOf } from './council.js';
 import { AIProviderHub } from './hub/hub.js';
@@ -110,26 +110,69 @@ export class AIGateway {
     if (pair.length >= 2 && pairTask) return this.completeSelectedPair(opts, pair);
     const council = (this.cfg.ai.mode === 'council') && pairTask;
     if (council) return this.completeCouncil(opts);
+
     const first = await this.complete({ ...opts, json: true });
-    let parsed = extractJson(first.text);
+    let norm = normalizeAIResponse(first.text);
+    let parsed = norm.ok ? norm.value : null;
     if (parsed && (!opts.validateJson || opts.validateJson(parsed))) return { ...first, json: parsed };
 
+    // Recovery 1: strict structured retry on the same provider path
     const strictPrompt = `${opts.prompt}\n\nJSON OUTPUT CONTRACT:\n- Return exactly one valid JSON object.\n- No markdown fences.\n- No commentary before or after JSON.\n- If uncertain, return {"root_cause":"FORMAT_ERROR","files":[],"explanation":"Unable to produce valid JSON."}.`;
     try {
       const retry = await this.complete({ ...opts, json: true, prompt: strictPrompt });
-      parsed = extractJson(retry.text);
-      if (parsed && (!opts.validateJson || opts.validateJson(parsed))) return { ...retry, json: parsed, fallbackFrom: first.provider };
-
+      norm = normalizeAIResponse(retry.text);
+      parsed = norm.ok ? norm.value : null;
+      if (parsed && (!opts.validateJson || opts.validateJson(parsed))) {
+        return { ...retry, json: parsed, fallbackFrom: first.provider };
+      }
     } catch (err) {
       this.log.warn('AI JSON retry failed', { error: err.message });
     }
-    throw Object.assign(new Error(`AI response format was invalid. ${first.provider || 'AI Provider Hub'} did not return valid JSON. No files were changed.`), { code: 'AI_BAD_JSON' });
+
+    // Recovery 2: try alternate provider once when available (hub already may have, but ensure)
+    try {
+      const alt = await this.complete({ ...opts, json: true, prompt: strictPrompt, modelRef: '' });
+      if (alt?.provider && alt.provider !== first.provider) {
+        norm = normalizeAIResponse(alt.text);
+        parsed = norm.ok ? norm.value : null;
+        if (parsed && (!opts.validateJson || opts.validateJson(parsed))) {
+          return { ...alt, json: parsed, fallbackFrom: first.provider };
+        }
+      }
+    } catch (err) {
+      this.log.warn('AI JSON alternate provider failed', { error: err.message });
+    }
+
+    // AI_RESPONSE_MALFORMED is a provider failure, not an application failure.
+    // Callers must not rollback verified work solely because of this code.
+    throw Object.assign(
+      new Error(`AI response format was invalid. ${first.provider || 'AI Provider Hub'} did not return valid JSON. No files were changed.`),
+      { code: 'AI_RESPONSE_MALFORMED', provider: first.provider || null, recoverable: true }
+    );
   }
 
   async completeSelectedPair(opts, pair) {
     const draft = await this.complete({ ...opts, json: true, modelRef: pair[0] });
-    const parsed = extractJson(draft.text);
-    if (!parsed || (opts.validateJson && !opts.validateJson(parsed))) throw Object.assign(new Error(`AI response format was invalid. ${draft.provider || 'Builder'} did not return the required JSON contract. No files were changed.`), { code: 'AI_BAD_JSON' });
+    let norm = normalizeAIResponse(draft.text);
+    let parsed = norm.ok ? norm.value : null;
+    if (!parsed || (opts.validateJson && !opts.validateJson(parsed))) {
+      // One strict retry on the builder model before failing the pair path
+      try {
+        const strictPrompt = `${opts.prompt}\n\nJSON OUTPUT CONTRACT: return exactly one valid JSON object. No markdown.`;
+        const retry = await this.complete({ ...opts, json: true, modelRef: pair[0], prompt: strictPrompt });
+        norm = normalizeAIResponse(retry.text);
+        parsed = norm.ok ? norm.value : null;
+        if (parsed && (!opts.validateJson || opts.validateJson(parsed))) {
+          Object.assign(draft, retry);
+        }
+      } catch { /* keep original failure path */ }
+    }
+    if (!parsed || (opts.validateJson && !opts.validateJson(parsed))) {
+      throw Object.assign(
+        new Error(`AI response format was invalid. ${draft.provider || 'Builder'} did not return the required JSON contract. No files were changed.`),
+        { code: 'AI_RESPONSE_MALFORMED', provider: draft.provider || null, recoverable: true }
+      );
+    }
     const reviewPromptText = reviewPrompt(opts.task, parsed);
     try {
       const review = await this.complete({ task: 'CODE_REVIEW', prompt: reviewPromptText, json: true, modelRef: pair[1], projectId: opts.projectId });
@@ -149,7 +192,7 @@ export class AIGateway {
     if (!firstProvider) return this.complete({ ...opts, json: true }).then((r) => ({ ...r, json: extractJson(r.text) }));
     const draft = await this.complete({ ...opts, json: true, prompt: `${opts.prompt}\n\nCouncil draft: return JSON only.` });
     const parsed = extractJson(draft.text);
-    if (!parsed || (opts.validateJson && !opts.validateJson(parsed))) throw Object.assign(new Error('Builder returned invalid JSON contract'), { code: 'AI_BAD_JSON' });
+    if (!parsed || (opts.validateJson && !opts.validateJson(parsed))) throw Object.assign(new Error('Builder returned invalid JSON contract'), { code: 'AI_RESPONSE_MALFORMED', recoverable: true });
     return { ...draft, json: parsed, council: { builder: draft.provider, reviewer: null, review: { accept: true, score: 80, issues: [], reason: 'Provider Hub handled the request.' } } };
   }
 
