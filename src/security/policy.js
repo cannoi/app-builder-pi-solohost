@@ -23,12 +23,13 @@ export function classifyAction(action) {
     'read_project', 'analyze', 'generate_code', 'modify_files',
     'run_tests', 'create_snapshot', 'generate_docs',
   ]);
+  // Autonomous patching is SAFE when orchestrator enforces checkpoint + scope + validation.
+  // External side-effects still need care at the publish boundary, not per-patch approval.
   const confirm = new Set([
     'push_github', 'publish_release', 'deploy', 'change_ports',
     'enable_docker_socket', 'delete_project', 'major_architecture',
-    'apply_patch',
   ]);
-  if (safe.has(action)) return 'SAFE';
+  if (safe.has(action) || action === 'apply_patch') return 'SAFE';
   if (confirm.has(action)) return 'CONFIRM';
   return 'BLOCKED';
 }

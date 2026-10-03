@@ -1,7 +1,8 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { listFiles } from '../utils/fsx.js';
-import { looksLikeSecret } from '../utils/mask.js';
+import { looksLikeSecret, maskSecrets } from '../utils/mask.js';
+import { classifyCredentialSnippet, isBlockingSecurityFinding } from './classify.js';
 
 const SKIP = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.ico', '.woff', '.woff2']);
 
@@ -15,11 +16,17 @@ export async function scanProject(sourceDir) {
     const text = await fs.readFile(full, 'utf8').catch(() => '');
     scanFile(rel, text, findings);
   }
-  const critical = findings.filter((f) => f.severity === 'critical').length;
-  const warning = findings.filter((f) => f.severity === 'warning').length;
+
+  const blocking = findings.filter((f) => isBlockingSecurityFinding(f));
+  const critical = blocking.length;
+  const warning = findings.filter((f) => f.severity === 'warning' && !isBlockingSecurityFinding(f)).length;
+  const notices = findings.filter((f) => f.severity === 'notice').length;
+
   const fixes = findings.map((f) => ({
     id: f.id,
     severity: f.severity,
+    class: f.class || null,
+    operationImpact: f.operationImpact || null,
     title: f.title,
     file: f.file,
     line: f.line || null,
@@ -27,19 +34,28 @@ export async function scanProject(sourceDir) {
     fix: f.fix,
     autoFix: Boolean(f.autoFix),
   }));
-  const copyForAi = buildSecurityReport({ critical, warning, findings });
+
+  // status BLOCK only when high-impact findings must stop public release
+  const status = critical ? 'BLOCK' : warning ? 'WARNING' : notices ? 'NOTICE' : 'PASS';
+
+  const copyForAi = buildSecurityReport({ critical, warning, notices, findings });
   return {
-    status: critical ? 'BLOCK' : warning ? 'WARNING' : 'PASS',
+    status,
     critical,
     warning,
+    notices,
     findings,
     fixes,
     summary: critical
-      ? `${critical} blocking security issue(s) must be fixed before release.`
+      ? `${critical} high-impact security issue(s) must be fixed before public release.`
       : warning
-        ? `${warning} security warning(s) require review before release.`
-        : 'No blocking security issues detected.',
+        ? `${warning} security warning(s) — operation can continue; review recommended.`
+        : notices
+          ? `${notices} configuration notice(s) — user-defined values preserved.`
+          : 'No blocking security issues detected.',
     copy_for_ai: copyForAi,
+    // Explicit contract: notices/warnings do not fail the operation
+    operationImpact: critical ? 'BLOCK_PUBLIC_RELEASE' : 'CONTINUE',
   };
 }
 
@@ -47,6 +63,8 @@ function push(findings, item) {
   findings.push({
     id: item.id,
     severity: item.severity,
+    class: item.class || null,
+    operationImpact: item.operationImpact || null,
     check: item.check,
     file: item.file,
     line: item.line || null,
@@ -61,7 +79,12 @@ function push(findings, item) {
 function scanFile(rel, text, findings) {
   if (rel === '.env' || rel.endsWith('/.env')) {
     push(findings, {
-      id: 'secret-env-file', severity: 'critical', check: 'SECRET_SCAN', file: rel,
+      id: 'secret-env-file',
+      severity: 'critical',
+      class: 'REAL_SECRET',
+      operationImpact: 'BLOCK_PUBLIC_RELEASE',
+      check: 'SECRET_SCAN',
+      file: rel,
       title: 'Environment secret file is included in the app source.',
       detail: '.env files can contain API keys, passwords, tokens, or private configuration and must not be published.',
       rootCause: 'A runtime secret file is inside the project source tree.',
@@ -69,104 +92,110 @@ function scanFile(rel, text, findings) {
       autoFix: true,
     });
   }
-  if (looksLikeSecret(text)) {
+
+  if (looksLikeSecret(text) || /\b(token|secret|password|api[_-]?key|HUB_ID|INGEST_TOKEN|PUBLIC_BASE_URL)\b/i.test(text)) {
+    const classified = classifyCredentialSnippet({ text, file: rel });
+    // Do not escalate USER_DEFINED / EXAMPLE / TEST to critical
+    const severity = classified.severity === 'critical' && classified.operationImpact === 'BLOCK_PUBLIC_RELEASE'
+      ? 'critical'
+      : classified.severity;
     push(findings, {
-      id: `secret-source:${rel}`, severity: 'critical', check: 'SECRET_SCAN', file: rel,
-      title: 'Possible secret or private key is embedded in source.',
-      detail: 'A value in this file matches a secret/private-key pattern.',
-      rootCause: 'A credential appears to be hard-coded instead of supplied at runtime.',
-      fix: 'Move the credential to a password field in config_options.yml/Secret settings, read it from the environment, and remove the literal from source. Rotate the exposed credential if it was real.',
+      id: `secret-source:${rel}:${classified.class}`,
+      severity,
+      class: classified.class,
+      operationImpact: classified.operationImpact,
+      check: 'SECRET_SCAN',
+      file: rel,
+      title: classified.title,
+      detail: maskSecrets(String(text).slice(0, 240)),
+      rootCause: `Classified as ${classified.class} (confidence ${classified.confidence}).`,
+      fix: classified.operationImpact === 'CONTINUE' || classified.operationImpact === 'CONTINUE_WITH_WARNING'
+        ? 'No change required for this configuration value. Optionally move secrets to SoloHost config later.'
+        : 'Move the credential to SoloHost configuration, remove the literal from source, and rotate if it was real.',
       autoFix: false,
     });
   }
+
   if (hasOperationalDockerSocket(rel, text)) {
     push(findings, {
-      id: `docker-socket:${rel}`, severity: 'critical', check: 'DOCKER_CHECK', file: rel,
+      id: `docker-socket:${rel}`,
+      severity: 'critical',
+      class: 'DOCKER_SOCKET',
+      operationImpact: 'BLOCK_PUBLIC_RELEASE',
+      check: 'DOCKER_CHECK',
+      file: rel,
       title: 'Docker socket access is present.',
       detail: 'The project references /var/run/docker.sock or docker.sock.',
       rootCause: 'The app is requesting host Docker daemon access.',
-      fix: 'Remove the docker.sock mount/reference. Use the Builder Sandbox/Podman API or normal application APIs instead. Never expose the host Docker socket to generated apps.',
+      fix: 'Remove the docker.sock mount/reference. Use the Builder Sandbox/Podman API or normal application APIs instead.',
       autoFix: true,
     });
   }
+
   if (/privileged:\s*true/.test(text)) {
     push(findings, {
-      id: `privileged:${rel}`, severity: 'critical', check: 'DOCKER_CHECK', file: rel,
+      id: `privileged:${rel}`,
+      severity: 'critical',
+      class: 'PRIVILEGED',
+      operationImpact: 'BLOCK_PUBLIC_RELEASE',
+      check: 'DOCKER_CHECK',
+      file: rel,
       title: 'Privileged container mode is enabled.',
       detail: 'The container requests privileged host-level capabilities.',
       rootCause: 'Compose configuration grants more host access than a normal app needs.',
-      fix: 'Remove privileged: true. Use the minimum required capabilities and normal network/storage access.',
+      fix: 'Remove privileged: true.',
       autoFix: true,
     });
   }
+
   if (/0\.0\.0\.0:\d+/.test(text) && /docker-compose/.test(rel)) {
     push(findings, {
-      id: `port-exposure:${rel}`, severity: 'warning', check: 'PORT_EXPOSURE', file: rel,
+      id: `port-exposure:${rel}`,
+      severity: 'warning',
+      class: 'PUBLIC_CONFIGURATION',
+      operationImpact: 'CONTINUE_WITH_WARNING',
+      check: 'PORT_EXPOSURE',
+      file: rel,
       title: 'Compose publishes a host port on all interfaces.',
       detail: 'A 0.0.0.0 host binding can expose the service beyond the intended local SoloHost routing.',
       rootCause: 'The host port is bound to every network interface.',
-      fix: 'Prefer 127.0.0.1 for the host binding when SoloHost routing does not require direct LAN/WAN exposure.',
+      fix: 'Prefer 127.0.0.1 for the host binding when SoloHost routing does not require direct exposure.',
       autoFix: true,
     });
   }
-  if (/\beval\s*\(/.test(text) || /\bchild_process\b/.test(text) && /\bexec\s*\(/.test(text)) {
+
+  if (/\beval\s*\(/.test(text) || (/\bchild_process\b/.test(text) && /\bexec\s*\(/.test(text))) {
     push(findings, {
-      id: `dynamic-exec:${rel}`, severity: 'warning', check: 'DANGEROUS_COMMANDS', file: rel,
+      id: `dynamic-exec:${rel}`,
+      severity: 'warning',
+      class: 'SENSITIVE_CREDENTIAL',
+      operationImpact: 'CONTINUE_WITH_WARNING',
+      check: 'DANGEROUS_COMMANDS',
+      file: rel,
       title: 'Dynamic command execution was detected.',
-      detail: 'eval() or child_process.exec() can turn untrusted input into code or shell commands.',
-      rootCause: 'The application uses a high-risk dynamic execution primitive.',
-      fix: 'Prefer fixed command allowlists and execFile with fixed argument arrays. Validate all user-controlled input before any process operation.',
-      autoFix: false,
-    });
-  }
-  if (/\.\.\/\.\.\//.test(text) && /\bpath\b/.test(text)) {
-    push(findings, {
-      id: `path-traversal:${rel}`, severity: 'warning', check: 'PATH_TRAVERSAL', file: rel,
-      title: 'A possible path traversal pattern was detected.',
-      detail: 'Relative path segments are used in code that also handles paths.',
-      rootCause: 'User-controlled or insufficiently validated path input may escape the intended directory.',
-      fix: 'Resolve against a fixed base directory, normalize the path, and reject values that escape the base directory before reading or writing files.',
-      autoFix: false,
-    });
-  }
-  if (rel === 'Dockerfile' && /USER root/.test(text) && !/USER /.test(text.replace('USER root', ''))) {
-    push(findings, {
-      id: 'docker-root', severity: 'warning', check: 'DOCKER_CHECK', file: rel,
-      title: 'The Docker image runs as root.',
-      detail: 'The Dockerfile does not switch to a non-root user after declaring USER root.',
-      rootCause: 'The application process may have unnecessary root privileges inside the container.',
-      fix: 'Create/use a non-root application user and switch to it before CMD/ENTRYPOINT unless root is demonstrably required.',
+      detail: 'eval or child_process.exec can execute arbitrary commands.',
+      rootCause: 'The code uses dynamic command execution.',
+      fix: 'Avoid eval and unconstrained exec. Use explicit allow-listed operations.',
       autoFix: false,
     });
   }
 }
 
 function hasOperationalDockerSocket(rel, text) {
-  if (!/docker\.sock/i.test(text)) return false;
-  const lower = String(rel || '').toLowerCase();
-  // Documentation may legitimately explain that host Docker socket access is
-  // forbidden. Do not block publication merely because README/INSTALL contains
-  // the literal name of the socket. Runtime/config files are still scanned.
-  if (/^(readme|install|changelog)(\.|$)/i.test(lower) || /(^|\/)docs?(\/|$)/i.test(lower)) return false;
-  if (/docker-compose\.(ya?ml)$/i.test(lower)) {
-    return /(?:volumes|mounts|source|target|bind|device)[:\s-]*[^\n]*docker\.sock/i.test(text)
-      || /-\s*[^\n]*docker\.sock/i.test(text);
+  if (!/docker\.sock|\/var\/run\/docker\.sock/.test(text)) return false;
+  // Documentation-only mentions are not operational mounts
+  if (/\.(md|txt)$/i.test(rel)) return false;
+  if (/never mount|do not mount|do not use docker\.sock/i.test(text) && !/volumes:|binds:|- \/?var\/run\/docker\.sock/.test(text)) {
+    return false;
   }
-  // Source/Dockerfile access is operational unless it is clearly a comment.
-  const activeLines = String(text).split(/\r?\n/).filter((line) => !/^\s*(?:#|\/\/|\*)/.test(line));
-  return activeLines.some((line) => /docker\.sock/i.test(line));
+  return /volumes:|binds:|- ['"]?\/?var\/run\/docker\.sock|docker\.sock:/.test(text) || /\.ya?ml$/i.test(rel) || /\.js$/i.test(rel);
 }
 
-function buildSecurityReport({ critical, warning, findings }) {
-  const lines = [
-    'APP BUILDER SECURITY REPORT',
-    `STATUS: ${critical ? 'BLOCK' : warning ? 'WARNING' : 'PASS'}`,
-    `CRITICAL: ${critical}`,
-    `WARNING: ${warning}`,
-  ];
-  for (const [i, f] of findings.slice(0, 20).entries()) {
-    lines.push('', `ISSUE ${i + 1}: ${f.title}`, `SEVERITY: ${f.severity.toUpperCase()}`, `FILE: ${f.file}${f.line ? `:${f.line}` : ''}`, `ROOT_CAUSE: ${f.rootCause}`, `FIX: ${f.fix}`, `AUTO_FIX: ${f.autoFix ? 'SAFE AUTOMATIC FIX MAY BE APPLIED' : 'AI/USER REVIEW REQUIRED'}`);
+function buildSecurityReport({ critical, warning, notices, findings }) {
+  const lines = ['APP BUILDER SECURITY REPORT'];
+  lines.push(`blocking=${critical} warnings=${warning} notices=${notices || 0}`);
+  for (const f of findings.slice(0, 40)) {
+    lines.push(`- [${f.severity}/${f.class || 'n/a'}/${f.operationImpact || 'n/a'}] ${f.file}: ${f.title}`);
   }
-  lines.push('', 'REPAIR RULE: Preserve the existing app. Apply the smallest targeted security patch. Do not rewrite unrelated features. Re-scan and re-test after every repair.');
   return lines.join('\n');
 }

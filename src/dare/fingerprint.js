@@ -69,6 +69,17 @@ export function fingerprintError(text = '') {
   if (/not ready|health check.*fail|health.*unavailable/i.test(t)) return 'HTTP_NOT_READY';
   if (/typeerror: cannot read propert/i.test(t)) return 'APP_LOGIC_UNKNOWN';
 
+  if (/(?:rate limit|quota|429|resource_exhausted|insufficient_quota)/i.test(t) && /(?:openai|gemini|deepseek|anthropic|provider|ai)/i.test(t)) {
+    return 'AI_PROVIDER_QUOTA';
+  }
+  if (/(?:timeout|ETIMEDOUT|socket hang up)/i.test(t) && /(?:openai|gemini|deepseek|anthropic|provider)/i.test(t)) {
+    return 'AI_PROVIDER_TIMEOUT';
+  }
+  if (/(?:unauthorized|invalid api key|401).*?(?:openai|gemini|deepseek|anthropic)/i.test(t)
+      || /(?:openai|gemini|deepseek|anthropic).*?(?:unauthorized|invalid api key|401)/i.test(t)) {
+    return 'AI_PROVIDER_AUTH';
+  }
+
   return t.trim() ? 'UNKNOWN' : 'NONE';
 }
 

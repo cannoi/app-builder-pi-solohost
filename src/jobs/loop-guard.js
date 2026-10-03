@@ -24,3 +24,19 @@ export function repairFingerprint({ feedback = '', runtime = {} } = {}) {
   if (fp && fp !== 'NONE' && fp !== 'UNKNOWN') return fp;
   return `USER:${String(feedback || '').toLowerCase().replace(/\d{2,}/g, '#').replace(/https?:\/\/\S+/g, 'URL').replace(/\s+/g, ' ').trim().slice(0, 900)}`;
 }
+
+/** Stop AI/DARE cycles when the same fingerprint produces no validation progress. */
+export function shouldStopNoProgress({ fingerprint, previousFingerprint, attempt = 0, validationImproved = false, sourceChanged = false, maxAttempts = 2 } = {}) {
+  if (validationImproved || (sourceChanged && fingerprint !== previousFingerprint)) return false;
+  if (!fingerprint) return false;
+  if (fingerprint === previousFingerprint && Number(attempt) >= maxAttempts) return true;
+  return false;
+}
+
+export function noChangeResult(reason = 'AI produced no filesystem change.') {
+  return {
+    terminalState: 'NO_CHANGE',
+    reason,
+    next: 'Provide a clearer request, different evidence, or a required external input.',
+  };
+}
