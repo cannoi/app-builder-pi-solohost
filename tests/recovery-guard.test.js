@@ -116,3 +116,12 @@ test('I/J: INGEST_TOKEN and HUB_ID classify as CONTINUE', () => {
 test('extractJson accepts already-parsed objects', () => {
   assert.deepEqual(extractJson({ a: 1 }), { a: 1 });
 });
+
+test('AI patch may edit .env.example but still protects real .env files', async () => {
+  const fs = await import('node:fs/promises');
+  const path = await import('node:path');
+  const source = await fs.readFile(path.resolve('src/jobs/pipeline.js'), 'utf8');
+  assert.match(source, /\.env\$/);
+  assert.match(source, /id_rsa/);
+  assert.match(source, /protected secret file/);
+});

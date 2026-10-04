@@ -1968,8 +1968,11 @@ export function registerPipeline(app) {
       if (!rel || rel.startsWith('/') || rel.includes('..') || /^(?:data|workspace|projects)\//i.test(rel)) {
         throw new Error(`AI patch contains an unsafe path: ${rel}`);
       }
-      if (/^(?:\.env(?:\.|$)|.*\/(?:\.env(?:\.|$)|id_rsa(?:\.|$)|private[_-]?key(?:\.|$)))/i.test(rel)) {
-        throw new Error(`AI patch attempted to modify a protected file: ${rel}`);
+      // Real secret files remain protected, but example/template env files are safe
+      // documentation/configuration artifacts and must be editable. Blocking .env.*
+      // indiscriminately caused legitimate fixes to .env.example to deadlock Improve.
+      if (/^(?:\.env$|.*\/(?:\.env$|id_rsa(?:\.|$)|private[_-]?key(?:\.|$)))/i.test(rel)) {
+        throw new Error(`AI patch attempted to modify a protected secret file: ${rel}`);
       }
     }
     const snapshot = await snapshotStore.create(project, `before-${reason}`);

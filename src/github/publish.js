@@ -40,7 +40,7 @@ export async function publishToGitHub({ github, project, sourceDir, version = '0
   // which could leave GitHub Actions building an older tag than the installer used.
   if (refreshWorkflow) await writeGithubWorkflow(sourceDir, { ...project, version });
   step('validating', 'Validating…');
-  const validation = await validateReleaseProject(sourceDir);
+  const validation = await validateReleaseProject(sourceDir, { context: 'source' });
   if (!validation.ok) {
     report.code = 'PROJECT_INVALID';
     report.error = (validation.errors || []).join(' ');

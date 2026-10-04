@@ -235,6 +235,22 @@ test('publish error classes stop without guessing the owner', async () => {
   assert.equal(classifyPublishError(new Error('git push rejected')).code, 'git_push');
 });
 
+test('source validation allows build compose while SoloHost package validation rejects it', async () => {
+  const { validateReleaseProject } = await import('../src/github/git-publisher.js');
+  const root = '/tmp/paf-source-vs-solohost-validation';
+  fs.rmSync(root, { recursive: true, force: true });
+  fs.mkdirSync(root, { recursive: true });
+  fs.writeFileSync(`${root}/Dockerfile`, 'FROM node:24-alpine\nCMD [\"node\",\"index.js\"]\n');
+  fs.writeFileSync(`${root}/docker-compose.yml`, 'services:\n  app:\n    build: .\n');
+  fs.writeFileSync(`${root}/index.js`, 'console.log(\"ok\")');
+  const source = await validateReleaseProject(root, { context: 'source' });
+  assert.equal(source.ok, true);
+  const packageResult = await validateReleaseProject(root, { context: 'solohost-package' });
+  assert.equal(packageResult.ok, false);
+  assert.match(packageResult.errors.join(' '), /published Docker image|image:/i);
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
 test('publish validation blocks secrets and missing Docker files', async () => {
   const { validateReleaseProject } = await import('../src/github/git-publisher.js');
   const root = '/tmp/paf-secret-publish';

@@ -65,7 +65,7 @@ export function classifyPublishError(err) {
   return { code: 'api', message: m.slice(0, 220) || 'GitHub upload failed.', fix: 'I could not identify a safe automatic fix. Open the GitHub repository and check token access, repository permissions, and Actions workflow permissions. If needed, use Download Project as the manual fallback.', guide: githubSetupGuide() };
 }
 
-export async function validateReleaseProject(sourceDir) {
+export async function validateReleaseProject(sourceDir, { context = 'source' } = {}) {
   const files = (await listFiles(sourceDir).catch(() => [])).filter((f) => !SKIP.test(f));
   const errors = [];
   if (!files.length) errors.push('The project has no files.');
@@ -81,7 +81,15 @@ export async function validateReleaseProject(sourceDir) {
   if (dockerfile && !/FROM\s+\S+/i.test(dockerfile)) errors.push('Dockerfile has no FROM image.');
   if (dockerfile && /docker\.sock/i.test(dockerfile)) errors.push('Dockerfile must not mount the Docker socket.');
   if (compose && /docker\.sock|privileged\s*:\s*true|cap_add\s*:|security_opt\s*:|network_mode\s*:\s*host|userns_mode\s*:\s*host|devices\s*:/i.test(compose)) errors.push('SoloHost package contains a blocked or unsafe Docker setting (for example docker.sock or privileged mode). Remove it before publishing.');
-  if (compose && /(^|\n)\s*build\s*:/i.test(compose)) errors.push('SoloHost does not build images from the package. Use a published Docker image instead.');
+  // Source repositories may legitimately contain a build: section because GitHub Actions
+  // builds the image before SoloHost installs it. Only the generated SoloHost install
+  // artifact is required to use image: exclusively.
+  if (context === 'solohost-package' && compose && /build\s*:/i.test(compose)) {
+    errors.push('SoloHost install package must use a published Docker image. Remove build: and use image: ghcr.io/OWNER/REPOSITORY:VERSION.');
+  }
+  if (context === 'solohost-package' && compose && !/image\s*:/i.test(compose)) {
+    errors.push('SoloHost install package must declare a published Docker image with image:.');
+  }
   const scan = await scanProject(sourceDir);
   if (scan.critical > 0) errors.push('A secret or critical security issue is still in the project.');
   return { ok: errors.length === 0, errors, files, scan };
@@ -177,7 +185,7 @@ export async function publishWithGit({ token, repoName, sourceDir, version = '0.
     const preflight = await prepareReleaseContract({ sourceDir, owner, repo: name, version, project: { slug: name } });
     if (preflight.changed.length) step('preflight', `✓ Added ${preflight.changed.join(', ')} without overwriting existing app files.`);
     step('validating', 'Validating…');
-    const validation = await validateReleaseProject(sourceDir);
+    const validation = await validateReleaseProject(sourceDir, { context: 'source' });
     report.files = validation.files.length;
     if (!validation.ok) {
       report.code = validation.scan?.critical ? 'secret' : 'PROJECT_INVALID';
