@@ -18,7 +18,108 @@ const MAX_AUTO_UPGRADE_BYTES = 6 * 1024 * 1024;
 export function isUpgradePauseError(err) {
   const code = String(err?.code || '');
   const message = String(err?.message || err || '');
-  return code === 'AI_UNAVAILABLE' || code === 'AI_BAD_JSON' || code === 'AI_RESPONSE_MALFORMED' || code === 'AI_NO_CHANGE' || /HTTP (408|409|425|429|500|502|503|504)\b|timeout|timed out|fetch failed|ECONNRESET|ECONNREFUSED|ENOTFOUND|UNAVAILABLE|overloaded|temporar|invalid JSON|FORMAT_ERROR/i.test(message);
+  // AI_NO_CHANGE is NOT a provider pause — it means the plan has no file changes.
+  // Empty plans must resolve to NO_CHANGE / REPLAN, never PAUSED → RESUME loops.
+  if (code === 'AI_NO_CHANGE' || /contains no file changes|did not propose a code change/i.test(message)) return false;
+  return code === 'AI_UNAVAILABLE' || code === 'AI_BAD_JSON' || code === 'AI_RESPONSE_MALFORMED'
+    || /HTTP (408|409|425|429|500|502|503|504)\b|timeout|timed out|fetch failed|ECONNRESET|ECONNREFUSED|ENOTFOUND|UNAVAILABLE|overloaded|temporar|invalid JSON|FORMAT_ERROR/i.test(message);
+}
+
+const MAX_NO_CHANGE_REPLANS = 2;
+
+/**
+ * Resolve an upgrade plan that has zero file changes.
+ * Returns a terminal no-change result or a replan result with files.
+ * Never pauses and never creates a fake checkpoint.
+ */
+export async function resolveEmptyUpgradePlan({
+  project, projects, ai, plan, request = '', emit = () => {}, replanCount = 0,
+} = {}) {
+  const files = normalizeArray(plan?.files).filter((f) => f && f.path && typeof f.content === 'string');
+  if (files.length) return { ok: true, files, plan, noChange: false, replanned: false };
+
+  const root = String(plan?.root_cause || '');
+  const rec = String(plan?.recommendation || '');
+  const expected = String(plan?.expected_result || '');
+  const blob = `${root}\n${rec}\n${expected}`;
+  const claimsChangeNeeded = /\b(need|needed|missing|broken|fix|harmoniz|must|should|require|incomplete|outdated|inconsist|mismatch|not implement)/i.test(blob);
+  const claimsAlreadyOk = /\b(fully complete|already (complete|implemented|present|correct|up to date)|no (code )?change|not required|nothing to (change|fix)|works as (expected|designed))/i.test(blob);
+
+  // Case: diagnosis says app is already fine → complete without change
+  if (claimsAlreadyOk || !claimsChangeNeeded) {
+    emit('verify', 'done', '✓ Upgrade analyzed. Existing functionality verified. No code changes were required.');
+    const finished = await completeUpgradeSession(projects, project, {
+      finalHash: plan?.workingHash || null,
+      changedFiles: [],
+      completedSteps: ['diagnose', 'verify'],
+      status: 'completed_no_change',
+    }).catch(() => null);
+    await projects.saveMetadata(project, 'upgrade-plan.json', {
+      ...plan, files: [], resolvedAs: 'NO_CHANGE_REQUIRED', resolvedAt: new Date().toISOString(),
+    }).catch(() => {});
+    return {
+      ok: true,
+      files: [],
+      plan,
+      noChange: true,
+      terminalState: 'COMPLETED_NO_CHANGE',
+      session: finished,
+      brief: 'Upgrade analyzed. No code changes were required. Application remains unchanged.',
+    };
+  }
+
+  // Case: diagnosis claims a problem but files=[] → replan (bounded)
+  if (replanCount >= MAX_NO_CHANGE_REPLANS) {
+    emit('verify', 'done', '✓ Upgrade finished without code changes after bounded replan. Application remains unchanged.');
+    const finished = await completeUpgradeSession(projects, project, {
+      finalHash: null, changedFiles: [], completedSteps: ['diagnose', 'verify'], status: 'completed_no_change',
+    }).catch(() => null);
+    await projects.saveMetadata(project, 'upgrade-plan.json', {
+      ...plan, files: [], resolvedAs: 'DONE_WITHOUT_CHANGE', replanCount, resolvedAt: new Date().toISOString(),
+    }).catch(() => {});
+    return {
+      ok: true,
+      files: [],
+      plan,
+      noChange: true,
+      terminalState: 'COMPLETED_NO_CHANGE',
+      session: finished,
+      brief: 'Upgrade finished without code changes after replan. Application remains unchanged.',
+    };
+  }
+
+  emit('diagnose', 'running', `Plan had zero files while diagnosis claimed a change is needed. Replanning (${replanCount + 1}/${MAX_NO_CHANGE_REPLANS})…`);
+  const replanPromptExtra = `
+PREVIOUS PLAN WAS INVALID:
+- root_cause/recommendation claimed a code change is required
+- but files was empty
+This is NOT a provider failure.
+Re-evaluate the request against the actual source.
+If the requested capability is already implemented: return files:[] and root_cause explaining NO_CHANGE_REQUIRED.
+If it is missing: return the smallest concrete file changes required (path + full content).
+Do not return an empty file list when your diagnosis says a code change is required.
+`;
+  const next = await diagnoseUpgradeRequest({
+    project, projects, ai,
+    request: `${String(request || plan?.request || '').trim()}\n\n${replanPromptExtra}`,
+    ruleText: '',
+  });
+  await projects.saveMetadata(project, 'upgrade-plan.json', {
+    ...next, request: request || plan?.request || '', createdAt: new Date().toISOString(), replanCount: replanCount + 1,
+  });
+  const nextFiles = normalizeArray(next?.files).filter((f) => f && f.path && typeof f.content === 'string');
+  if (nextFiles.length) {
+    emit('diagnose', 'done', `Replan produced ${nextFiles.length} file change(s). Applying…`);
+    return { ok: true, files: nextFiles, plan: next, noChange: false, replanned: true, replanCount: replanCount + 1 };
+  }
+  // Still empty → recurse with incremented count
+  return resolveEmptyUpgradePlan({
+    project, projects, ai, plan: next, request, emit, replanCount: replanCount + 1,
+  });
+}
+
+export function planHasFileChanges(plan) {
+  return normalizeArray(plan?.files).some((f) => f && f.path && typeof f.content === 'string');
 }
 
 
@@ -128,8 +229,21 @@ export async function beginUpgradeSession({ project, projects, request, mode = '
 export async function resumeUpgrade({ project, projects, snapshots, ai, request = '', emit = () => {} }) {
   const session = await readUpgradeSession(projects, project);
   if (!session?.resumable) throw new Error('No resumable Upgrade session is available.');
-  const plan = await projects.readMetadata(project, 'upgrade-plan.json', null);
+  let plan = await projects.readMetadata(project, 'upgrade-plan.json', null);
   const req = String(request || session.request || '').trim();
+  // Guard: never re-apply an empty plan (prevents PAUSE→RESUME→PAUSE loop)
+  if (plan && !planHasFileChanges(plan)) {
+    const resolved = await resolveEmptyUpgradePlan({
+      project, projects, ai, plan, request: req, emit,
+      replanCount: Number(plan.replanCount || 0),
+    });
+    if (resolved.noChange) {
+      projects.setStatus?.(project, 'UPGRADE_READY');
+      return { projectId: project.id, ...resolved, needsApproval: false };
+    }
+    plan = resolved.plan;
+    // fall through to apply with replanned files
+  }
   if (session.phase === 'verify' && session.workingHash && plan) {
     const finished = await completeUpgradeSession(projects, project, { finalHash: session.workingHash, changedFiles: session.changedFiles || [], completedSteps: ['apply', 'verify'] });
     emit('verify', 'done', `Upgrade resumed from the saved verification checkpoint. ${(session.changedFiles || []).length} file(s) were already verified.`);

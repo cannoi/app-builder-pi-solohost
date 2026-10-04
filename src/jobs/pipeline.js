@@ -22,7 +22,7 @@ import { runDare, formatDareReport } from '../dare/engine.js';
 import { shouldBlockRepeatedAction, nextRepeatState, repairFingerprint } from './loop-guard.js';
 import { mergeVerificationState } from './verification.js';
 import { maskSecrets } from '../utils/mask.js';
-import { inspectUpgrade, diagnoseUpgradeRequest, applyUpgrade, runRuleUpgrade, beginUpgradeSession, resumeUpgrade, isUpgradePauseError } from '../upgrade/engine.js';
+import { inspectUpgrade, diagnoseUpgradeRequest, applyUpgrade, runRuleUpgrade, beginUpgradeSession, resumeUpgrade, isUpgradePauseError, resolveEmptyUpgradePlan, planHasFileChanges } from '../upgrade/engine.js';
 import { diagnoseProject, buildAdvisorReport } from '../diagnose/project.js';
 import { refreshProjectBrain, rememberFailedRepair, wasRepairTried } from '../diagnose/brain.js';
 
@@ -178,7 +178,7 @@ export function registerPipeline(app) {
     }
     emit('diagnose', 'running', 'Inspecting the real app and creating the Upgrade plan…');
     try {
-      const plan = await diagnoseUpgradeRequest({ project, projects, ai, request, ruleText: '' });
+      let plan = await diagnoseUpgradeRequest({ project, projects, ai, request, ruleText: '' });
       await projects.saveMetadata(project, 'upgrade-plan.json', { ...plan, request, createdAt: new Date().toISOString() });
       await projects.updateMetadata?.(project, 'upgrade-session.json', {});
       const secretStop = /secret|credential|wallet|private key/i.test(String(plan.needs_user_action || ''));
@@ -186,6 +186,29 @@ export function registerPipeline(app) {
         projects.setStatus(projects.get(project.id), 'UPGRADE_WAITING_INPUT');
         emit('recommend', 'done', plan.needs_user_action);
         return { projectId: project.id, plan, needsUserAction: true, needsApproval: false, brief: plan.needs_user_action };
+      }
+      // Empty plan must resolve to NO_CHANGE / REPLAN — never PAUSE
+      if (!planHasFileChanges(plan)) {
+        const resolved = await resolveEmptyUpgradePlan({
+          project: projects.get(project.id), projects, ai, plan, request, emit,
+          replanCount: Number(plan.replanCount || 0),
+        });
+        if (resolved.noChange) {
+          projects.setStatus(projects.get(project.id), 'UPGRADE_READY');
+          return {
+            projectId: project.id,
+            plan: resolved.plan || plan,
+            execution: { files: [], noChange: true },
+            session: resolved.session || await projects.readMetadata(project, 'upgrade-session.json', {}),
+            needsApproval: false,
+            brief: resolved.brief || 'Upgrade analyzed. No code changes were required.',
+            next: 'Open preview or Publish if ready.',
+            terminalState: 'COMPLETED_NO_CHANGE',
+          };
+        }
+        // Replan produced files — apply them
+        plan = resolved.plan;
+        await projects.saveMetadata(project, 'upgrade-plan.json', { ...plan, request, createdAt: new Date().toISOString() });
       }
       emit('patch', 'running', 'Applying the upgrade. No extra confirmation is required.');
       const applied = await applyUpgrade({ project: projects.get(project.id), projects, snapshots, plan, request, approved: true, ruleExecution: true });
@@ -195,6 +218,43 @@ export function registerPipeline(app) {
       emit('verify', 'done', `Upgrade verified. ${applied.files.length} file(s) changed. Rollback is available if you want the previous version.`);
       return { projectId: project.id, plan, execution: applied, session: await projects.readMetadata(project, 'upgrade-session.json', {}), needsApproval: false, brief: plan.recommendation || 'Upgrade completed.', next: 'Open preview or Publish. Use Rollback if this is not what you wanted.' };
     } catch (err) {
+      // AI_NO_CHANGE is never a provider pause — resolve empty plan instead of looping
+      if (err?.code === 'AI_NO_CHANGE' || /contains no file changes/i.test(String(err?.message || ''))) {
+        const currentPlan = await projects.readMetadata(project, 'upgrade-plan.json', {});
+        const resolved = await resolveEmptyUpgradePlan({
+          project: projects.get(project.id), projects, ai, plan: currentPlan, request, emit,
+          replanCount: Number(currentPlan?.replanCount || 0),
+        });
+        if (resolved.noChange) {
+          projects.setStatus(projects.get(project.id), 'UPGRADE_READY');
+          return {
+            projectId: project.id,
+            plan: resolved.plan || currentPlan,
+            execution: { files: [], noChange: true },
+            session: resolved.session || await projects.readMetadata(project, 'upgrade-session.json', {}),
+            needsApproval: false,
+            brief: resolved.brief || 'Upgrade analyzed. No code changes were required.',
+            terminalState: 'COMPLETED_NO_CHANGE',
+          };
+        }
+        // Replan produced files on catch path — apply once
+        try {
+          const applied = await applyUpgrade({ project: projects.get(project.id), projects, snapshots, plan: resolved.plan, request, approved: true, ruleExecution: true });
+          projects.setStatus(projects.get(project.id), 'UPGRADE_READY');
+          emit('verify', 'done', `Upgrade verified after replan. ${(applied.files || []).length} file(s) changed.`);
+          return { projectId: project.id, plan: resolved.plan, execution: applied, needsApproval: false, brief: resolved.plan?.recommendation || 'Upgrade completed after replan.' };
+        } catch (applyErr) {
+          if (isUpgradePauseError(applyErr)) {
+            const sessionPaused = await projects.readMetadata(project, 'upgrade-session.json', {});
+            await projects.saveMetadata(project, 'upgrade-session.json', { ...sessionPaused, status: 'paused', resumable: true, lastError: { code: String(applyErr.code || 'PAUSED_AI_UNAVAILABLE'), message: String(applyErr.message || applyErr).slice(0, 1200), at: new Date().toISOString() }, updatedAt: new Date().toISOString() });
+            projects.setStatus(projects.get(project.id), 'UPGRADE_READY');
+            emit('pause', 'done', `⏸ Provider unavailable. Verified work is preserved. Resume when ready.`);
+            return { projectId: project.id, paused: true, resumable: true, session: await projects.readMetadata(project, 'upgrade-session.json', {}), brief: 'Upgrade paused: provider unavailable. Verified work preserved.' };
+          }
+          projects.setStatus(projects.get(project.id), 'UPGRADE_READY');
+          throw applyErr;
+        }
+      }
       if (isUpgradePauseError(err)) {
         const sessionPaused = await projects.readMetadata(project, 'upgrade-session.json', {});
         await projects.saveMetadata(project, 'upgrade-session.json', { ...sessionPaused, status: 'paused', resumable: true, lastError: { code: String(err.code || 'PAUSED_AI_UNAVAILABLE'), message: String(err.message || err).slice(0, 1200), at: new Date().toISOString() }, updatedAt: new Date().toISOString() });
@@ -235,7 +295,7 @@ export function registerPipeline(app) {
         const current = await projects.readMetadata(project, 'upgrade-session.json', {});
         await projects.saveMetadata(project, 'upgrade-session.json', { ...current, status: 'paused', resumable: true, lastError: { code: String(err.code || 'PAUSED_AI_UNAVAILABLE'), message: String(err.message || err).slice(0, 1200), at: new Date().toISOString() }, updatedAt: new Date().toISOString() });
         projects.setStatus(projects.get(project.id), 'UPGRADE_READY');
-        emit('pause', 'done', `⏸ Provider unavailable. Verified work is preserved. Resume will continue from ${current.currentStep || 'the saved step'}.`);
+        emit('pause', 'done', `⏸ AI provider temporarily unavailable. Verified work is preserved. Resume will continue from ${current.currentStep || 'the saved step'}.`);
         return { projectId: project.id, paused: true, resumable: true, session: await projects.readMetadata(project, 'upgrade-session.json', {}), brief: 'Upgrade remains paused and resumable. Verified work was preserved.' };
       }
       const currentSession = await projects.readMetadata(project, 'upgrade-session.json', {});
@@ -248,8 +308,20 @@ export function registerPipeline(app) {
   jobs.on('upgrade_apply', async (job, { emit }) => {
     const project = mustProject(job.payload.projectId);
     projects.setStatus(project, 'UPGRADING');
+    let plan = job.payload.plan || await projects.readMetadata(project, 'upgrade-plan.json', {});
+    if (!planHasFileChanges(plan)) {
+      const resolved = await resolveEmptyUpgradePlan({
+        project: projects.get(project.id), projects, ai, plan,
+        request: job.payload.request || plan.request || '', emit,
+        replanCount: Number(plan.replanCount || 0),
+      });
+      projects.setStatus(projects.get(project.id), 'UPGRADE_READY');
+      if (resolved.noChange) {
+        return { ...resolved, files: [], brief: resolved.brief || 'No code changes were required.' };
+      }
+      plan = resolved.plan;
+    }
     emit('patch', 'running', 'Applying the saved Upgrade plan…');
-    const plan = job.payload.plan || await projects.readMetadata(project, 'upgrade-plan.json', {});
     const result = await applyUpgrade({ project: projects.get(project.id), projects, snapshots, plan, request: job.payload.request || plan.request || '', approved: job.payload.approved === true });
     projects.setStatus(projects.get(project.id), 'UPGRADE_READY');
     emit('verify', 'done', `Upgrade verified. ${result.files.length} file(s) changed. Ready for release or rollback.`);

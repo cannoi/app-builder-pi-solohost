@@ -88,14 +88,15 @@ export async function pauseUpgradeSession(projects, project, error = {}) {
 export async function resumeUpgradeSession(projects, project) {
   const current = await readUpgradeSession(projects, project);
   if (!current) throw new Error('No resumable Upgrade session was found.');
-  if (!current.resumable || ['completed', 'rolled_back'].includes(current.status)) throw new Error('This Upgrade session cannot be resumed.');
+  if (!current.resumable || ['completed', 'completed_no_change', 'rolled_back'].includes(current.status)) throw new Error('This Upgrade session cannot be resumed.');
   return updateUpgradeSession(projects, project, { status: 'running', lastError: null });
 }
 
 export async function completeUpgradeSession(projects, project, patch = {}) {
+  const status = patch.status === 'completed_no_change' ? 'completed_no_change' : 'completed';
   return updateUpgradeSession(projects, project, {
     ...patch,
-    status: 'completed',
+    status,
     resumable: false,
     phase: 'complete',
     finishedAt: now(),
