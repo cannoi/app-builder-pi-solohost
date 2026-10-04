@@ -1,3 +1,4 @@
+import { collectProjectContextText } from '../services/project-context-resolver.js';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { sha256, fileClass } from '../utils/hash.js';
@@ -641,15 +642,8 @@ function buildKnowledgeMap(project, stack, state, manifest, repairs) {
 }
 
 async function relevantContext(sourceDir, request) {
-  const files = await listFiles(sourceDir);
-  const keywords = String(request).toLowerCase().split(/[^a-z0-9_-]+/i).filter((x) => x.length > 3).slice(0, 12);
-  const selected = files.filter((f) => /package\.json|Dockerfile|compose|config|route|api|server|app|index|readme/i.test(f) || keywords.some((k) => f.toLowerCase().includes(k))).slice(0, 40);
-  const parts = [];
-  for (const rel of selected) {
-    const text = await fs.readFile(path.join(sourceDir, rel), 'utf8').catch(() => '');
-    if (text) parts.push(`FILE ${rel}\n${text.slice(0, 12000)}`);
-  }
-  return parts.join('\n\n').slice(0, 100000);
+  // Unified authoritative snapshot (shared with Ask / Improve / Chat)
+  return collectProjectContextText(sourceDir, String(request || ''), 'upgrade', 48000);
 }
 
 async function fileManifest(sourceDir) {

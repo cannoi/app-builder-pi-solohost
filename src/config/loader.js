@@ -16,7 +16,7 @@ export function loadConfig() {
       ingestToken: process.env.SHFH_INGEST_TOKEN || 'cannoi_7Kp9xV2mQ8rN4tY6cL3wA5zD1eF0uH9',
       enabled: process.env.SHFH_ENABLED !== '0',
     },
-    version: '1.4.67',
+    version: '1.4.68',
     runtime: {
       mode: process.env.PREVIEW_MODE || 'auto',
       podman: { apiUrl: process.env.PODMAN_API_URL || process.env.SANDBOX_PODMAN_API_URL || process.env.CONTAINER_SANDBOX_PODMAN_API_URL || '' },

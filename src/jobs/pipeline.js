@@ -6,6 +6,7 @@ import { runStaticTests, runNodeTests } from '../testing/engine.js';
 import { scanProject } from '../security/scanner.js';
 import { clampText } from '../utils/validate.js';
 import { listFiles } from '../utils/fsx.js';
+import { buildAiProjectContext, collectProjectContextText } from '../services/project-context-resolver.js';
 import fs from 'node:fs/promises';
 import dns from 'node:dns/promises';
 import https from 'node:https';
@@ -1061,7 +1062,7 @@ export function registerPipeline(app) {
     emit('diagnose', 'running', 'Reading the failed GitHub Actions job and asking AI for the smallest safe fix…');
     let r;
     try {
-      const relevant = await collectProjectContext(source);
+      const relevant = await collectProjectContext(source, '', 'improve');
       r = await ai.completeJson({
         task: 'DEBUGGING',
         system: SYSTEM,
@@ -1235,7 +1236,7 @@ export function registerPipeline(app) {
     const activityText = (Array.isArray(activity) ? activity.slice(-20) : []).map((a) => `${a.t || ''} ${a.action || ''} ${a.status || ''} ${String(a.detail || '').slice(0, 160)}`).join('\n');
     const handoff = await projects.readMetadata(project, 'handoff.json', {});
     const previousPlan = await projects.readMetadata(project, 'work-plan.json', {});
-    const context = await collectProjectContext(source);
+    const context = await collectProjectContext(source, message, 'chat');
     const attachContext = await attachmentContext(projects.projectDir(project));
     const requestedImage = extractGhcrImage(message);
     const installFromImage = Boolean(requestedImage && /(solohost|cài đặt|cai dat|install|docker-compose|config_options|file cài|tạo file|tao file|generate)/i.test(message));
@@ -1517,16 +1518,29 @@ export function registerPipeline(app) {
     const question = String(job.payload.question || '').trim();
     if (!question) throw new Error('Ask a question first.');
     const userLanguage = detectUserLanguage(question);
-    const files = await projects.sourceFiles(project);
-    const context = clampText(`files: ${files.join(', ')}`, 4000);
+    const sourceDir = projects.sourceDir(project.slug);
+    const githubMeta = await projects.readMetadata(project, 'upgrade-source.json', {}).catch(() => ({}));
+    const ctx = await buildAiProjectContext(project, {
+      mode: 'ask',
+      query: question,
+      sourceDir,
+      maxChars: 28000,
+      meta: {
+        sourceType: githubMeta?.repo || githubMeta?.url ? 'github' : 'local',
+        commitSha: githubMeta?.commit || githubMeta?.ref || null,
+        githubUrl: githubMeta?.url || githubMeta?.repo || null,
+        branch: githubMeta?.branch || null,
+        sourceHash: (await projects.readMetadata(project, 'upgrade-baseline.json', {}).catch(() => ({})))?.sourceHash || null,
+      },
+    });
     try {
       const r = await ai.completeJson({
         task: 'USER_CHAT',
         system: SYSTEM,
-        prompt: `${languageInstruction(question)}\n${chatPrompt(project, question, context)}`,
+        prompt: `${languageInstruction(question)}\n${chatPrompt(project, question, ctx.text)}`,
         projectId: project.id,
       });
-      return r.json;
+      return { ...(r.json || {}), contextSnapshot: ctx.snapshot };
     } catch (err) {
       return { reply: `AI response unavailable. ${friendlyAiError(err)}`, proposed_change: null, userLanguage };
     }
@@ -1766,7 +1780,7 @@ export function registerPipeline(app) {
       emit('repair', 'running', 'A safe security fix is available. Applying one targeted repair…');
       let securityCheckpoint = null;
       try {
-        const relevant = await collectProjectContext(source);
+        const relevant = await collectProjectContext(source, 'security repair', 'improve');
         const r = await ai.completeJson({
           task: 'SECURITY',
           system: SYSTEM,
@@ -1946,7 +1960,7 @@ export function registerPipeline(app) {
     }
     await projects.saveMetadata(project, 'action-guard.json', nextRepeatState(guard, problemFingerprint));
 
-    const relevant = await collectProjectContext(source);
+    const relevant = await collectProjectContext(source, feedback, 'improve');
     const attachContext = await attachmentContext(projects.projectDir(project));
     const attachList = await attachmentList(projects.projectDir(project));
     const security = await scanProject(source);
@@ -2272,24 +2286,9 @@ Return JSON with full file contents for every changed file:
 }`;
 }
 
-async function collectProjectContext(source) {
-  const allFiles = await listFiles(source);
-  const preferred = ['package.json', 'Dockerfile', 'docker-compose.yml', 'config_options.yml', '.github/workflows/docker.yml', 'README.md', 'INSTALL.md', 'src/server.js', 'server.js', 'app.js', 'src/app.js', 'src/proxy.js', 'src/gateway.js', 'src/routes.js', 'public/index.html', 'public/game.js', 'public/app.js', 'public/browser.js'];
-  const names = [...preferred, ...allFiles.filter((f) => /^(src|server|public|tests)\//.test(f) && /\.(js|mjs|cjs|ts|tsx|jsx|html|css|json|yml|yaml)$/.test(f)).slice(0, 24)];
-  const unique = [...new Set(names)].filter((name) => allFiles.includes(name));
-  const chunks = [
-    `--- BUILDER TOOLBOX ---\ninspect files · static tests · Node tests · security scan · native preview · Container Sandbox · runtime logs · GitHub publish · Actions diagnostics · GHCR verify · SoloHost validator · checkpoint · rollback`,
-    `--- FILE INVENTORY (${allFiles.length}) ---\n${allFiles.slice(0, 120).join('\n')}`,
-  ];
-  let total = chunks.join('\n\n').length;
-  for (const name of unique.slice(0, 36)) {
-    if (total > 30000) break;
-    const text = await fs.readFile(path.join(source, name), 'utf8').catch(() => '');
-    const part = `--- ${name} ---\n${clampText(text, name === 'README.md' || name.endsWith('.css') ? 2200 : 4200)}`;
-    chunks.push(part);
-    total += part.length;
-  }
-  return clampText(chunks.join('\n\n'), 32000);
+async function collectProjectContext(source, query = '', mode = 'improve') {
+  // Unified authoritative source context (shared with Ask / Chat / Upgrade)
+  return collectProjectContextText(source, query, mode);
 }
 
 function friendlyAiError(err) {
