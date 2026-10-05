@@ -1,383 +1,798 @@
-<!doctype html>
-
-<html lang="en">
+<!DOCTYPE html> 
+<html lang="en" class="h-full bg-slate-950 text-slate-100">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <title>App Builder — Pi SoloHost</title>
-  <meta name="theme-color" content="#0e1116">
-  <link rel="stylesheet" href="/styles.css?v=1.4.35">
-<style>.paf-made-by{position:fixed;right:8px;bottom:8px;width:min(72px,12vw);max-width:12vw;height:auto;object-fit:contain;opacity:.5;background:transparent;padding:0;border:0;box-shadow:none;filter:none;pointer-events:none;z-index:30}</style>
-</head><body>
-  <div id="app"><header class="hero">
-  <img src="/banner.png" alt="App Builder — Pi SoloHost">
-</header>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Personal AI Hub</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <style>
+    .paf-made-by {
+      position: fixed;
+      right: 8px;
+      bottom: 8px;
+      width: min(72px, 12vw);
+      max-width: 12vw;
+      height: auto;
+      object-fit: contain;
+      opacity: .5;
+      background: transparent;
+      padding: 0;
+      border: 0;
+      box-shadow: none;
+      filter: none;
+      pointer-events: none;
+      z-index: 50;
+    }
+    ::-webkit-scrollbar {
+      width: 6px;
+      height: 6px;
+    }
+    ::-webkit-scrollbar-track {
+      background: rgba(15, 23, 42, 0.3);
+    }
+    ::-webkit-scrollbar-thumb {
+      background: rgba(99, 102, 241, 0.3);
+      border-radius: 3px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: rgba(99, 102, 241, 0.5);
+    }
+  </style>
+<style>.paf-made-by{position:fixed;right:8px;bottom:8px;width:min(72px,12vw);max-width:12vw;height:auto;object-fit:contain;opacity:.5;background:transparent;padding:0;border:0;box-shadow:none;filter:none;pointer-events:none;z-index:30}</style></head>
+<body class="h-full flex flex-col font-sans overflow-hidden">
 
-<header class="top">
-  <div class="brand">
-    <img class="logoMark" src="/app-logo.jpg" alt="App Builder logo">
-    <div>
-      <h1>App Builder</h1>
-      <p>Pi SoloHost · idea in, app out</p>
+  <!-- Header -->
+  <header class="border-b border-slate-800 bg-slate-900/90 backdrop-blur sticky top-0 z-20 shrink-0">
+    <div class="px-3 sm:px-4 lg:px-6 py-2.5 flex items-center justify-between gap-2 min-h-[3.25rem]">
+      <div class="flex items-center gap-2 sm:gap-3 min-w-0">
+        <button id="mobile-menu-btn" class="lg:hidden shrink-0 text-slate-400 hover:text-white p-2 rounded-lg hover:bg-slate-800 focus:outline-none" aria-label="Toggle Menu">
+          <i class="fa-solid fa-bars text-lg"></i>
+        </button>
+        <div class="shrink-0 w-9 h-9 sm:w-10 sm:h-10 rounded-xl bg-indigo-600 flex items-center justify-center shadow-lg shadow-indigo-500/20">
+          <i class="fa-solid fa-brain text-white text-base sm:text-lg"></i>
+        </div>
+        <div class="min-w-0">
+          <h1 class="text-sm sm:text-base lg:text-lg font-bold tracking-tight truncate" data-i18n="title">Personal AI Hub</h1>
+          <p class="hidden sm:block text-[10px] lg:text-xs text-slate-400 truncate" data-i18n="subtitle">Multi-Provider AI Gateway & Control Panel</p>
+        </div>
+      </div>
+      <div class="flex items-center gap-1.5 sm:gap-2 shrink-0">
+        <button id="lang-btn" class="inline-flex items-center justify-center gap-1 h-9 px-2 sm:px-2.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs font-medium border border-slate-700" title="Language">
+          <i class="fa-solid fa-globe text-indigo-400"></i>
+          <span id="lang-text" class="hidden xs:inline sm:inline">EN</span>
+        </button>
+        <button id="hub-nav-btn" class="inline-flex items-center justify-center gap-1 h-9 px-2.5 sm:px-3 rounded-lg bg-indigo-600 text-white text-xs font-medium border border-indigo-500">
+          <i class="fa-solid fa-house"></i><span class="hidden sm:inline">Hub</span>
+        </button>
+        <button id="settings-btn" class="inline-flex items-center justify-center gap-1 h-9 px-2.5 sm:px-3 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs font-medium border border-slate-700">
+          <i class="fa-solid fa-gear text-indigo-400"></i><span class="hidden sm:inline">Settings</span>
+        </button>
+        <button id="chat-nav-btn" class="inline-flex items-center justify-center gap-1 h-9 px-2.5 sm:px-3 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs font-medium border border-slate-700">
+          <i class="fa-solid fa-comments"></i><span class="hidden sm:inline">Chat</span>
+        </button>
+        <span id="connection-status" class="hidden md:inline-flex items-center gap-1.5 h-9 px-2.5 rounded-lg text-xs font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+          <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+          <span data-i18n="connected">Connected</span>
+        </span>
+      </div>
     </div>
-  </div>
+  </header>
 
-  <div class="topRight">
-    <span id="workPill" class="pill ready">Ready</span>
+  <!-- Main Layout -->
+  <div class="flex-1 flex overflow-hidden relative">
+    
+    <!-- Mobile Sidebar Backdrop -->
+    <div id="sidebar-backdrop" class="hidden fixed inset-0 bg-slate-950/60 backdrop-blur-sm z-30 lg:hidden"></div>
 
-    <button
-      id="liveBtn"
-      class="pill live"
-      hidden
-      type="button"
-      title="Stop the test app and delete its container">
-      Live · Stop
-    </button>
-
-    <select id="aiSelect" aria-label="AI provider">
-      <option value="">AI provider</option>
-    </select>
-
-    <select id="projectSelect" aria-label="Project">
-      <option value="">New app</option>
-    </select>
-
-    <button id="settingsBtn" class="iconBtn" title="Settings">⚙</button>
-  </div>
-</header>
-
-<main class="chatShell">
-
-  <section id="chat" class="chat" aria-live="polite"></section>
-
-  <button
-    id="jumpDown"
-    class="jump"
-    hidden
-    title="Jump to new messages">
-    ↓
-  </button>
-
-  <div id="busyBar" class="busy" hidden>
-    <span class="spinner"></span>
-    <span id="busyText">Working…</span>
-  </div>
-
-  <section class="composer">
-
-    <div class="quickGroups">
-
-      <!-- CREATE APP -->
-      <div class="group">
-        <span class="groupLabel">🏗️ Create App</span>
-
-        <button data-action="improve">✦ Improve</button>
-        <button data-action="edit">✎ Edit</button>
-        <button data-action="run">▶ Run</button>
-      </div>
-
-      <!-- UPGRADE APP -->
-      <div class="group">
-        <span class="groupLabel">🔧 Upgrade App</span>
-
-        <button data-action="upgrade">🔧 Upgrade</button>
-      </div>
-
-      <!-- PUBLISH -->
-      <div class="group">
-        <span class="groupLabel">🚀 Publish</span>
-
-        <button data-action="publish">🚀 Publish</button>
-      </div>
-
-      <!-- TOOLS -->
-      <div class="group">
-        <span class="groupLabel">🧰 Tools</span>
-
-        <button data-action="export">⬇ Zip</button>
-
-        <button
-          type="button"
-          id="importZipBtn"
-          data-action="import">
-          ⬆ Import
-        </button>
-
-        <button
-          type="button"
-          id="scriptRunBtn"
-          data-action="script-run">
-          📦 Run ZIP
-        </button>
-
-        <button data-action="sandbox">🧪 Sandbox</button>
-        <button
-          type="button"
-          id="scriptGhBtn"
-          data-action="script-github">
-          ⬆ GitHub
+    <!-- Sidebar / Key Manager -->
+    <aside id="sidebar" class="fixed inset-y-0 left-0 w-80 border-r border-slate-800 bg-slate-900/95 lg:bg-slate-900/20 flex flex-col overflow-y-auto p-5 gap-6 z-40 transform -translate-x-full lg:translate-x-0 lg:static transition-transform duration-300 ease-in-out">
+      
+      <!-- Mobile Sidebar Close Header -->
+      <div class="flex items-center justify-between lg:hidden border-b border-slate-800 pb-3">
+        <span class="font-bold text-indigo-400" data-i18n="providersTitle">AI Providers & Keys</span>
+        <button id="close-sidebar-btn" class="text-slate-400 hover:text-white text-lg p-1">
+          <i class="fa-solid fa-xmark"></i>
         </button>
       </div>
 
-      <!-- SUPPORT -->
-      <div class="group">
-        <span class="groupLabel">💛 Support</span>
-        <button type="button" id="feedbackBtn" data-action="feedback">💬 Feedback <span id="feedbackBadge" class="feedbackBadge" hidden>0</span></button>
-        <button
-          type="button"
-          id="supportBtn"
-          data-action="support">
-          💛 Support
-        </button>
+      <!-- Active Keys Section -->
+      <div>
+        <h2 class="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3" data-i18n="activeKeys">Active Keys</h2>
+        <div class="space-y-2.5" id="providers-list">
+          <!-- Dynamic Provider Cards -->
+        </div>
       </div>
 
-    </div>
-
-    <input
-      id="importZipInput"
-      type="file"
-      accept=".zip,application/zip"
-      hidden>
-
-    <div class="inputRow">
-
-      <button
-        id="attachBtn"
-        class="attach"
-        title="Attach files">
-        📎
-      </button>
-
-      <input
-        id="fileInput"
-        type="file"
-        multiple
-        hidden
-        accept=".zip,.pdf,.txt,.md,.json,.yaml,.yml,.js,.ts,.jsx,.tsx,.html,.css,.py,.go,.rs,.java,.php,.sql,.csv,.png,.jpg,.jpeg,.gif,.webp">
-
-      <textarea
-        id="message"
-        rows="2"
-        placeholder="Tell me the app you want. I will lead the rest."></textarea>
-
-      <button id="sendBtn" class="send">➤</button>
-
-    </div>
-
-    <div id="attachments" class="attachments"></div>
-
-    <p class="hint">
-      1 Idea → 2 Run → 3 Publish. I keep the next step visible.
-    </p>
-
-  </section>
-</main>
-
-  </div>  <!-- SUPPORT MODAL -->  <div id="supportModal" class="modal" hidden>
-    <div class="sheet">  <div class="sheetHead">
-    <h2>💛 Support this project</h2>
-    <button id="closeSupport" class="iconBtn" type="button">✕</button>
-  </div>
-
-  <p class="info">
-    Thank you for supporting App Builder — Pi SoloHost.
-    Your gift keeps the tool free for Pioneers.
-  </p>
-
-  <div class="supportTabs">
-    <button
-      type="button"
-      class="supportTab on"
-      data-support="pi">
-      Pi Wallet
-    </button>
-
-    <button
-      type="button"
-      class="supportTab"
-      data-support="mb">
-      MB Bank
-    </button>
-  </div>
-
-  <div id="supportPi" class="supportPane">
-    <img
-      src="/support-pi-qr.jpg"
-      alt="Pi Wallet QR"
-      class="supportQr">
-
-    <p class="muted">Pi Wallet address</p>
-
-    <p class="mono" id="piAddr">
-      GAQAZ5XLWREKQYMMN247A44PNPLAKRORZOPZNVG3CDPCSSFMEVFIYJJL
-    </p>
-
-    <button
-      type="button"
-      class="primary wide"
-      data-copy="GAQAZ5XLWREKQYMMN247A44PNPLAKRORZOPZNVG3CDPCSSFMEVFIYJJL">
-      Copy address
-    </button>
-  </div>
-
-  <div id="supportMb" class="supportPane" hidden>
-
-    <img
-      src="https://img.vietqr.io/image/MB-0905428801-compact2.png"
-      alt="MB Bank VietQR"
-      class="supportQr">
-
-    <p class="muted">MB Bank · 0905428801</p>
-
-    <p class="mono" id="mbAddr">0905428801</p>
-
-    <button
-      type="button"
-      class="primary wide"
-      data-copy="0905428801">
-      Copy account
-    </button>
-
-  </div>
-
-</div>
-
-  </div>
-  <!-- FEEDBACK MODAL -->
-  <div id="feedbackModal" class="modal" hidden>
-    <div class="sheet">
-      <div class="sheetHead">
-        <h2>💬 Feedback</h2>
-        <button id="closeFeedback" class="iconBtn" type="button">✕</button>
+      <!-- Add Key Section -->
+      <div class="border-t border-slate-800/80 pt-5">
+        <h2 class="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3" data-i18n="addNewKey">Add New Key</h2>
+        <form id="key-form" class="space-y-3.5">
+          <div>
+            <label class="block text-[11px] font-medium text-slate-400 mb-1" data-i18n="providerLabel">Provider</label>
+            <select id="key-provider" class="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-indigo-500 transition-colors">
+              <option value="openai">OpenAI</option>
+              <option value="gemini">Google Gemini</option>
+              <option value="deepseek">DeepSeek</option>
+              <option value="groq">Groq</option>
+              <option value="openrouter">OpenRouter</option>
+              <option value="anthropic">Anthropic</option>
+              <option value="local">Local AI (Ollama)</option>
+            </select>
+          </div>
+          <div>
+            <label class="block text-[11px] font-medium text-slate-400 mb-1" data-i18n="apiKeyLabel">API Key / Token</label>
+            <input type="password" id="key-token" placeholder="sk-..." class="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-indigo-500 transition-colors" required>
+          </div>
+          <button type="submit" id="save-key-btn" class="w-full bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg py-2 text-sm font-medium transition-colors flex items-center justify-center gap-2 shadow-lg shadow-indigo-600/15">
+            <i class="fa-solid fa-plus"></i>
+            <span data-i18n="saveKeyBtn">Save Key</span>
+          </button>
+        </form>
       </div>
-      <p class="info">Send a bug, idea, or improvement. Feedback is queued locally if the Hub is temporarily offline.</p>
-      <label class="feedbackField">Type
-        <select id="feedbackType"><option value="bug">Bug</option><option value="improvement" selected>Improvement</option><option value="question">Question</option></select>
-      </label>
-      <label class="feedbackField">Message
-        <textarea id="feedbackMessage" rows="5" placeholder="Tell us what happened…"></textarea>
-      </label>
-      <button id="sendFeedback" class="primary wide" type="button">Send feedback</button>
-      <div id="feedbackNotices" class="info compactInfo" hidden></div>
+
+      <!-- Quick Notes Section -->
+      <div class="border-t border-slate-800/80 pt-5 mt-auto">
+        <div class="flex items-center justify-between mb-3">
+          <h2 class="text-xs font-semibold text-slate-400 uppercase tracking-wider" data-i18n="notesList">Your Notes</h2>
+          <button id="refresh-notes-btn" class="text-slate-400 hover:text-indigo-400 text-xs transition-colors" title="Refresh Notes">
+            <i class="fa-solid fa-rotate-right"></i>
+          </button>
+        </div>
+        <div id="notes-list" class="space-y-2 max-h-48 overflow-y-auto pr-1">
+          <!-- Dynamic Notes List -->
+        </div>
+      </div>
+    </aside>
+
+    <!-- AI Hub Dashboard -->
+    <main id="dashboard-panel" class="flex-1 overflow-y-auto bg-slate-950 p-4 lg:p-8">
+      <div class="max-w-6xl mx-auto space-y-6">
+        <div class="flex flex-col md:flex-row md:items-end justify-between gap-3">
+          <div><p class="text-xs uppercase tracking-widest text-indigo-400 font-semibold">AI Infrastructure</p><h2 class="text-2xl lg:text-3xl font-bold mt-1">Your Personal AI Hub</h2><p class="text-sm text-slate-400 mt-2">One private control plane for cloud and local AI across your SoloHost apps.</p></div>
+          <div class="flex gap-2"><span id="hub-health" class="px-3 py-2 rounded-xl bg-slate-900 border border-slate-800 text-xs text-slate-400">Checking health…</span><button id="refresh-hub" class="px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs"><i class="fa-solid fa-rotate"></i></button></div>
+        </div>
+        <div class="grid grid-cols-2 lg:grid-cols-4 gap-3">
+          <div class="rounded-xl border border-slate-800 bg-slate-900/60 p-3"><div class="text-[10px] text-slate-500 uppercase">Active Keys</div><div id="active-key-count" class="text-xl font-bold mt-1">—</div></div>
+          <div class="rounded-xl border border-slate-800 bg-slate-900/60 p-3"><div class="text-[10px] text-slate-500 uppercase">Providers Ready</div><div id="ready-provider-count" class="text-xl font-bold mt-1">—</div></div>
+          <div class="rounded-xl border border-slate-800 bg-slate-900/60 p-3"><div class="text-[10px] text-slate-500 uppercase">Local AI</div><div id="local-model-count" class="text-xl font-bold mt-1">—</div></div>
+          <div class="rounded-xl border border-slate-800 bg-slate-900/60 p-3"><div class="text-[10px] text-slate-500 uppercase">Diagnostics</div><div id="diagnostic-state" class="text-sm font-semibold mt-2 text-slate-400">Checking…</div></div>
+        </div>
+        <div id="provider-dashboard" class="grid sm:grid-cols-2 xl:grid-cols-3 gap-4"></div>
+        <section class="rounded-2xl border border-indigo-500/20 bg-indigo-500/5 p-5 space-y-4">
+          <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+            <div><h3 class="font-semibold">SoloHost AI Gateway · OpenAI-compatible /v1</h3><p class="text-xs text-slate-400 mt-1">Một cổng AI dùng chung — App Builder, Calculator, Telegram… gọi Hub thay vì nhúng API key riêng.</p></div>
+            <span id="gateway-health" class="px-3 py-2 rounded-lg bg-slate-900 border border-slate-800 text-[11px] text-slate-400">API ready</span>
+          </div>
+          <div class="grid sm:grid-cols-2 lg:grid-cols-4 gap-3">
+            <div class="rounded-xl bg-slate-950/60 p-3"><div class="text-[10px] text-slate-500 uppercase">Chat</div><div class="font-mono text-[11px] mt-1 break-all" id="gw-chat">/api/v1/chat</div></div>
+            <div class="rounded-xl bg-slate-950/60 p-3"><div class="text-[10px] text-slate-500 uppercase">Health</div><div class="font-mono text-[11px] mt-1 break-all">/api/v1/health</div></div>
+            <div class="rounded-xl bg-slate-950/60 p-3"><div class="text-[10px] text-slate-500 uppercase">Discovery</div><div class="font-mono text-[11px] mt-1 break-all">/api/v1/gateway</div></div>
+            <div class="rounded-xl bg-slate-950/60 p-3"><div class="text-[10px] text-slate-500 uppercase">SDK</div><div class="font-mono text-[11px] mt-1 break-all">/ai-hub-sdk.js</div></div>
+          </div>
+          <div class="rounded-xl border border-slate-800 bg-slate-950/40 p-3">
+            <div class="text-[10px] text-slate-500 uppercase mb-1">Base URL (copy for other apps)</div>
+            <div class="flex flex-col sm:flex-row gap-2 items-stretch sm:items-center">
+              <code id="gw-base-url" class="flex-1 font-mono text-xs text-indigo-300 break-all">—</code>
+              <button id="copy-gw-base" class="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs shrink-0">Copy base</button>
+              <button id="copy-gw-curl" class="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs shrink-0">Copy curl</button>
+            </div>
+            <pre id="gw-curl-sample" class="mt-2 text-[10px] text-slate-400 overflow-x-auto whitespace-pre-wrap"></pre>
+          </div>
+          <div class="rounded-xl border border-slate-800 bg-slate-950/40 p-3 space-y-3">
+            <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+              <div>
+                <h4 class="text-sm font-semibold">Gateway access tokens</h4>
+                <p class="text-[11px] text-slate-500">Tạo token để app SoloHost gọi Hub qua header <code class="text-indigo-300">X-Personal-AI-Key</code>. Token chỉ hiện 1 lần khi tạo.</p>
+              </div>
+              <div class="flex gap-2">
+                <input id="gw-token-name" class="bg-slate-800 border border-slate-700 rounded-lg px-2 py-1.5 text-xs w-36" placeholder="App name">
+                <button id="gw-create-token" class="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-xs shrink-0">Create token</button>
+              </div>
+            </div>
+            <div id="gw-token-once" class="hidden rounded-lg border border-amber-500/30 bg-amber-500/10 p-2 text-[11px] text-amber-100"></div>
+            <div id="gw-token-list" class="space-y-2 text-xs text-slate-400">Loading…</div>
+          </div>
+        </section>
+        <div class="grid lg:grid-cols-2 gap-4">
+          <section class="rounded-2xl border border-slate-800 bg-slate-900/50 p-5">
+            <div class="flex justify-between items-center gap-2">
+              <div>
+                <h3 class="font-semibold">Local AI</h3>
+                <p class="text-xs text-slate-400 mt-1">Managed Ollama trong cùng stack SoloHost — không cần cài thủ công trên host.</p>
+              </div>
+              <span id="local-status" class="text-xs font-medium shrink-0 px-2 py-1 rounded-lg border border-slate-700 text-slate-400">—</span>
+            </div>
+            <div id="local-base-hint" class="mt-2 text-[10px] text-slate-500 break-all"></div>
+            <div class="mt-3 flex flex-wrap gap-2 items-center text-xs">
+              <label class="text-slate-500">Routing</label>
+              <select id="routing-mode" class="bg-slate-800 border border-slate-700 rounded-lg px-2 py-1.5 text-xs">
+                <option value="balanced">Balanced</option>
+                <option value="prefer_local">Prefer Local</option>
+                <option value="local_only">Local Only</option>
+                <option value="cloud">Cloud Only</option>
+              </select>
+            </div>
+            <div id="local-models" class="mt-4 space-y-2"></div>
+            <div id="local-suggested" class="mt-3 space-y-2"></div>
+            <div class="mt-4 flex flex-col sm:flex-row gap-2">
+              <input id="local-model-name" class="flex-1 bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-xs" placeholder="Model id, e.g. qwen3:4b">
+              <button id="local-pull" class="px-3 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-xs shrink-0">Download</button>
+              <button id="local-refresh" class="px-3 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs shrink-0">Refresh</button>
+            </div>
+            <details class="mt-3 text-[11px] text-slate-500">
+              <summary class="cursor-pointer text-slate-400">Advanced: custom Ollama URL</summary>
+              <div class="mt-2 flex flex-col sm:flex-row gap-2">
+                <input id="local-base-url" class="flex-1 bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-xs font-mono" placeholder="Default: http://ollama:11434">
+                <button id="local-save-url" class="px-3 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs shrink-0">Save URL</button>
+              </div>
+            </details>
+            <p id="local-pull-status" class="text-[11px] text-slate-500 mt-2">Ollama chạy như service <code class="text-indigo-300">ollama</code> cùng stack. Model lưu volume persistent. Không cần apt install.</p>
+          </section>
+          <section class="rounded-2xl border border-slate-800 bg-slate-900/50 p-5"><div class="flex justify-between"><div><h3 class="font-semibold">Hub Activity</h3><p class="text-xs text-slate-400 mt-1">Recent provider, key and AI execution events.</p></div><button id="open-logs" class="text-xs text-indigo-400">View full log</button></div><div id="activity-preview" class="mt-4 space-y-2"></div></section>
+        </div>
+      </div>
+    </main>
+
+    <!-- Chat Area (secondary) -->
+    <main id="chat-panel" class="hidden flex-1 flex-col bg-slate-950 relative overflow-hidden">
+      <div class="shrink-0 border-b border-slate-800 px-4 py-2 flex items-center justify-between bg-slate-900/40">
+        <button id="chat-back-hub" class="text-xs text-indigo-300 hover:text-white flex items-center gap-1.5"><i class="fa-solid fa-arrow-left"></i> Về màn hình chính</button>
+        <span class="text-[10px] text-slate-500">Chat là tính năng phụ · Hub là cổng AI chính</span>
+      </div>
+      <!-- Chat Messages -->
+      <div id="chat-messages" class="flex-1 overflow-y-auto p-4 lg:p-6 space-y-4">
+        <div class="flex gap-3 lg:gap-4 max-w-3xl mx-auto bg-slate-900/40 border border-slate-800/60 rounded-2xl p-4 lg:p-5">
+          <div class="w-8 h-8 rounded-lg bg-indigo-600/20 text-indigo-400 flex items-center justify-center shrink-0">
+            <i class="fa-solid fa-robot"></i>
+          </div>
+          <div class="space-y-1.5">
+            <p class="font-semibold text-sm text-indigo-400" data-i18n="welcomeTitle">AI Assistant</p>
+            <p class="text-sm text-slate-300 leading-relaxed" data-i18n="welcomeText">Hello! I am your Personal AI Hub assistant. I can help you manage your notes, run system capabilities, or chat using any of your configured AI providers. Add an API key on the left to get started!</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Chat Input -->
+      <div class="p-3 lg:px-6 border-t border-slate-800 bg-slate-900/20 shrink-0"><div class="max-w-3xl mx-auto flex gap-2"><select id="chat-provider" class="bg-slate-800 border border-slate-700 rounded-lg px-2 py-2 text-xs"><option value="">Auto Provider</option></select><select id="chat-model" class="flex-1 bg-slate-800 border border-slate-700 rounded-lg px-2 py-2 text-xs"><option value="">Auto Model</option></select></div></div>
+      <div class="p-4 lg:p-6 bg-slate-900/10 shrink-0">
+        <form id="chat-form" class="max-w-3xl mx-auto flex gap-2 lg:gap-3">
+          <input type="text" id="chat-input" data-i18n-placeholder="inputPlaceholder" placeholder="Ask me to create a note, list notes, or just chat..." class="flex-1 bg-slate-800 border border-slate-700 rounded-xl px-4 py-3 text-sm text-slate-100 focus:outline-none focus:border-indigo-500 transition-colors" required>
+          <button type="submit" id="send-btn" class="bg-indigo-600 hover:bg-indigo-500 text-white px-4 lg:px-5 rounded-xl font-medium transition-colors flex items-center justify-center gap-2 shadow-lg shadow-indigo-600/15">
+            <span class="hidden sm:inline" data-i18n="sendBtn">Send</span>
+            <i class="fa-solid fa-paper-plane text-xs"></i>
+          </button>
+        </form>
+      </div>
+    </main>
+  </div>
+
+  <!-- Settings / Activity Log -->
+  <div id="settings-panel" class="hidden fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm p-3 lg:p-8 overflow-y-auto">
+    <div class="max-w-5xl mx-auto rounded-2xl border border-slate-800 bg-slate-900 shadow-2xl min-h-[80vh]">
+      <div class="flex items-center justify-between p-5 border-b border-slate-800"><div><h2 class="font-bold text-lg">Settings & Diagnostics</h2><p class="text-xs text-slate-400">Provider keys, model discovery and a complete activity log.</p></div><div class="flex gap-2"><button id="run-diagnostics" class="px-3 py-2 rounded-lg bg-indigo-600/20 text-indigo-300 text-xs">Run diagnostics</button><button id="close-settings" class="p-2 text-slate-400 hover:text-white"><i class="fa-solid fa-xmark"></i></button></div></div>
+      <div class="p-5 space-y-6"><section><h3 class="font-semibold">AI Provider Keys</h3><p class="text-xs text-slate-400 mt-1">Each token is permanently bound to its selected provider. Add multiple tokens to the same provider for fallback and capacity.</p><div id="settings-keys" class="mt-3 grid md:grid-cols-2 gap-3"></div></section>
+      <section class="rounded-xl border border-slate-800 bg-slate-950/40 p-4"><div class="flex items-center justify-between"><div><h3 class="font-semibold">Private Interaction Memory</h3><p class="text-xs text-slate-400 mt-1">Recent interactions can be used as local context. This is context memory, not automatic model-weight training.</p></div><button id="clear-memory" class="px-3 py-2 rounded-lg bg-rose-500/10 text-rose-300 text-xs">Clear Memory</button></div><div id="memory-count" class="text-xs text-slate-500 mt-3">Loading…</div></section><section><div class="flex items-center justify-between"><div><h3 class="font-semibold">Activity Log</h3><p class="text-xs text-slate-400">Every AI execution, token check, local model operation and error is recorded here. Secrets are redacted.</p></div><div class="flex gap-2"><button id="refresh-logs" class="px-3 py-2 rounded-lg bg-slate-800 text-xs">Refresh</button><button id="clear-logs" class="px-3 py-2 rounded-lg bg-rose-500/10 text-rose-300 text-xs">Clear</button></div></div><pre id="activity-log" class="mt-3 max-h-[420px] overflow-auto rounded-xl bg-slate-950 border border-slate-800 p-4 text-[11px] text-slate-300 whitespace-pre-wrap"></pre></section></div>
     </div>
   </div>
-  <!-- SETTINGS MODAL -->  <div id="settings" class="modal" hidden><div class="sheet">
+  <!-- Certified Badge -->
+  
 
-  <div class="sheetHead">
-    <h2>Settings</h2>
-    <button id="closeSettings" class="iconBtn">✕</button>
-  </div>
+  <script src="/ai-hub-sdk.js"></script>
 
-  <div class="settingsGrid">
+  <!-- Translation & UI Logic -->
+  <script>
+    const i18n = {
+      en: {
+        title: "Personal AI Hub",
+        subtitle: "Multi-Provider AI Gateway & Control Panel",
+        connected: "Connected",
+        disconnected: "Disconnected",
+        providersTitle: "AI Providers & Keys",
+        addNewKey: "Add New Key",
+        providerLabel: "Provider",
+        apiKeyLabel: "API Key / Token",
+        saveKeyBtn: "Save Key",
+        inputPlaceholder: "Ask me to create a note, list notes, or just chat...",
+        sendBtn: "Send",
+        welcomeTitle: "AI Assistant",
+        welcomeText: "Hello! I am your Personal AI Hub assistant. I can help you manage your notes, run system capabilities, or chat using any of your configured AI providers. Add an API key on the left to get started!",
+        noKeysWarning: "No API keys configured yet. Please add a key in the sidebar to enable full AI capabilities.",
+        deleteBtn: "Delete",
+        saving: "Saving...",
+        sending: "Sending...",
+        errorAddKey: "Failed to save key. Please check your token.",
+        successAddKey: "Key saved successfully!",
+        confirmDelete: "Are you sure you want to delete this key?",
+        activeKeys: "Active Keys",
+        notesList: "Your Notes",
+        noNotes: "No notes yet. Ask AI to 'create a note'!",
+        askAboutNote: "Tell me more about this note: "
+      },
+      vi: {
+        title: "Trung tâm AI Cá nhân",
+        subtitle: "Cổng kết nối & Bảng điều khiển AI đa nền tảng",
+        connected: "Đã kết nối",
+        disconnected: "Mất kết nối",
+        providersTitle: "Nhà cung cấp & Khóa AI",
+        addNewKey: "Thêm Khóa Mới",
+        providerLabel: "Nhà cung cấp",
+        apiKeyLabel: "Khóa API / Token",
+        saveKeyBtn: "Lưu Khóa",
+        inputPlaceholder: "Yêu cầu tôi tạo ghi chú, liệt kê ghi chú, hoặc trò chuyện...",
+        sendBtn: "Gửi",
+        welcomeTitle: "Trợ lý AI",
+        welcomeText: "Xin chào! Tôi là trợ lý Trung tâm AI Cá nhân của bạn. Tôi có thể giúp bạn quản lý ghi chú, thực thi các tính năng hệ thống, hoặc trò chuyện bằng bất kỳ nhà cung cấp AI nào bạn đã cấu hình. Hãy thêm khóa API ở bên trái để bắt đầu!",
+        noKeysWarning: "Chưa có khóa API nào được cấu hình. Vui lòng thêm khóa ở thanh bên để kích hoạt đầy đủ tính năng AI.",
+        deleteBtn: "Xóa",
+        saving: "Đang lưu...",
+        sending: "Đang gửi...",
+        errorAddKey: "Lưu khóa thất bại. Vui lòng kiểm tra lại token.",
+        successAddKey: "Đã lưu khóa thành công!",
+        confirmDelete: "Bạn có chắc chắn muốn xóa khóa này không?",
+        activeKeys: "Khóa đang hoạt động",
+        notesList: "Ghi chú của bạn",
+        noNotes: "Chưa có ghi chú nào. Hãy bảo AI 'tạo ghi chú'!",
+        askAboutNote: "Hãy cho tôi biết thêm về ghi chú này: "
+      }
+    };
 
-    <label>
-      AI Provider
-      <select id="hubProvider">
-        <option value="deepseek">DeepSeek</option>
-        <option value="gemini">Gemini</option>
-        <option value="openai">OpenAI</option>
-        <option value="anthropic">Anthropic</option>
-        <option value="openrouter">OpenRouter</option>
-        <option value="groq">Groq</option>
-        <option value="mistral">Mistral</option>
-        <option value="xai">xAI</option>
-        <option value="custom">Custom</option>
-      </select>
-    </label>
+    let currentLang = localStorage.getItem('lang') || 'en';
 
-    <label>
-      API key
-      <input
-        id="hubKey"
-        type="password"
-        autocomplete="off"
-        placeholder="Paste token">
-    </label>
+    function updateLanguage() {
+      document.querySelectorAll('[data-i18n]').forEach(el => {
+        const key = el.getAttribute('data-i18n');
+        if (i18n[currentLang][key]) {
+          el.textContent = i18n[currentLang][key];
+        }
+      });
+      document.querySelectorAll('[data-i18n-placeholder]').forEach(el => {
+        const key = el.getAttribute('data-i18n-placeholder');
+        if (i18n[currentLang][key]) {
+          el.setAttribute('placeholder', i18n[currentLang][key]);
+        }
+      });
+      document.getElementById('lang-text').textContent = currentLang.toUpperCase();
+      localStorage.setItem('lang', currentLang);
+    }
 
-    <label id="hubBaseWrap" hidden>
-      Base URL
-      <input
-        id="hubBase"
-        type="text"
-        placeholder="https://api.example.com/v1">
-    </label>
+    // Toggle Language
+    document.getElementById('lang-btn').addEventListener('click', () => {
+      currentLang = currentLang === 'en' ? 'vi' : 'en';
+      updateLanguage();
+    });
 
-    <button id="hubAdd" class="wide" type="button">＋ Add</button>
+    // Mobile Sidebar Toggle
+    const sidebar = document.getElementById('sidebar');
+    const backdrop = document.getElementById('sidebar-backdrop');
+    const mobileMenuBtn = document.getElementById('mobile-menu-btn');
+    const closeSidebarBtn = document.getElementById('close-sidebar-btn');
 
-    <div class="settingsGrid compactModels">
+    function toggleSidebar() {
+      sidebar.classList.toggle('-translate-x-full');
+      backdrop.classList.toggle('hidden');
+    }
 
-      <label>
-        Model 1
-        <select id="hubModel1">
-          <option value="">Select verified model</option>
-        </select>
-      </label>
+    mobileMenuBtn.addEventListener('click', toggleSidebar);
+    closeSidebarBtn.addEventListener('click', toggleSidebar);
+    backdrop.addEventListener('click', toggleSidebar);
 
-      <label>
-        Model 2
-        <select id="hubModel2">
-          <option value="">Optional reviewer model</option>
-        </select>
-      </label>
+    // API Operations
+    async function fetchKeys() {
+      try {
+        const res = await fetch('/ai/keys');
+        const data = await res.json();
+        renderKeys(data.keys || []);
+      } catch (err) {
+        console.error('Error fetching keys:', err);
+      }
+    }
 
-    </div>
+    function renderKeys(keys) {
+      const container = document.getElementById('providers-list');
+      container.innerHTML = '';
+      if (keys.length === 0) {
+        container.innerHTML = `<div class="p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-400 text-xs leading-relaxed"><i class="fa-solid fa-triangle-exclamation mr-1"></i>${i18n[currentLang].noKeysWarning}</div>`;
+        return;
+      }
+      keys.forEach(key => {
+        const card = document.createElement('div');
+        card.className = 'p-3 rounded-xl bg-slate-800/60 border border-slate-700/50 hover:border-indigo-500/30 transition-colors';
+        const active = key.status === 'ACTIVE';
+        const statusClass = active ? 'text-emerald-400' : key.status === 'INVALID' ? 'text-rose-400' : key.status === 'BILLING_REQUIRED' ? 'text-orange-400' : key.status === 'MODEL_UNAVAILABLE' ? 'text-yellow-400' : 'text-amber-400';
+        card.innerHTML = `
+          <div class="flex items-center justify-between gap-2">
+            <div class="flex items-center gap-2.5 min-w-0">
+              <div class="w-8 h-8 rounded-lg bg-slate-900 flex items-center justify-center shrink-0"><i class="fa-solid fa-key text-indigo-400 text-sm"></i></div>
+              <div class="min-w-0"><p class="text-xs font-semibold text-slate-200 capitalize truncate">${escapeHtml(key.provider)}</p><p class="text-[10px] text-slate-400 font-mono truncate">${escapeHtml(key.masked)}</p></div>
+            </div>
+            <span class="text-[10px] font-semibold ${statusClass}">${escapeHtml(key.status)}</span>
+          </div>
+          <div class="mt-2 text-[10px] text-slate-500 truncate">${key.models?.length || 0} compatible model(s)${key.lastError ? ` · ${escapeHtml(key.lastError)}` : ''}</div>
+          <div class="mt-2 flex gap-2">
+            <button data-sidebar-test="${escapeHtml(key.id)}" class="text-[10px] text-indigo-300 hover:text-white">Test / refresh</button>
+            <button data-sidebar-delete="${escapeHtml(key.id)}" class="text-[10px] text-rose-300 hover:text-rose-200">${i18n[currentLang].deleteBtn}</button>
+          </div>`;
+        container.appendChild(card);
+      });
+      document.querySelectorAll('[data-sidebar-test]').forEach(btn => btn.onclick = async () => {
+        btn.textContent = 'Testing…';
+        try { await fetch(`/ai/keys/${encodeURIComponent(btn.dataset.sidebarTest)}/test`, {method:'POST'}); await fetchKeys(); await refreshHubSafe(); } catch(e) { console.error(e); }
+      });
+      document.querySelectorAll('[data-sidebar-delete]').forEach(btn => btn.onclick = () => deleteKey(btn.dataset.sidebarDelete));
+    }
 
-    <label>
-      GitHub owner
-      <input
-        id="setGhOwner"
-        type="text"
-        placeholder="username or org">
-    </label>
+    async function refreshHubSafe() {
+      try { if (window.refreshDashboardExternal) await window.refreshDashboardExternal(); } catch {}
+    }
 
-    <label>
-      GitHub token
-      <input
-        id="setGhToken"
-        type="password"
-        autocomplete="off"
-        placeholder="Classic token">
-    </label>
+    async function deleteKey(id) {
+      if (!confirm(i18n[currentLang].confirmDelete)) return;
+      try {
+        const res = await fetch(`/ai/keys/${id}`, { method: 'DELETE' });
+        if (res.ok) {
+          await fetchKeys();
+        }
+      } catch (err) {
+        console.error('Error deleting key:', err);
+      }
+    }
 
-    <div class="settingNote">
-      <span>First added key is used first</span>
-      <span>🛡 No docker.sock</span>
-    </div>
+    // Add Key Form
+    document.getElementById('key-provider').addEventListener('change', () => {
+      const local = document.getElementById('key-provider').value === 'local';
+      const tokenInput = document.getElementById('key-token');
+      tokenInput.required = !local;
+      tokenInput.disabled = local;
+      tokenInput.placeholder = local ? 'No token required — Ollama' : 'sk-...';
+    });
 
-  </div>
+    document.getElementById('key-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const provider = document.getElementById('key-provider').value;
+      const token = document.getElementById('key-token').value;
+      const saveBtn = document.getElementById('save-key-btn');
+      
+      saveBtn.disabled = true;
+      saveBtn.innerHTML = `<i class="fa-solid fa-circle-notch animate-spin"></i> <span>${i18n[currentLang].saving}</span>`;
 
-  <div id="hubList" class="info compactInfo">
-    No AI provider connected yet.
-  </div>
+      try {
+        const res = await fetch('/ai/keys', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ provider, token })
+        });
+        if (res.ok) {
+          const added = await res.json();
+          document.getElementById('key-token').value = '';
+          await fetchKeys();
+          if (added.status === 'ACTIVE') {
+            alert(`${i18n[currentLang].successAddKey}\n\nVerified. ${added.models?.length || 0} compatible models discovered.`);
+          } else {
+            alert(`${i18n[currentLang].successAddKey}\n\nKey status: ${added.status}. ${added.lastError || 'Open Settings → Activity Log for details.'}`);
+          }
+          await fetchKeys();
+        } else {
+          alert(i18n[currentLang].errorAddKey);
+        }
+      } catch (err) {
+        console.error('Error saving key:', err);
+        alert(i18n[currentLang].errorAddKey);
+      } finally {
+        saveBtn.disabled = false;
+        saveBtn.innerHTML = `<i class="fa-solid fa-plus"></i> <span>${i18n[currentLang].saveKeyBtn}</span>`;
+        updateLanguage();
+      }
+    });
 
-  <div class="info compactInfo">
-    Add a provider token, then Save GitHub if you publish.
-  </div>
+    // Fetch Notes via AI Kernel Action
+    async function fetchNotes() {
+      const container = document.getElementById('notes-list');
+      try {
+        const res = await fetch('/ai/act', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name: 'list_notes', args: {} })
+        });
+        const data = await res.json();
+        const notes = data.notes || [];
+        
+        container.innerHTML = '';
+        if (notes.length === 0) {
+          container.innerHTML = `<p class="text-[11px] text-slate-500 italic text-center py-2" data-i18n="noNotes">${i18n[currentLang].noNotes}</p>`;
+          return;
+        }
 
-  <button id="saveSettings" class="primary wide">Save</button>
+        notes.forEach(note => {
+          const item = document.createElement('div');
+          item.className = 'p-2 rounded-lg bg-slate-800/40 hover:bg-slate-800 border border-slate-700/30 hover:border-indigo-500/20 cursor-pointer transition-all';
+          item.innerHTML = `
+            <p class="text-xs font-medium text-slate-200 truncate">${note.title}</p>
+            <p class="text-[10px] text-slate-400 truncate">${note.content}</p>
+          `;
+          item.addEventListener('click', () => {
+            const input = document.getElementById('chat-input');
+            input.value = `${i18n[currentLang].askAboutNote}"${note.title}"`;
+            input.focus();
+          });
+          container.appendChild(item);
+        });
+      } catch (err) {
+        console.error('Error fetching notes:', err);
+        container.innerHTML = `<p class="text-[11px] text-slate-500 italic text-center py-2" data-i18n="noNotes">${i18n[currentLang].noNotes}</p>`;
+      }
+    }
 
-  <div class="advisorBox">
-    <h3>🧭 AI Advisor</h3>
-    <p class="muted">Reviews history only. It never edits your app or Builder.</p>
-    <label>Scope
-      <select id="advisorScope">
-        <option value="7d">7 days</option>
-        <option value="30d" selected>30 days</option>
-        <option value="all">All history</option>
-      </select>
-    </label>
-    <button id="advisorRun" class="wide" type="button">Analyze now</button>
-    <pre id="advisorOut" class="advisorOut muted">No analysis yet.</pre>
-  </div>
+    document.getElementById('refresh-notes-btn').addEventListener('click', fetchNotes);
 
-  <p id="settingsState" class="muted"></p>
+    // Chat Operations
+    const chatMessages = document.getElementById('chat-messages');
+    const chatForm = document.getElementById('chat-form');
+    const chatInput = document.getElementById('chat-input');
+    const sendBtn = document.getElementById('send-btn');
 
-</div>
+    function appendMessage(sender, text, isAi = false) {
+      const msg = document.createElement('div');
+      msg.className = `flex gap-3 lg:gap-4 max-w-3xl mx-auto ${isAi ? 'bg-slate-900/40 border border-slate-800/60' : ''} rounded-2xl p-4 lg:p-5 transition-all`;
+      
+      const avatarBg = isAi ? 'bg-indigo-600/20 text-indigo-400' : 'bg-slate-800 text-slate-300';
+      const avatarIcon = isAi ? 'fa-robot' : 'fa-user';
+      const nameColor = isAi ? 'text-indigo-400' : 'text-slate-300';
+      const name = isAi ? (currentLang === 'en' ? 'AI Assistant' : 'Trợ lý AI') : (currentLang === 'en' ? 'You' : 'Bạn');
 
-  </div>  <script src="/shfh-client.js?v=2.2"></script><script src="/app.js?v=feedback-1.4.61"></script><img
-class="paf-made-by"
-src="/made-by.png"
-alt="Made with App Builder — Pi SoloHost">
+      msg.innerHTML = `
+        <div class="w-8 h-8 rounded-lg ${avatarBg} flex items-center justify-center shrink-0">
+          <i class="fa-solid ${avatarIcon}"></i>
+        </div>
+        <div class="space-y-1 min-w-0 flex-1">
+          <p class="font-semibold text-sm ${nameColor}">${name}</p>
+          <p class="text-sm text-slate-300 leading-relaxed whitespace-pre-wrap break-words">${escapeHtml(text)}</p>
+        </div>
+      `;
+      chatMessages.appendChild(msg);
+      chatMessages.scrollTop = chatMessages.scrollHeight;
+    }
 
-</body>
-                                             </html>
+    function escapeHtml(text) {
+      return text
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
+    }
+
+    chatForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const message = chatInput.value.trim();
+      if (!message) return;
+
+      appendMessage('user', message, false);
+      chatInput.value = '';
+      
+      // Show typing indicator
+      const typingId = 'typing-' + Date.now();
+      const typingMsg = document.createElement('div');
+      typingMsg.id = typingId;
+      typingMsg.className = 'flex gap-3 lg:gap-4 max-w-3xl mx-auto bg-slate-900/40 border border-slate-800/60 rounded-2xl p-4 lg:p-5';
+      typingMsg.innerHTML = `
+        <div class="w-8 h-8 rounded-lg bg-indigo-600/20 text-indigo-400 flex items-center justify-center shrink-0">
+          <i class="fa-solid fa-robot"></i>
+        </div>
+        <div class="space-y-1">
+          <p class="font-semibold text-sm text-indigo-400">${currentLang === 'en' ? 'AI Assistant' : 'Trợ lý AI'}</p>
+          <div class="flex gap-1 py-2">
+            <span class="w-2 h-2 rounded-full bg-indigo-500 animate-bounce" style="animation-delay: 0ms"></span>
+            <span class="w-2 h-2 rounded-full bg-indigo-500 animate-bounce" style="animation-delay: 150ms"></span>
+            <span class="w-2 h-2 rounded-full bg-indigo-500 animate-bounce" style="animation-delay: 300ms"></span>
+          </div>
+        </div>
+      `;
+      chatMessages.appendChild(typingMsg);
+      chatMessages.scrollTop = chatMessages.scrollHeight;
+
+      try {
+        const res = await fetch('/ai/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ message, provider: document.getElementById('chat-provider')?.value || undefined, model: document.getElementById('chat-model')?.value || undefined })
+        });
+        const data = await res.json().catch(() => ({}));
+        document.getElementById(typingId)?.remove();
+        if (!res.ok || !data.reply) {
+          const failureBits = (data.failures || []).map(x => `${x.provider}${x.model ? '/' + x.model : ''}: ${x.reason}`).join(' | ');
+          const reason = data.message || data.error || failureBits || `HTTP ${res.status}`;
+          const rid = data.requestId ? ` (id: ${data.requestId})` : '';
+          appendMessage('ai', `${currentLang === 'en' ? 'AI request failed' : 'Yêu cầu AI thất bại'}: ${reason}${rid}. ${currentLang === 'en' ? 'Open Settings → Activity Log for diagnostics, then Test / refresh models on the key.' : 'Mở Settings → Activity Log để xem chẩn đoán, rồi Test / refresh models trên key.'}`, true);
+          try { if (window.refreshDashboardExternal) await window.refreshDashboardExternal(); } catch {}
+          return;
+        }
+        const meta = data.provider ? `\n\n— ${data.provider}${data.model ? ' · ' + data.model : ''}` : '';
+        appendMessage('ai', data.reply + meta, true);
+        setTimeout(fetchNotes, 500);
+      } catch (err) {
+        console.error('Error sending message:', err);
+        document.getElementById(typingId)?.remove();
+        appendMessage('ai', `${currentLang === 'en' ? 'AI connection error' : 'Lỗi kết nối AI'}: ${err.message}`, true);
+      }
+    });
+
+    // Initial Load
+    updateLanguage();
+    fetchKeys();
+    fetchNotes();
+  </script>
+
+<script>
+(() => {
+  const $ = id => document.getElementById(id);
+  const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  async function json(url, options) { const r=await fetch(url, options); const d=await r.json().catch(()=>({})); if(!r.ok) throw new Error(d.error||`HTTP ${r.status}`); return d; }
+  async function refreshChatSelectors(){try{const [p,k]=await Promise.all([json('/ai/providers'),json('/ai/keys')]);const ps=$('chat-provider'),ms=$('chat-model');ps.innerHTML='<option value="">Auto Provider</option>'+(p.providers||[]).map(x=>`<option value="${esc(x.id)}">${esc(x.name)}</option>`).join('');const all=k.keys||[];const fill=()=>{const provider=ps.value;const models=[...new Set(all.filter(x=>x.status==='ACTIVE'&&(!provider||x.provider===provider)).flatMap(x=>x.models||[]))];ms.innerHTML='<option value="">Auto Model</option>'+models.map(m=>`<option value="${esc(m)}">${esc(m)}</option>`).join('');};ps.onchange=fill;fill();}catch(e){console.error(e);}}
+  async function refreshDashboard() {
+    try { const [providers, keys, health, local, logs] = await Promise.all([json('/ai/providers'),json('/ai/keys'),json('/ai/health'),json('/ai/local/models'),json('/ai/logs?limit=8')]);
+      $('hub-health').textContent=`${health.activeKeys} active key${health.activeKeys===1?'':'s'} · ${health.providers} providers`; $('gateway-health').textContent=health.ok?'Unified AI API ready':'Gateway needs attention'; $('active-key-count').textContent=health.activeKeys; $('ready-provider-count').textContent=Object.values(health.byProvider||{}).filter(x=>x.active>0).length; if(typeof renderLocalPanel==='function'){renderLocalPanel(local);}else{$('local-model-count').textContent=(local.models||[]).length;} $('diagnostic-state').textContent=health.ok?'Healthy':'Needs attention'; $('diagnostic-state').className=`text-sm font-semibold mt-2 ${health.ok?'text-emerald-400':'text-amber-400'}`;
+      const by={}; (keys.keys||[]).forEach(k=>(by[k.provider]??=[]).push(k));
+      $('provider-dashboard').innerHTML=(providers.providers||[]).filter(p=>p.id!=='local').map(p=>{const ks=by[p.id]||[];return `<div class="rounded-2xl border border-slate-800 bg-slate-900/50 p-4"><div class="flex justify-between"><div><div class="font-semibold">${esc(p.name)}</div><div class="text-[11px] text-slate-500">${ks.length} key${ks.length===1?'':'s'} · ${esc(p.type)}</div></div><span class="text-xs ${ks.some(k=>k.status==='ACTIVE')?'text-emerald-400':'text-amber-400'}">${ks.filter(k=>k.status==='ACTIVE').length} ready</span></div><div class="mt-3 space-y-1">${ks.map(k=>`<div class="flex justify-between text-[11px] bg-slate-950/50 rounded-lg px-2 py-1.5"><span>${esc(k.masked)}</span><span class="${k.status==='ACTIVE'?'text-emerald-400':k.status==='BILLING_REQUIRED'?'text-orange-400':k.status==='INVALID'?'text-rose-400':'text-amber-400'}">${esc(k.status)}</span></div>`).join('')||'<span class="text-xs text-slate-500">No key configured</span>'}</div></div>`}).join('');
+      $('local-status').textContent=local.available?'Ollama online':'Ollama offline'; $('local-status').className=`text-xs ${local.available?'text-emerald-400':'text-slate-500'}`;
+      $('local-models').innerHTML=(local.models||[]).map(m=>`<div class="flex justify-between rounded-lg bg-slate-950/50 px-3 py-2 text-xs"><span>${esc(m.name)}</span><span class="text-slate-500">${m.size?Math.round(m.size/1024/1024)+' MB':''}</span></div>`).join('')||'<div class="text-xs text-slate-500">No local models detected.</div>';
+      $('activity-preview').innerHTML=(logs.logs||[]).slice(0,6).map(l=>`<div class="rounded-lg bg-slate-950/60 px-3 py-2"><div class="flex justify-between text-[10px]"><span class="${l.level==='error'?'text-rose-400':l.level==='warn'?'text-amber-400':'text-indigo-300'}">${esc(l.event)}</span><span class="text-slate-600">${esc(new Date(l.ts).toLocaleTimeString())}</span></div><div class="text-[10px] text-slate-500 mt-1">${esc(JSON.stringify(l.details))}</div></div>`).join('')||'<div class="text-xs text-slate-500">No activity yet.</div>';
+    } catch(e) { $('hub-health').textContent='Hub diagnostic error'; console.error(e); }
+  }
+  async function refreshLogs(){try{const [d,m]=await Promise.all([json('/ai/logs?limit=500'),json('/ai/memory?limit=200')]);$('memory-count').textContent=`${(m.memory||[]).length} recent private context entries stored locally.`;$('activity-log').textContent=(d.logs||[]).map(l=>`[${l.ts}] ${l.level.toUpperCase()} ${l.event} ${JSON.stringify(l.details)}`).join('\n')||'No activity.';}catch(e){$('activity-log').textContent=e.message;}}
+  async function refreshSettingsKeys(){const d=await json('/ai/keys');$('settings-keys').innerHTML=(d.keys||[]).map(k=>`<div class="rounded-xl border border-slate-800 bg-slate-950/50 p-3"><div class="flex justify-between"><div><div class="font-semibold text-sm">${esc(k.provider)}</div><div class="font-mono text-[11px] text-slate-400">${esc(k.masked)}</div></div><span class="text-[10px] ${k.status==='ACTIVE'?'text-emerald-400':k.status==='BILLING_REQUIRED'?'text-orange-400':k.status==='INVALID'?'text-rose-400':'text-amber-400'}">${esc(k.status)}</span></div><div class="mt-2 text-[10px] text-slate-500">Models: ${esc((k.models||[]).slice(0,5).join(', ')||'not discovered')}</div><button data-test-key="${esc(k.id)}" class="mt-2 text-[11px] text-indigo-400">Test / refresh models</button></div>`).join('')||'<div class="text-xs text-slate-500">No keys configured.</div>';document.querySelectorAll('[data-test-key]').forEach(b=>b.onclick=async()=>{b.textContent='Testing…';try{await json(`/ai/keys/${b.dataset.testKey}/test`,{method:'POST'});await refreshSettingsKeys();await refreshDashboard();await refreshLogs();}catch(e){b.textContent=e.message;}});}
+  let settingsLogTimer=null;
+  $('settings-btn').onclick=async()=>{$('settings-panel').classList.remove('hidden');await refreshSettingsKeys();await refreshLogs();clearInterval(settingsLogTimer);settingsLogTimer=setInterval(()=>{if(!$('settings-panel').classList.contains('hidden')) refreshLogs();},5000);};
+  $('run-diagnostics').onclick=async()=>{const b=$('run-diagnostics');b.disabled=true;b.textContent='Running…';try{const d=await json('/ai/diagnostics');await refreshLogs();alert(`AI Hub diagnostics\n\n${JSON.stringify(d,null,2)}`);}catch(e){alert(`Diagnostics failed: ${e.message}`);}finally{b.disabled=false;b.textContent='Run diagnostics';}};
+  $('close-settings').onclick=()=>{$('settings-panel').classList.add('hidden');clearInterval(settingsLogTimer);settingsLogTimer=null;};
+  $('open-logs').onclick=async()=>{$('settings-panel').classList.remove('hidden');await refreshLogs();clearInterval(settingsLogTimer);settingsLogTimer=setInterval(()=>{if(!$('settings-panel').classList.contains('hidden')) refreshLogs();},5000);}; $('refresh-logs').onclick=refreshLogs; $('clear-memory').onclick=async()=>{if(confirm('Clear private interaction memory?')){await json('/ai/memory',{method:'DELETE'});await refreshSettingsKeys();await refreshLogs();}}; $('clear-logs').onclick=async()=>{if(confirm('Clear activity log?')){await json('/ai/logs',{method:'DELETE'});await refreshLogs();await refreshDashboard();}};
+  function showHub(){
+    $('dashboard-panel').classList.remove('hidden');
+    $('chat-panel').classList.add('hidden');
+    $('chat-panel').classList.remove('flex');
+    if ($('settings-panel')) $('settings-panel').classList.add('hidden');
+  }
+  function showChat(){
+    $('dashboard-panel').classList.add('hidden');
+    $('chat-panel').classList.remove('hidden');
+    $('chat-panel').classList.add('flex');
+    refreshChatSelectors();
+  }
+  if ($('hub-nav-btn')) $('hub-nav-btn').onclick = showHub;
+  if ($('chat-nav-btn')) $('chat-nav-btn').onclick = showChat;
+  if ($('chat-back-hub')) $('chat-back-hub').onclick = showHub;
+  if ($('refresh-hub')) $('refresh-hub').onclick = () => { refreshDashboard(); refreshGateway(); };
+
+  async function refreshGateway(){
+    try {
+      var disc = await json('/api/v1/gateway');
+      var bases = disc.baseUrls || [location.origin];
+      var primary = disc.primaryBaseUrl || bases[0] || location.origin;
+      var serviceDns = 'http://' + (disc.serviceName || 'personal-ai-hub') + ':' + (disc.port || 8080);
+      if ($('gw-base-url')) {
+        $('gw-base-url').innerHTML =
+          '<div><span class="text-slate-500">UI / host: </span>' + esc(location.origin) + '</div>' +
+          '<div class="mt-1"><span class="text-slate-500">Docker DNS (App Builder): </span><span class="text-emerald-300">' + esc(serviceDns) + '</span></div>' +
+          (bases.length ? '<div class="mt-1 text-slate-500">All: ' + esc(bases.join(' · ')) + '</div>' : '');
+      }
+      if ($('gw-curl-sample')) {
+        $('gw-curl-sample').textContent =
+          '# From App Builder container (same Docker network) — NOT 127.0.0.1\n' +
+          'curl -s -X POST ' + serviceDns + '/api/v1/chat \\\n' +
+          '  -H "Content-Type: application/json" \\\n' +
+          '  -H "X-SoloHost-App-ID: app-builder" \\\n' +
+          '  -H "X-Personal-AI-Key: pah_YOUR_TOKEN" \\\n' +
+          "  -d '{\"message\":\"xin chao\"}'\n\n" +
+          '# Node test inside App Builder:\n' +
+          "node -e \"fetch('" + serviceDns + "/api/v1/chat',{method:'POST',headers:{'Content-Type':'application/json','X-SoloHost-App-ID':'app-builder','X-Personal-AI-Key':'pah_YOUR_TOKEN'},body:JSON.stringify({message:'xin chao'})}).then(r=>r.text()).then(console.log)\"";
+      }
+      if ($('gateway-health')) $('gateway-health').textContent = 'API ' + serviceDns + ' · JSON only';
+      const t = await json('/ai/gateway/tokens');
+      if ($('gw-token-list')) {
+        $('gw-token-list').innerHTML = (t.tokens || []).length
+          ? (t.tokens || []).map(x => '<div class="flex justify-between items-center gap-2 rounded-lg border border-slate-800 bg-slate-950/50 px-2 py-1.5"><div><span class="font-medium text-slate-200">' + esc(x.name) + '</span> <span class="font-mono text-slate-500">' + esc(x.prefix) + '</span></div><button data-revoke-gw="' + esc(x.id) + '" class="text-rose-300 text-[11px]">Revoke</button></div>').join('')
+          : '<div class="text-slate-500">Chua co gateway token — tao token de app khac goi Hub.</div>';
+        document.querySelectorAll('[data-revoke-gw]').forEach(b => b.onclick = async () => {
+          if (!confirm('Revoke this gateway token?')) return;
+          await json('/ai/gateway/tokens/' + b.dataset.revokeGw, { method: 'DELETE' });
+          await refreshGateway();
+        });
+      }
+    } catch (e) { console.error(e); }
+  }
+  if ($('copy-gw-base')) $('copy-gw-base').onclick = async () => {
+    try { await navigator.clipboard.writeText(location.origin); $('copy-gw-base').textContent = 'Copied'; setTimeout(() => $('copy-gw-base').textContent = 'Copy base', 1200); } catch (e) {}
+  };
+  if ($('copy-gw-curl')) $('copy-gw-curl').onclick = async () => {
+    try { await navigator.clipboard.writeText($('gw-curl-sample').textContent); $('copy-gw-curl').textContent = 'Copied'; setTimeout(() => $('copy-gw-curl').textContent = 'Copy curl', 1200); } catch (e) {}
+  };
+  if ($('gw-create-token')) $('gw-create-token').onclick = async () => {
+    const name = ($('gw-token-name').value || '').trim() || 'SoloHost app';
+    try {
+      const created = await json('/ai/gateway/tokens', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }) });
+      const box = $('gw-token-once');
+      if (box) {
+        box.classList.remove('hidden');
+        box.innerHTML = '<strong>Luu token ngay (chi hien 1 lan):</strong><br><code class="break-all select-all">' + esc(created.token) + '</code>';
+      }
+      if ($('gw-token-name')) $('gw-token-name').value = '';
+      await refreshGateway();
+    } catch (e) { alert(e.message); }
+  };
+
+  if ($('local-model-preset')) $('local-model-preset').onchange = () => {
+    const v = $('local-model-preset').value; if (v) $('local-model-name').value = v;
+  };
+  function renderLocalPanel(local) {
+    var st = local.status === 'starting' ? 'Starting…' : (local.available ? (local.models && local.models.length ? 'Ready' : 'Ready · no models') : 'Unavailable');
+    if ($('local-status')) {
+      $('local-status').textContent = st;
+      $('local-status').className = 'text-xs font-medium shrink-0 px-2 py-1 rounded-lg border ' + (local.available ? 'border-emerald-500/30 text-emerald-400' : (local.status==='starting' ? 'border-amber-500/30 text-amber-300' : 'border-rose-500/30 text-rose-300'));
+    }
+    if ($('local-base-hint')) $('local-base-hint').textContent = local.available ? ('Connected · ' + (local.baseUrl || 'ollama:11434')) : (local.hint || local.error || '');
+    if ($('local-base-url') && local.configuredBaseUrl) $('local-base-url').value = local.configuredBaseUrl;
+    if ($('local-models')) {
+      $('local-models').innerHTML = (local.models||[]).length
+        ? (local.models||[]).map(function(m){var n=typeof m==='string'?m:(m.name||m);return '<div class="rounded-lg border border-slate-800 px-2 py-1.5 text-xs flex justify-between"><span>'+esc(n)+'</span><span class="text-emerald-400 text-[10px]">Available</span></div>';}).join('')
+        : '<div class="text-xs text-slate-500">No local models yet. Download a light model below.</div>';
+    }
+    if ($('local-suggested') && local.suggested) {
+      var installed = {};
+      (local.models||[]).forEach(function(m){ installed[typeof m==='string'?m:m.name]=1; });
+      $('local-suggested').innerHTML = '<div class="text-[10px] uppercase text-slate-500 mb-1">Suggested</div>' + local.suggested.map(function(s){
+        var has = installed[s.id] || Object.keys(installed).some(function(k){return k.indexOf(s.id.split(':')[0])===0;});
+        return '<div class="flex items-center justify-between gap-2 rounded-lg border border-slate-800 px-2 py-1.5 text-xs"><div><span class="font-medium">'+esc(s.name)+'</span> <span class="text-slate-500">'+esc(s.sizeHint||'')+'</span></div>'+(has?'<span class="text-emerald-400 text-[10px]">Installed</span>':'<button data-pull-model="'+esc(s.id)+'" class="text-indigo-300 text-[11px]">Download</button>')+'</div>';
+      }).join('');
+      document.querySelectorAll('[data-pull-model]').forEach(function(b){ b.onclick=function(){ $('local-model-name').value=b.dataset.pullModel; $('local-pull').click(); }; });
+    }
+    if ($('local-model-count')) $('local-model-count').textContent = (local.models||[]).length;
+    if ($('local-pull-status')) $('local-pull-status').textContent = local.available ? ('OK · ' + (local.baseUrl||'ollama:11434')) : (local.code || local.error || 'Offline');
+  }
+  if ($('local-refresh')) $('local-refresh').onclick = async () => {
+    try {
+      const local = await json('/ai/local/models?force=1');
+      renderLocalPanel(local);
+    } catch(e) { if ($('local-pull-status')) $('local-pull-status').textContent = e.message; }
+  };
+  if ($('routing-mode')) {
+    json('/ai/routing').then(function(r){ if(r.mode) $('routing-mode').value=r.mode; }).catch(function(){});
+    $('routing-mode').onchange = async function(){
+      try { await json('/ai/routing',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({mode:$('routing-mode').value})}); }
+      catch(e){ alert(e.message); }
+    };
+  }
+  if ($('local-save-url')) $('local-save-url').onclick = async () => {
+    const url = ($('local-base-url').value || '').trim();
+    try {
+      const r = await json('/ai/local/base-url', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ url }) });
+      if ($('local-status')) $('local-status').textContent = r.available ? 'Online' : 'Offline';
+      if ($('local-pull-status')) $('local-pull-status').textContent = r.available ? ('Saved · ' + (r.baseUrl||url)) : (r.error || r.hint || 'Saved but offline');
+      await refreshDashboard();
+    } catch(e) { alert(e.message); }
+  };
+  if ($('local-pull')) $('local-pull').onclick = async () => {
+    const name = ($('local-model-name').value || '').trim();
+    if (!name) { alert('Nhap ten model Ollama (vd: llama3.2:3b)'); return; }
+    const b = $('local-pull');
+    const st = $('local-pull-status');
+    b.disabled = true; b.textContent = 'Downloading…';
+    if (st) st.textContent = 'Dang tai ' + name + ' — co the mat vai phut.';
+    try {
+      const r = await json('/ai/local/models/pull', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }) });
+      if ($('local-model-name')) $('local-model-name').value = '';
+      if (st) st.textContent = 'Da tai xong: ' + name + (r.baseUrl ? (' · ' + r.baseUrl) : '');
+      await refreshDashboard();
+    } catch (e) {
+      if (st) st.textContent = 'Loi tai model: ' + e.message;
+      alert('Local AI download failed:\n' + e.message);
+    } finally { b.disabled = false; b.textContent = 'Download'; }
+  };
+
+  window.refreshDashboardExternal = async function(){ await refreshDashboard(); await refreshGateway(); };
+  refreshDashboard();
+  refreshChatSelectors();
+  refreshGateway().catch(function(){});
+})();
+</script>
+<img class="paf-made-by" src="/made-by.png" alt="Made with App Builder — Pi SoloHost"></body>
+</html>

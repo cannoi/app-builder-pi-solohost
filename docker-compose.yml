@@ -1,19 +1,42 @@
+# SoloHost AI Gateway — single UI service
+# Node binds 0.0.0.0:8080; host maps loopback high-port only.
+
 services:
-  app-builder:
-    image: ghcr.io/cannoi/app-builder-pi-solohost:latest
-    restart: unless-stopped
+  personal-ai-hub:
+    image: personal-ai-hub:local
+    build: .
+    hostname: personal-ai-hub
     labels:
       pi.ui.primary: "true"
     ports:
-      - "127.0.0.1:18781:8080"
+      # SoloHost: loopback only on host side
+      - "127.0.0.1:${HOST_PORT:-18080}:8080"
     environment:
-      AI_PROVIDER: "${AI_PROVIDER}"
-      GEMINI_API_KEY: "${GEMINI_API_KEY}"
-      DEEPSEEK_API_KEY: "${DEEPSEEK_API_KEY}"
-      GITHUB_OWNER: "${GITHUB_OWNER}"
-      GITHUB_TOKEN: "${GITHUB_TOKEN}"
-      PREVIEW_MODE: "auto"
-      PREVIEW_ONLINE: "true"
-    dns:
-      - "8.8.8.8"
-      - "1.1.1.1"
+      PORT: "8080"
+      SERVICE_NAME: personal-ai-hub
+      PUBLIC_BASE_URL: "${PUBLIC_BASE_URL:-}"
+      HOST_PORT: "${HOST_PORT:-18080}"
+      DATA_DIR: /app/data
+      OLLAMA_HOST: "127.0.0.1:11434"
+      OLLAMA_MODELS: /app/ollama-data
+      OLLAMA_BASE_URL: "http://127.0.0.1:11434"
+    volumes:
+      - personal-ai-hub-data:/app/data
+      - personal-ai-ollama-data:/app/ollama-data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/health"]
+      interval: 30s
+      timeout: 8s
+      retries: 5
+      start_period: 45s
+    networks:
+      - solohost
+
+networks:
+  solohost:
+    name: solohost
+
+volumes:
+  personal-ai-hub-data:
+  personal-ai-ollama-data:
