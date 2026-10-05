@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>App Builder — Access</title>
+  <link rel="stylesheet" href="/styles.css" />
+  <style>
+    body{min-height:100dvh;display:grid;place-items:center;background:#0b0f14;margin:0;font-family:system-ui,sans-serif}
+    .card{width:min(400px,92vw);background:#151b22;border:1px solid #2a3340;border-radius:16px;padding:22px}
+    .card h1{margin:0 0 6px;font-size:1.15rem;color:#e8eef6}
+    .card p{margin:0 0 14px;color:#9aa7b5;font-size:.85rem}
+    .card label{display:grid;gap:6px;color:#9aa7b5;font-size:.8rem}
+    .card input{background:#0a0e13;color:#e8eef6;border:1px solid #2a3340;border-radius:10px;padding:12px;font-size:1rem}
+    .card button{margin-top:14px;width:100%;background:#3b82f6;color:#fff;border:0;border-radius:12px;padding:12px;font-weight:700;cursor:pointer}
+    .err{color:#f87171;font-size:.82rem;min-height:1.2em;margin-top:8px}
+  </style>
+</head>
+<body>
+  <form class="card" id="loginForm">
+    <h1>🔒 Builder access</h1>
+    <p>Enter the password from SoloHost config (<code>BUILDER_ACCESS_PASSWORD</code>).</p>
+    <label>Password<input id="pw" type="password" autocomplete="current-password" required placeholder="Access password" /></label>
+    <button type="submit">Unlock</button>
+    <div class="err" id="err"></div>
+  </form>
+  <script>
+    document.getElementById('loginForm').onsubmit = async (e) => {
+      e.preventDefault();
+      const err = document.getElementById('err');
+      err.textContent = '';
+      try {
+        const r = await fetch('/api/access/login', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ password: document.getElementById('pw').value }),
+        });
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok) { err.textContent = data.error || 'Incorrect password.'; return; }
+        location.href = '/';
+      } catch { err.textContent = 'Network error. Try again.'; }
+    };
+  </script>
+</body>
+</html>

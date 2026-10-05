@@ -86,6 +86,7 @@ const server = listen(app, {
   bind: cfg.bind,
   publicDir,
   log,
+  cfg,
   preview: createPreviewHandler({ projects }),
 });
 log.info('Listening', {

@@ -203,6 +203,29 @@ function renderModelSelectors(hub) {
   };
   make('hubModel1', 'Select verified model'); make('hubModel2', 'Optional reviewer model');
 }
+async function loadActivityLog() {
+  const out = $('logOut');
+  if (!out) return;
+  out.textContent = 'Loading…';
+  try {
+    const scope = $('logScope')?.value || 'global';
+    const q = scope === 'project' && state.projectId
+      ? `?projectId=${encodeURIComponent(state.projectId)}&limit=80`
+      : '?limit=80';
+    const data = await api('/api/activity/global' + q);
+    const lines = [];
+    for (const j of (data.jobs || []).slice(0, 40)) {
+      lines.push(`${j.created_at || ''} · ${j.type || 'job'} · ${j.status || ''} · ${j.stage || ''} ${j.error ? '· ' + String(j.error).slice(0, 160) : ''}`.trim());
+    }
+    for (const a of (data.activity || []).slice(-40)) {
+      lines.push(`${a.t || ''} · ${a.action || ''} · ${a.status || ''} · ${String(a.detail || '').slice(0, 200)}`.trim());
+    }
+    out.textContent = lines.length ? lines.join('\n') : 'No activity yet.';
+  } catch (e) {
+    out.textContent = e?.message || 'Could not load activity.';
+  }
+}
+
 async function loadHub() {
   try {
     const hub = await api('/api/ai/hub');
@@ -1004,7 +1027,7 @@ if ($('liveBtn')) $('liveBtn').onclick = () => stopLive();
 $('attachBtn').onclick = () => $('fileInput').click();
 $('fileInput').onchange = () => { state.files.push(...Array.from($('fileInput').files || [])); renderFiles(); $('fileInput').value = ''; };
 $('attachments').onclick = (e) => { const b = e.target.closest('[data-remove]'); if (b) { state.files.splice(Number(b.dataset.remove),1); renderFiles(); } };
-$('settingsBtn').onclick = () => { loadSettings(); $('settings').hidden = false; };
+$('settingsBtn').onclick = () => { loadSettings(); $('settings').hidden = false; loadActivityLog(); };
 $('advisorRun') && ($('advisorRun').onclick = runAdvisorFromSettings);
 async function runAdvisorFromSettings() {
   const out = $('advisorOut');
@@ -1023,6 +1046,8 @@ $('saveSettings').onclick = saveSettings;
 if ($('hubAdd')) $('hubAdd').onclick = addHubProvider;
 if ($('hubRefresh')) $('hubRefresh').onclick = async () => { const rows = await api('/api/ai/hub'); for (const c of (rows.connections || [])) await refreshHub(c.id); };
 $('hubList').addEventListener('click', (e) => { const r=e.target.closest('[data-hub-refresh]'); const x=e.target.closest('[data-hub-remove]'); if(r) refreshHub(r.dataset.hubRefresh); if(x) removeHub(x.dataset.hubRemove); });
+if ($('logRefresh')) $('logRefresh').onclick = () => loadActivityLog();
+if ($('logScope')) $('logScope').onchange = () => loadActivityLog();
 if ($('hubProvider')) $('hubProvider').onchange = () => {
   if ($('hubBaseWrap')) $('hubBaseWrap').hidden = $('hubProvider').value !== 'custom';
 };

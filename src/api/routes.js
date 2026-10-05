@@ -1,3 +1,4 @@
+import { verifyAccessPassword, accessCookieHeader, accessPasswordConfigured } from '../http-access-auth.js';
 import path from 'node:path';
 import fs from 'node:fs/promises';
 import { createReadStream } from 'node:fs';
@@ -178,6 +179,41 @@ export function registerRoutes(r, app) {
       return res.json({ ok: true, upstream: data });
     } catch (err) {
       return res.status(502).json({ ok: false, error: err?.name === 'AbortError' ? 'Feedback Hub timeout.' : 'Feedback Hub is unreachable.' });
+    }
+  });
+
+  r.get('/api/access/status', (_req, res) => {
+    res.json({ passwordRequired: accessPasswordConfigured(cfg) });
+  });
+
+  r.post('/api/access/login', (req, res) => {
+    const password = String(req.body?.password || '');
+    const result = verifyAccessPassword(password, cfg);
+    if (!result.ok) return res.status(401).json({ ok: false, error: 'Incorrect password.' });
+    if (result.token) res.setHeader('Set-Cookie', accessCookieHeader(result.token));
+    res.json({ ok: true });
+  });
+
+  r.post('/api/access/logout', (_req, res) => {
+    res.setHeader('Set-Cookie', 'builder_access=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0');
+    res.json({ ok: true });
+  });
+
+  r.get('/api/activity/global', async (req, res) => {
+    const limit = Math.min(Number(req.query?.limit || 80), 200);
+    const projectId = String(req.query?.projectId || '');
+    try {
+      if (projectId) {
+        const project = projects.get(projectId);
+        if (!project) return res.status(404).json({ error: 'Project not found.' });
+        const activity = await projects.readMetadata(project, 'activity.json', []);
+        const jobsList = jobs.list({ projectId, limit: 30 });
+        return res.json({ activity: (Array.isArray(activity) ? activity : []).slice(-limit), jobs: jobsList });
+      }
+      const recent = jobs.list({ limit });
+      return res.json({ activity: [], jobs: recent });
+    } catch (err) {
+      res.status(500).json({ error: String(err.message || err) });
     }
   });
 

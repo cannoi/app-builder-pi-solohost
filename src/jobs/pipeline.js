@@ -690,6 +690,9 @@ export function registerPipeline(app) {
 
   jobs.on('github', async (job, { emit }) => {
     const project = mustProject(job.payload.projectId);
+    if (!github.configured()) {
+      throw new Error('GITHUB_TOKEN_REQUIRED: Add your GitHub username and token in Settings → GitHub before Publish. No files were uploaded.');
+    }
     emit('github', 'running', 'Publishing to GitHub…');
     const pushed = await publishToGitHub({
       github,
@@ -717,6 +720,15 @@ export function registerPipeline(app) {
       throw new Error(`RELEASE_SECURITY_BLOCKED\n${security.summary}\n\n${report}\n\nNEXT: Tap Improve and let the AI apply the smallest targeted security fix, then Run and Publish again.`);
     }
     if (runtime.status !== 'passed' || runtime.health !== true) throw new Error('Release blocked: run the app successfully before publishing. Tap Run first.');
+
+    // Hard gate: never continue Publish without GitHub credentials
+    const wantsPush = payload.push !== false && payload.verifyImage !== true;
+    if (wantsPush && !github.configured()) {
+      throw new Error('GITHUB_TOKEN_REQUIRED: GitHub username and token are required before Publish. Open Settings → enter GitHub owner + token → Save, then Publish again.');
+    }
+    if (!github.configured() && payload.verifyImage === true) {
+      throw new Error('GITHUB_TOKEN_REQUIRED: GitHub token is required to check the published image. Add it in Settings first.');
+    }
 
     const pendingEarly = await projects.readMetadata(project, 'release-pending.json', null);
     // Check image / Re-check only. A normal Publish tap always uploads local source.
@@ -829,7 +841,7 @@ export function registerPipeline(app) {
         };
       }
     } else {
-      githubPublish = { ok: false, code: 'GITHUB_NOT_CONFIGURED', error: 'GitHub authorization is required.', fallback: { action: 'download', label: 'Download Project' } };
+      throw new Error('GITHUB_TOKEN_REQUIRED: GitHub authorization is required. Open Settings → GitHub owner + token → Save, then Publish again.');
     }
 
     const owner = githubPublish?.owner || pending?.owner || cfg.github.owner || 'YOUR_GITHUB';

@@ -356,6 +356,23 @@
 
   <button id="saveSettings" class="primary wide">Save</button>
 
+  <div class="settingsSection" id="settingsLogs">
+    <h3>📋 Activity log</h3>
+    <p class="muted">Recent Builder jobs and project activity — useful when asking AI to fix an error.</p>
+    <div class="settingsGrid compactModels">
+      <label>Scope
+        <select id="logScope">
+          <option value="global" selected>All recent jobs</option>
+          <option value="project">Current project</option>
+        </select>
+      </label>
+      <label>Refresh
+        <button id="logRefresh" class="wide" type="button">↻ Reload log</button>
+      </label>
+    </div>
+    <pre id="logOut" class="advisorOut muted">Open Settings to load activity…</pre>
+  </div>
+
   <div class="advisorBox">
     <h3>🧭 AI Advisor</h3>
     <p class="muted">Reviews history only. It never edits your app or Builder.</p>

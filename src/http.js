@@ -2,6 +2,7 @@ import http from 'node:http';
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
+import { createAccessAuthMiddleware } from './http-access-auth.js';
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -59,14 +60,24 @@ export function createApp() {
   return app;
 }
 
-export function listen(app, { port, bind, publicDir, log, preview = null }) {
+export function listen(app, { port, bind, publicDir, log, preview = null, cfg = null }) {
   const resolvedPublic = resolvePublicDir(publicDir);
+  const accessGate = cfg ? createAccessAuthMiddleware(cfg) : null;
   const server = http.createServer(async (req, res) => {
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('X-Frame-Options', 'SAMEORIGIN');
     res.setHeader('Referrer-Policy', 'no-referrer');
     try {
       const url = new URL(req.url, 'http://localhost');
+      req.path = url.pathname;
+      if (accessGate) {
+        let gated = false;
+        await new Promise((resolve) => {
+          accessGate(req, res, () => { gated = true; resolve(); });
+          setImmediate(() => { if (!gated && res.writableEnded) resolve(); });
+        });
+        if (res.writableEnded || res.headersSent) return;
+      }
       if (preview && url.pathname.startsWith('/preview/')) {
         await preview(req, res, url);
         return;
