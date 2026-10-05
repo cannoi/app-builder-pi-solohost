@@ -43,6 +43,22 @@ const jobs = new JobQueue({ db, log, history: async (job, status) => {
     ? String(job.error).split('\n')[0].slice(0, 500)
     : String(result.brief || result.reply || result.next || `Job ${job.type} finished.`).split('\n')[0].slice(0, 500);
   await projects.recordWorkHistory(project, { id: job.id, type: job.type, status, summary, error: job.error || null });
+  // Durable activity trail for AI repair (fuller than chat alone)
+  try {
+    const prev = await projects.readMetadata(project, 'activity.json', []);
+    const events = (job.events || []).slice(-12).map((e) => `${e.stage || ''}:${e.status || ''}:${String(e.message || '').slice(0, 160)}`).join(' | ');
+    const row = {
+      t: new Date().toISOString(),
+      action: String(job.type || 'job'),
+      status: String(status || job.status || ''),
+      stage: job.stage || undefined,
+      detail: [summary, events].filter(Boolean).join(' · ').slice(0, 1200),
+      jobId: job.id,
+      error: job.error ? String(job.error).slice(0, 800) : undefined,
+      files: Array.isArray(result.files) ? result.files.slice(0, 20) : undefined,
+    };
+    await projects.saveMetadata(project, 'activity.json', [...(Array.isArray(prev) ? prev : []), row].slice(-200));
+  } catch { /* never block job completion on activity write */ }
 } });
 const ai = new AIGateway({ cfg, db, log });
 const github = new GitHubManager({ cfg, log });

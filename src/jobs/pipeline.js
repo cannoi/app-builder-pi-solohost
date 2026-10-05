@@ -1233,7 +1233,7 @@ export function registerPipeline(app) {
     const runtimeNow = await projects.readMetadata(project, 'runtime.json', {});
     const history = (await projects.chatHistory(project)).slice(-16).map((m) => `${m.role}: ${String(m.message || '').slice(0, 240)}`).join('\n');
     const activity = await projects.readMetadata(project, 'activity.json', []);
-    const activityText = (Array.isArray(activity) ? activity.slice(-20) : []).map((a) => `${a.t || ''} ${a.action || ''} ${a.status || ''} ${String(a.detail || '').slice(0, 160)}`).join('\n');
+    const activityText = (Array.isArray(activity) ? activity.slice(-40) : []).map((a) => `${a.t || ''} ${a.action || ''} ${a.status || ''} ${String(a.detail || '').slice(0, 160)}`).join('\n');
     const handoff = await projects.readMetadata(project, 'handoff.json', {});
     const previousPlan = await projects.readMetadata(project, 'work-plan.json', {});
     const context = await collectProjectContext(source, message, 'chat');
@@ -1493,7 +1493,7 @@ export function registerPipeline(app) {
         detail: failCard.what,
         next: payload.next,
       },
-    ].slice(-40));
+    ].slice(-200));
     await projects.saveMetadata(project, 'handoff.json', {
       updatedAt: new Date().toISOString(),
       userLanguage,
@@ -1973,7 +1973,7 @@ export function registerPipeline(app) {
       const full = jobs.get(row.id) || row;
       return { id: row.id, type: row.type, status: row.status, stage: row.stage, error: row.error, events: (full.events || []).slice(-6) };
     });
-    const recentContext = `\nRECENT ACTIVITY (use as evidence; do not repeat a failed identical action):\n${JSON.stringify(Array.isArray(activity) ? activity.slice(-12) : [])}\nRECENT JOBS: ${JSON.stringify(recentJobs)}\n`;
+    const recentContext = `\nRECENT ACTIVITY (use as evidence; do not repeat a failed identical action):\n${JSON.stringify(Array.isArray(activity) ? activity.slice(-40) : [])}\nRECENT JOBS: ${JSON.stringify(recentJobs)}\n`;
     const networkContext = networkPreflight ? `\nBUILDER NETWORK PREFLIGHT:\n${JSON.stringify(networkPreflight)}\n` : '';
     const securityContext = security.findings?.length ? `\nSECURITY FINDINGS (treat as concrete repair requirements):\n${security.copy_for_ai}\n` : '';
     const r = await ai.completeJson({ task: 'DEBUGGING', system: SYSTEM, prompt: patchPrompt(project, '', relevant + recentContext + networkContext + securityContext + `\nATTACHMENTS (canonical project storage):\n${attachContext}\nATTACHMENT INDEX:\n${JSON.stringify(attachList)}`, feedback), projectId: project.id, images: await imageInputsFromAttachments(projects.projectDir(project)) });

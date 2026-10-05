@@ -1,5 +1,5 @@
 import { PROVIDER_CATALOG, catalogEntry, taskComplexity } from './catalog.js';
-import { OpenAICompatProvider } from './openai-compat.js';
+import { OpenAICompatProvider, preferAutoModel, normalizeBaseUrl } from './openai-compat.js';
 import { GeminiProvider } from '../providers/gemini.js';
 import { DeepSeekProvider } from '../providers/deepseek.js';
 import { classifyProviderError, isTransient } from './errors.js';
@@ -73,7 +73,7 @@ export class AIProviderHub {
     if (conn.provider === 'gemini') return new GeminiProvider({ apiKey, model: firstModel(conn), db: this.db, log: this.log });
     if (conn.provider === 'deepseek') return new DeepSeekProvider({ apiKey, model: firstModel(conn) });
     if (conn.provider === 'anthropic') return new AnthropicAdapter({ ...conn, apiKey });
-    return new OpenAICompatProvider({ id: conn.provider, name: meta?.name || conn.provider, apiKey, baseUrl: conn.baseUrl || meta?.baseUrl, model: firstModel(conn) });
+    return new OpenAICompatProvider({ id: conn.provider, name: meta?.name || conn.provider, apiKey, baseUrl: normalizeBaseUrl(conn.baseUrl || meta?.baseUrl || ''), model: firstModel(conn) || (conn.provider === 'custom' ? 'auto' : '') });
   }
 
   async testConnection({ provider, apiKey, baseUrl, model }) {
@@ -93,8 +93,12 @@ export class AIProviderHub {
       if (!Array.isArray(discovered)) discovered = [];
       if (!discovered.length && model) discovered.push({ id: model, displayName: model, available: true, verified: false, capabilities: normalizeCaps({}, model, provider), source: 'manual' });
       if (!discovered.length) discovered = fallback;
-      if (!discovered.length) throw Object.assign(new Error('No usable model is known for this provider. Paste the key and try again.'), { code: 'MODEL_OR_ENDPOINT_UNAVAILABLE', classify: { code: 'MODEL_OR_ENDPOINT_UNAVAILABLE', user: 'No usable model is known for this provider.' } });
-      const probeId = model || selectProbeModel(discovered) || discovered[0].id;
+      // Custom / Personal AI Hub: if discovery returned nothing but endpoint is reachable intent, seed "auto"
+      if (!discovered.length && (provider === 'custom' || /personal-ai|ollama|localhost|127\.0\.0\.1/i.test(String(baseUrl || '')))) {
+        discovered = [{ id: 'auto', displayName: 'auto', available: true, verified: false, capabilities: normalizeCaps({}, 'auto', provider), source: 'auto-default' }];
+      }
+      if (!discovered.length) throw Object.assign(new Error('No usable model is known for this provider. Paste the key and try again, or set Base URL for Custom (e.g. http://personal-ai-hub:8080/v1).'), { code: 'MODEL_OR_ENDPOINT_UNAVAILABLE', classify: { code: 'MODEL_OR_ENDPOINT_UNAVAILABLE', user: 'No usable model is known for this provider.' } });
+      const probeId = model || selectProbeModel(discovered) || preferAutoModel(discovered) || discovered[0].id;
       const result = await this.probeModel(conn, probeId);
       if (result.ok) {
         const models = discovered.map((m) => ({ ...m, verified: m.id === probeId, lastVerified: m.id === probeId ? new Date().toISOString() : null }));
@@ -303,9 +307,14 @@ function normalizeCaps(meta, id, provider) {
     long_context: Number(meta?.context_length || meta?.inputTokenLimit || 0) >= 100000 ? true : 'unknown', structured_output: provider === 'openai' || /json/.test(text) ? 'unknown' : 'unknown',
   };
 }
-function selectProbeModel(models) { return [...models].sort((a, b) => scoreModel(b, 'medium') - scoreModel(a, 'medium'))[0]?.id; }
+function selectProbeModel(models) {
+  const autoId = preferAutoModel(models);
+  if (autoId) return autoId;
+  return [...models].sort((a, b) => scoreModel(b, 'medium') - scoreModel(a, 'medium'))[0]?.id;
+}
 function scoreModel(model, level) {
   const n = String(model.id || '').toLowerCase(); let s = 50;
+  if (n === 'auto') s += 100; // Personal AI Hub / smart router default
   if (level === 'high' && /pro|reason|opus|sonnet|gpt-5|gpt-4|grok-4|deepseek-v4/.test(n)) s += 20;
   if (level === 'low' && /flash|mini|haiku|small|lite/.test(n)) s += 15;
   if (model.capabilities?.coding === true) s += level === 'high' ? 10 : 2;

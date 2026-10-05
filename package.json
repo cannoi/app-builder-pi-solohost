@@ -1,14 +1,18 @@
 {
-  "name": "personal-ai-hub",
-  "version": "1.6.1",
+  "name": "pi-app-factory",
+  "version": "1.4.69",
+  "private": true,
   "type": "module",
-  "description": "Personal AI Hub \u2014 SoloHost AI Gateway (OpenAI-compatible /v1 + multi-provider routing)",
-  "main": "index.js",
+  "description": "App Builder — Pi SoloHost. Idea in, working SoloHost app out.",
   "scripts": {
-    "start": "node index.js",
-    "test": "node test.js"
+    "start": "node src/server.js",
+    "test": "node --test tests/*.test.js"
+  },
+  "engines": {
+    "node": ">=22"
   },
   "dependencies": {
-    "express": "^4.19.2"
+    "@octokit/rest": "^21.1.1",
+    "playwright": "^1.63.0"
   }
 }

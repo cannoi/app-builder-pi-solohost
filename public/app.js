@@ -187,7 +187,15 @@ function renderProviderSelector(hub) {
 }
 function renderModelSelectors(hub) {
   const all = [];
-  for (const c of (hub?.connections || [])) for (const m of (c.models || [])) if (m.verified) all.push({ value: modelRef(c, m), label: `${c.name} · ${m.id}` });
+  for (const c of (hub?.connections || [])) {
+    const name = c.name || c.provider || 'provider';
+    const models = (c.models || []).slice().sort((a, b) => Number(!!b.verified) - Number(!!a.verified));
+    for (const m of models) {
+      if (!m?.id) continue;
+      const mark = m.verified ? '' : ' (available)';
+      all.push({ value: modelRef(c, m), label: `${name} · ${m.id}${mark}` });
+    }
+  }
   const make = (id, empty) => {
     const el = $(id); if (!el) return;
     const current = el.value; el.innerHTML = `<option value="">${empty}</option>` + all.map(x => `<option value="${esc(x.value)}">${esc(x.label)}</option>`).join('');
@@ -922,9 +930,11 @@ function renderHubList(hub) {
   const rows = hub?.connections || [];
   if (!rows.length) { box.textContent = 'No AI provider connected yet.'; return; }
   box.innerHTML = rows.map((c) => {
-    const verified = c.models?.filter(m => m.verified).length || 0;
+    const models = c.models || [];
+    const verified = models.filter(m => m.verified).length || 0;
+    const modelIds = models.map(m => m.id).filter(Boolean).slice(0, 4).join(', ');
     const buttons = `<span class="hubActions"><button type="button" data-hub-refresh="${esc(c.id)}">↻</button><button type="button" data-hub-remove="${esc(c.id)}">×</button></span>`;
-    return `<div class="hubRow"><span>${c.status === 'VERIFIED' && verified ? '✓' : '•'} ${esc(c.name)} · ${esc(c.masked || 'key')} · ${verified} verified</span>${buttons}</div>`;
+    return `<div class="hubRow"><span>${c.status === 'VERIFIED' && verified ? '✓' : '•'} ${esc(c.name)} · ${esc(c.masked || 'key')} · ${verified}/${models.length || 0} models${modelIds ? ` · ${esc(modelIds)}` : ''}</span>${buttons}</div>`;
   }).join('');
 }
 async function addHubProvider() {
@@ -1020,9 +1030,11 @@ if ($('aiSelect')) $('aiSelect').onchange = async () => {
   const provider = $('aiSelect').value; if (!provider) return;
   const hub = await api('/api/ai/hub');
   const conn = (hub.connections || []).find((c) => c.provider === provider);
-  const models = (conn?.models || []).filter((m) => m.verified).slice(0, 2).map((m) => `${provider}:${m.id}`);
-  const fallback = (conn?.models || []).slice(0, 2).map((m) => `${provider}:${m.id}`);
-  const preferredModels = models.length ? models : fallback;
+  const rows = (conn?.models || []).slice();
+  const auto = rows.find((m) => String(m.id || '').toLowerCase() === 'auto');
+  const verified = rows.filter((m) => m.verified);
+  const pick = auto ? [auto, ...verified.filter((m) => m.id !== auto.id)] : (verified.length ? verified : rows);
+  const preferredModels = pick.slice(0, 2).map((m) => `${provider}:${m.id}`);
   const applied = await api('/api/ai/hub/routing', { method: 'POST', body: JSON.stringify({ preferredProvider: provider, preferredModels }) });
   await loadHub();
   const name = conn?.name || provider;

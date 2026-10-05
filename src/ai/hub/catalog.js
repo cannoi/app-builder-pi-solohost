@@ -7,7 +7,7 @@ export const PROVIDER_CATALOG = [
   { id: 'groq', name: 'Groq', kind: 'openai', baseUrl: 'https://api.groq.com/openai/v1', discover: true },
   { id: 'mistral', name: 'Mistral', kind: 'openai', baseUrl: 'https://api.mistral.ai/v1', discover: true },
   { id: 'xai', name: 'xAI', kind: 'openai', baseUrl: 'https://api.x.ai/v1', discover: true },
-  { id: 'custom', name: 'Custom OpenAI-compatible', kind: 'openai', baseUrl: '', discover: true },
+  { id: 'custom', name: 'Custom OpenAI-compatible', kind: 'openai', baseUrl: '', discover: true, fallbackModels: ['auto'] },
 ];
 
 export function catalogEntry(id) { return PROVIDER_CATALOG.find((p) => p.id === id) || null; }

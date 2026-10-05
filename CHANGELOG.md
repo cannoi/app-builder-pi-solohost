@@ -1,6 +1,249 @@
-## Recovery / Hub Upgrade
-- Fix `NO_ACTIVE_KEY` after successful token entry by verifying keys server-side.
-- Recover legacy `TEST_REQUIRED` keys automatically during chat.
-- Improve multi-token routing, provider locking, model discovery and diagnostics.
-- Add SoloHost `/api/v1` gateway aliases and local Ollama capability.
-- Improve Settings Activity Log and frontend key-health visibility.
+## 1.4.59
+
+- Manual Publish always uploads local source (overwrite). Re-check / Check image stay verify-only.
+- Diagnose & Fix marks pending GHCR checks stale and asks Run then Publish so repaired files are not left only on disk.
+
+## 1.4.58
+
+- GHCR container crash on Alpine + native modules (better-sqlite3) switches Dockerfile to Debian before rewriting Actions.
+- Workflow auto-repair is skipped when the app process dies; preview-pass is not treated as GHCR-pass.
+
+## 1.4.57
+
+- Preview bar explains limited preview and how to real-test via Run ZIP or Unlisted SoloHost.
+- Chat shows a GHCR/Actions error once, compacted, so it can be copied to an external AI.
+- DARE preflight runs node --check so syntax crashes like status(400.json) are caught before GitHub smoke.
+
+## 1.4.56
+
+- DARE repairs Express apps that do not serve public/ on /, the cause of Cannot GET / and blank SoloHost screens.
+- Bundled AI Meeting Assistant Rule for upgrading cannoi/ai-meeting-assistant.
+
+## 1.4.55
+
+- Rule engine loops 20–100 cycles and stops early when goals are met or the user must act.
+- Each cycle: Builder DARE first, then AI receives only the current task — never the full Rule.
+- Pasted Rule text uses the same multi-cycle engine as uploaded Rule files.
+
+## 1.4.53
+
+- Upgrade Workshop accepts Rule files (.rule/.yaml/.json/.md) plus pasted rules.
+- Rules are validated, capability gaps recorded, and secrets in rule files are rejected.
+- Bundled templates: media center, AI assistant, automation hub, time tracker, meeting assistant.
+
+## 1.4.52
+
+- Settings sheet scrolls on every screen size; fields are no longer hidden or clipped.
+- Preflight strips unnecessary npm --build-from-source before publish.
+- Run failures try one DARE fast-fix then automatically retry the same Run.
+
+## 1.4.51
+
+- Diagnose is automatic on preview/runtime failure; the Diagnose quick action is removed.
+- Advisor lives in Settings, observes history only, and never edits apps or Builder.
+- Evidence ledger invalidates NODE_MODULE_MISSING when the package exists and node-gyp failed.
+
+## 1.4.50
+
+- Job events no longer mark the whole Publish job done, so chat stays on the running work until the real result.
+- Missing-job recovery reconnects to the latest project job instead of cancelling.
+- Native sqlite compile failures are not treated as missing package.json entries.
+- Project Brain metadata is refreshed on Diagnose and Advisor.
+
+## 1.4.48
+
+- Skip SoloHost runtime preflight on Check image / waiting GHCR so Publish does not re-patch the same Dockerfile.
+- Treat an already-applied runtime permission contract as PASS, not RELEASE_RUNTIME_PREFLIGHT_STOPPED.
+- Route "fix publish" chat to GHCR status check when source is already on GitHub.
+
+## 1.4.47
+
+- Added deterministic SoloHost runtime preflight for application-owned writable paths used by non-root container users.
+- Fixed Improve/Diagnose flow to run DARE before AI for concrete runtime failures.
+- Added verified rollback when a deterministic repair does not produce a running app.
+- Tightened repeated-repair guard to stop the same unresolved problem after one automatic attempt.
+- Kept existing Create App, GitHub, GHCR, Preview, and SoloHost packaging architecture unchanged.
+
+## 1.4.46 — Deterministic repair loop guard
+
+- Stop repeated repairs by concrete runtime error fingerprint instead of changing user wording.
+- Do not rewrite GitHub smoke workflow for generic container crashes.
+- Classify runtime EACCES filesystem failures before generic smoke timeout handling.
+- Stop deterministic repair flow immediately when DARE loop protection triggers.
+
+## 1.4.45 — Runtime-parity smoke test + post-publish incident repair
+- GitHub Actions smoke tests now run the published image with its declared default runtime user; CI no longer masks SoloHost permission failures by forcing root.
+- DARE detects deterministic `EACCES: permission denied, mkdir '<path>'` runtime failures and can safely create/chown only the exact writable directory under the Docker WORKDIR for the declared non-root image user.
+- Post-publish error messages can be triaged before AI; deterministic repairs are attempted first, and published projects can be routed through a verified re-publish instead of repeated blind retries.
+- Unknown published runtime failures can include matching GitHub Actions run/log evidence in the AI diagnosis context.
+
+## 1.4.41
+- Upgrade Workshop: GitHub import now opens the inspected project and asks for the upgrade request.
+- Upgrade history is an append-only array.
+- Static HTML apps are not marked broken just because they lack package.json/Dockerfile.
+- Medium-risk plans can be applied after explicit user confirmation.
+- Baseline findings card is shown before the request prompt.
+
+# 1.4.40 — Upgrade Workshop + deterministic install hardening
+
+- Added an independent Upgrade Workshop flow: inspect → safe repair → baseline → diagnose → approve → minimal patch → verify/rollback.
+- Added public GitHub repository import into the Upgrade Workshop.
+- Added App Knowledge Map, baseline and upgrade history metadata with source evidence.
+- Added pre/post SHA-256 manifest checks so Upgrade can detect unexpected file changes and roll back.
+- Reused DARE for deterministic safe repairs before AI upgrade diagnosis.
+- Kept Create App, Preview, Provider Hub, GitHub Publisher and SoloHost release contracts unchanged.
+- Slimmed the Builder runtime image by removing unused `git-lfs`, `poppler-utils` and `zip` packages; `unzip`, Git, Chromium and existing runtime dependencies remain. This is specifically to reduce SoloHost image pull size without changing app behavior.
+
+## 1.4.39
+- Hardened DARE to run before AI for local test/preview failures and GitHub Actions repair.
+- Added deterministic source pre/post manifest checks so unexpected file changes are rejected.
+- Expanded dependency detection to JS/TS/JSX/TSX, dynamic imports, exports, scoped packages, and Node built-ins.
+- Made lockfile repair real (package-manager lockfile refresh) instead of reporting a no-op patch.
+- Limited SQLite auto-repair to a single proven data directory; no unrelated uploads directory or permission changes.
+- GitHub smoke test now requires the exact release image tag and no longer substitutes an arbitrary local image.
+- DARE repairs now checkpoint and roll back when verification/re-publish does not pass.
+
+## 1.4.38
+- DARE (Deterministic Auto Repair Engine) runs before AI on preview crash and GitHub Actions failure.
+- Safe rules: missing npm package, unique start script, localhost bind, sqlite data dirs, workflow packages:write.
+- Loop cap: one auto-repair per fingerprint per cycle. AI quota errors no longer block those fixes.
+- App-logic TypeErrors are not auto-patched.
+
+## 1.4.37
+- Deterministic GitHub Actions repair: if the image crashes with a missing Node package (example: sqlite3 used but not in package.json), Builder adds the dependency and republishes without waiting for AI quota.
+- New apps are scanned for require()/import vs package.json before the first GitHub push.
+- Smoke test sets PORT=8080 and resolves the locally built image tag if the version tag is missing.
+
+## 1.4.36
+- Publish no longer loops on a stale npm-test failure after a passing live preview.
+- Successful Run refreshes the saved verification report so Release can continue.
+- "Release blocked / tests failed" chat is routed to Run, not another Improve loop.
+- Chat lines persist across Preview → Back so work history is not lost.
+- Provider selector applies immediately (`ai.refresh`) and lists every connected provider.
+- SoloHost compose prefers Dockerfile EXPOSE, sets PORT, and never writes a local-only image name.
+
+## 1.4.35
+
+- Prevent repeated identical repair loops with a short-window action guard.
+- Refresh saved verification results after Improve so Publish never reuses stale failed tests.
+- Persist recent work history and restore it when returning from Preview or a new Builder session.
+- Make the main AI selector choose a connected provider immediately; keep verified two-model pairing available.
+- Lock explicit provider selection so AI cannot silently fall back to another legacy provider.
+- Normalize legacy Provider Hub model state before array operations.
+- Generate SoloHost install packages from the app's detected container port instead of assuming 8080.
+
+## 1.4.33
+
+- Fix Provider Hub crash models.find.
+- Add token is enough; first key wins. Settings: token list + GitHub + Save.
+
+# v1.4.33 — AI Provider Hub Simplified
+
+- Fixed malformed Provider Hub model state that caused `models.find is not a function`.
+- Added canonical `loadHub()` UI loading path and removed stale mode controls.
+- Simplified provider setup to Provider → Token → Add, then Save.
+- Added verified Model 1 + optional Model 2 (Builder + reviewer) selection.
+- Selected model pairs are used for code-task review without exposing provider credentials.
+
+## 1.4.31 — AI Provider Hub
+
+- Standardized AI Provider Hub is now the single Builder AI access layer.
+- Added encrypted-at-rest credential vault and removed new AI keys from Builder state/runtime secret persistence.
+- Added credential-first discovery, verified-model probing, AUTO/PROVIDER/MANUAL routing and bounded fallback.
+- Added adapters for OpenAI, Gemini, DeepSeek, Anthropic, OpenRouter, Groq, Mistral, xAI and custom OpenAI-compatible endpoints.
+- Kept existing Builder UI/workflows intact outside the AI connection layer.
+
+## 1.4.30
+
+- AI Provider Hub: shared adapters, credential validation, model discovery, AUTO routing and fallback.
+- Existing DeepSeek/Gemini keys migrate. Chat/build/repair still use ai.complete().
+
+## 1.4.29
+
+- Universal App Factory Expert Mode: CREATE / MODIFY / REPAIR / DIAGNOSE. Targeted changes are not blocked by diagnosis. App-type rules stay local to the project.
+- Job lock + live status stay on while AI repair/build runs so extra commands cannot start.
+- Rollback button on each Builder reply restores the latest checkpoint.
+- Help actions download Windows helpers: run-docker-app.ps1 and GitHub-ZIP-Image-Publisher-v5.0.ps1, with a short how-to in chat.
+
+## Reliability upgrade — 2026-09-21
+
+- GitHub publishing now follows an existing repository's default branch and generates the GHCR workflow with the exact release tag being published.
+- GitHub image uploads now discover and use the repository default branch instead of assuming `main`.
+- Builder requests now persist a 30-day work plan with per-step status, files changed, result/error notes, and a handoff for the next AI/session.
+- Edit/improve operations keep checkpoints, reject duplicate or oversized patch scopes, verify the result, and roll back when verification worsens.
+- AI calls use bounded timeouts, transient retry/fallback, safer model selection, and more actionable provider errors.
+- Project chat/activity history is server-persisted across browsers and pruned after 30 days; a new browser opens the most recently updated project.
+
+# Changelog
+
+## 1.4.26
+
+- GitHub release flow now waits for the exact pushed commit's GHCR image before creating the SoloHost install kit.
+- Failed GitHub Actions builds are read and classified; one low-risk AI repair can be proposed/applied, verified, and rolled back on regression.
+- Generated workflows test the actual container web port (including common ports such as 3000) before pushing the tested image.
+- Container-only Run uses the protected Sandbox automatically when available; ordinary Node/static projects stay on native preview.
+- AI provider/model switching is normalized with clearer auth, quota, model, network, and billing errors.
+- Settings uses a compact no-scroll key/token layout and keeps Sandbox setup automatic.
+- Build/Edit/Repair steps now checkpoint and verify forward progress before the next mutating step.
+- Builder keeps a proactive next-step guide for publish and SoloHost installation.
+
+
+## 1.4.13
+
+- ⬆ Zip imports an app, unpacks it, and flattens a single wrapper folder.
+- ⬇ Zip downloads a real .zip via blob (works in Pi Desktop WebView).
+- runWithRepair is inside the pipeline again so Run is not "runProject is not defined".
+
+
+## 1.4.14
+- Native preview serves index.html + /health even when package.json start script crashes (fixes fetch failed on Run).
+
+## 1.4.15
+- Preview iframe no longer proxies to Builder :8080. Uses the app preview port.
+
+## 1.4.16
+- Gemini 503/429 rotates to the next model instead of failing the whole request.
+- Bundled Sandbox Benchmark demo (🧪 Sandbox). Run advises testing sandbox first.
+- Preview proxies /api and /health to the spawned app process when present.
+
+## 1.4.17
+- Preview iframe now rewrites fetch("/api") and /health to /preview/<slug>/__app__/ so product APIs are not sent to Builder.
+
+## 1.4.18
+- Preview rewrites root CSS/image URLs and adds a base href so public assets load inside the iframe.
+- SMART BUILD MODE added to the Builder system prompt.
+
+## 1.4.19
+- ZIP import uses system unzip first so CSS/images from Windows/macOS zips extract fully.
+- Preview searches public/dist/www/static/assets and falls back to disk if the live preview port 404s an asset.
+
+## 1.4.20
+- Preview/sandbox DNS + PREVIEW_ONLINE so product apps can use the Internet.
+- Failures include WHY, FIX, and COPY_FOR_AI.
+- Repair prompt forbids full rewrites. Activity log is stored and sent to AI.
+
+## 1.4.22
+- RUN no longer treats every app that has Dockerfile/compose as a container-only app.
+- Native preview is used when index.html or a Node start script exists. Podman Sandbox is required only for image-only projects.
+
+## 1.4.23
+- Paste a GHCR image to generate SoloHost docker-compose.yml + config_options.yml without Run.
+- Replaced Windows publisher with GitHub-ZIP-Image-Publisher-v5.0.ps1.
+
+## 1.4.24
+- Publish uses git CLI first (1.4.21 path), GitHub API as fallback.
+- Fallback .ps1 is copied into the image and resolved from multiple paths.
+- RUN no longer blocks container-looking apps when Sandbox is absent; native preview is used.
+
+## 1.4.25
+- Windows GitHub publisher v5.0 only (Git Data API + Contents fallback).
+- Removed unused .bak files and the previous v4.0 script.
+
+## 1.4.27
+- Always wait for the matching GitHub Actions run (any workflow file).
+- Deterministic repair when smoke test misses the app listen port.
+- Compact Settings sheet so Save stays on screen.
+
+## 1.4.28
+- Builder Expert Mode: classify failure layer before any code edit.
+- SoloHost/GitHub/Preview/Docker/network reports inspect first; app code changes only with evidence.
