@@ -27,6 +27,7 @@ function maskKey(k){ if(!k) return ''; k=String(k); return k.length<=8?'****':k.
 
 function createAIService(options={}) {
   const cloudFallback = typeof options.cloudFallback === 'function' ? options.cloudFallback : null;
+  const builderReady = typeof options.builderReady === 'function' ? options.builderReady : () => false;
   const dataDir = options.dataDir || path.join(process.cwd(),'data');
   ensureDir(dataDir);
   const settingsFile = path.join(dataDir,'ai-settings.json');
@@ -61,8 +62,16 @@ function createAIService(options={}) {
     return publicSettings();
   }
   function publicSettings(){
-    return {provider:settings.provider||'none',model:settings.model||'auto',mode:settings.mode||'cloud_enabled',
-      baseUrl:settings.baseUrl||'',hasKey:!!settings.apiKey,maskedKey:maskKey(settings.apiKey)};
+    const linked = Boolean(builderReady());
+    return {
+      provider: settings.provider || 'none',
+      model: settings.model || 'auto',
+      mode: settings.mode || 'cloud_enabled',
+      baseUrl: settings.baseUrl || '',
+      hasKey: Boolean(settings.apiKey) || linked,
+      maskedKey: maskKey(settings.apiKey),
+      builderLinked: linked,
+    };
   }
   function log(level,msg,extra={}){
     try {
@@ -85,10 +94,10 @@ function createAIService(options={}) {
 
   function catalog(){ return providers.map(({id,name,kind})=>({id,name,kind})); }
   function configured(){
-    if(settings.mode==='local_only') return !!settings.baseUrl || settings.provider==='local';
+    if (builderReady()) return true;
     if(!settings.provider || settings.provider==='none') return false;
-    if(['custom','local'].includes(settings.provider)) return !!effectiveBaseUrl();
-    return !!settings.apiKey;
+    if(settings.provider==='local') return true;
+    return Boolean(settings.apiKey);
   }
 
   function providerMeta(){ return providers.find(p=>p.id===settings.provider)||{}; }
@@ -131,7 +140,8 @@ function createAIService(options={}) {
 - Prefer concise practical replies.
 - Return ONLY JSON with shape {"reply":"...","actions":[{"name":"allowed_name","args":{}}]} when actions are needed; otherwise {"reply":"...","actions":[]}.`;
     const msgs=[{role:'system',content:system},...history.slice(-8),{role:'user',content:String(message).slice(0,4000)}];
-    if(!configured()) {
+    if(!configured() || !(settings.provider && settings.provider !== 'none' && (settings.provider === 'local' || settings.apiKey))) {
+      // Prefer Builder coding AI, then offline App Builder guide (never foreign product copy)
       if (cloudFallback) {
         try {
           const fb = await cloudFallback({ message, history, context: live, knowledge: appKnowledge });
@@ -139,13 +149,13 @@ function createAIService(options={}) {
           if (text) {
             return { ok:true, reply:text, actions:Array.isArray(fb?.actions)?fb.actions:[], configured:true, provider:fb?.provider||'builder-hub', model:fb?.model||'auto', source:'builder-hub' };
           }
-        } catch (e) { /* fall through to offline local guide */ }
+        } catch (e) {}
       }
-      let reply = 'AI is not configured yet. Open this panel Settings to add a provider key, or configure coding AI in Builder Settings.';
+      let reply = 'App Builder — Pi SoloHost offline guide. Configure AI in top ⚙ Settings or this panel Settings.';
       if (typeof adapter.localReply === 'function') {
         try { reply = await adapter.localReply(String(message||''), live) || reply; } catch (e) {}
       }
-      return { ok:true, reply, actions:[], configured:false, provider:settings.provider, model:settings.model, source:'local' };
+      return { ok:true, reply, actions:[], configured:false, provider:settings.provider||'none', model:settings.model||'auto', source:'local' };
     }
     const baseUrl=effectiveBaseUrl();
     const meta={};
@@ -167,10 +177,36 @@ function createAIService(options={}) {
           } else throw e;
         } catch (retryErr) {
           log('error','ai.chat.fail',{provider:settings.provider,model:settings.model,error:retryErr.message});
+          if (cloudFallback) {
+            try {
+              const fb = await cloudFallback({ message, history, context: live, knowledge: appKnowledge });
+              const text = String(fb?.reply || fb?.text || '').trim();
+              if (text) return { ok:true, reply:text, actions:[], configured:true, provider:fb?.provider||'builder-hub', model:fb?.model||'auto', source:'builder-hub' };
+            } catch {}
+          }
+          if (typeof adapter.localReply === 'function') {
+            try {
+              const reply = await adapter.localReply(String(message||''), live);
+              if (reply) return { ok:true, reply, actions:[], configured:false, provider:settings.provider, model:settings.model, source:'local' };
+            } catch {}
+          }
           throw retryErr;
         }
       } else {
         log('error','ai.chat.fail',{provider:settings.provider,model:settings.model,error:e.message});
+        if (cloudFallback) {
+          try {
+            const fb = await cloudFallback({ message, history, context: live, knowledge: appKnowledge });
+            const text = String(fb?.reply || fb?.text || '').trim();
+            if (text) return { ok:true, reply:text, actions:[], configured:true, provider:fb?.provider||'builder-hub', model:fb?.model||'auto', source:'builder-hub' };
+          } catch {}
+        }
+        if (typeof adapter.localReply === 'function') {
+          try {
+            const reply = await adapter.localReply(String(message||''), live);
+            if (reply) return { ok:true, reply, actions:[], configured:false, provider:settings.provider, model:settings.model, source:'local' };
+          } catch {}
+        }
         throw e;
       }
     }

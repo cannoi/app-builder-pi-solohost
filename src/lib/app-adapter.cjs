@@ -1,61 +1,39 @@
 'use strict';
-/**
- * App Builder — Pi SoloHost adapter for Universal AI panel.
- * Keep knowledge in sync with product behavior (Publish gate, access password, FAB panel).
- */
 module.exports = {
   knowledge: `
-App Builder — Pi SoloHost helps everyday users create apps for Pi Network SoloHost.
+App Builder — Pi SoloHost (Pi Network).
+Help users create, test, repair, and publish SoloHost apps.
 
-LANGUAGE
-- Reply in the user's language (Vietnamese or English). Keep answers short and practical.
+Reply in the user's language (Vietnamese or English). Keep answers short.
 
-MAIN FLOW
-1. Describe the app idea in the main Builder chat (any language).
-2. Builder plans, generates source, runs tests, opens a safe preview (▶ Run).
-3. Improve with feedback in the main chat; use Improve when something breaks.
-4. Publish (🚀) needs: successful Run + GitHub owner + GitHub token in top ⚙ Settings.
-5. After Publish, GitHub Actions builds the GHCR image for SoloHost install.
+WHAT THIS APP DOES
+- Turn an idea into a working SoloHost app (main chat).
+- ▶ Run: safe local preview.
+- Improve: repair from user feedback.
+- 🚀 Publish: needs successful Run + GitHub owner + token in top ⚙ Settings.
+- Robot panel: guide chat, Feedback Hub notices, optional extra AI key, logs.
 
-UI MAP
-- Main chat: build / improve / publish the project (coding AI from top Settings).
-- Top ⚙ Settings: GitHub owner/token, coding AI providers (Gemini, DeepSeek, Custom hub), activity log, AI Advisor.
-- Robot FAB (bottom-right): this assistant panel — Chat | Feedback | Settings | Logs.
-  · Panel Chat: guide questions (offline local guide if no API key).
-  · Panel Feedback: send feedback + Hub notices (badge). Donate appears only from Hub sync.
-  · Panel Settings: optional separate API key for this assistant (Custom/Local/Gemini/…).
-- BUILDER_ACCESS_PASSWORD (SoloHost env): if set, users must unlock via /login.html before using Builder.
+UI
+- Main chat = build/improve (uses coding AI from ⚙ Settings).
+- Robot FAB = this assistant (uses coding AI automatically if panel has no key).
+- ⚙ Settings = GitHub token + coding AI providers (Gemini, DeepSeek, Custom/Personal AI Hub as a *provider*, not this product's identity).
 
-PUBLISH RULES
-- Without GitHub username + token in Settings, Publish is blocked with a clear error.
-- Run must pass (preview healthy) before Publish.
-- Security scan must not have critical issues.
-
-LIMITS & SAFETY
-- No docker.sock. Preview is sandboxed.
-- Never ask for wallet seed phrases, private keys, or Pi mnemonic.
-- Ingest / Hub tokens never appear in the browser; Feedback goes through server routes only.
+IMPORTANT
+- This product is App Builder, NOT "Personal AI Hub".
+- Personal AI Hub may be used only as an optional Custom provider base URL.
+- Never ask for wallet seeds or private keys.
+- Publish without GitHub token is blocked on purpose.
 `,
 
   actions: [
-    { name: 'open_builder_settings', description: 'Open top Settings for GitHub token and coding AI providers.' },
-    { name: 'explain_publish', description: 'Explain Publish prerequisites: Run OK + GitHub owner/token.' },
-    { name: 'explain_preview', description: 'Explain ▶ Run and preview on SoloHost.' },
-    { name: 'explain_feedback', description: 'Explain Feedback tab and Hub notices badge.' },
+    { name: 'open_builder_settings', description: 'Open top Settings for GitHub and coding AI.' },
+    { name: 'explain_publish', description: 'Explain Publish requirements.' },
+    { name: 'explain_preview', description: 'Explain Run/preview.' },
+    { name: 'explain_feedback', description: 'Explain Feedback tab.' },
   ],
 
   async getContext(ctx) {
-    return {
-      app: 'App Builder — Pi SoloHost',
-      surface: 'universal-ai-panel',
-      features: [
-        'publish_requires_github_token',
-        'optional_access_password',
-        'universal_feedback_panel',
-        'coding_ai_hub_in_top_settings',
-      ],
-      ...(ctx || {}),
-    };
+    return { app: 'App Builder — Pi SoloHost', surface: 'robot-panel', ...(ctx || {}) };
   },
 
   async executeAction({ name }) {
@@ -65,41 +43,42 @@ LIMITS & SAFETY
   },
 
   async localReply(message) {
-    const m = String(message || '').toLowerCase();
-    const vi = /[àáạảãâăđèéêìíòóôơùúưý]|bạn|tôi|không|cách|làm|gì|xin chào|chào/.test(String(message || ''));
-    if (/^(xin\s*)?chào|hello|hi\b|hey\b/.test(m.trim())) {
-      return vi
-        ? 'Xin chào! Tôi là trợ lý App Builder — Pi SoloHost. Bạn có thể mô tả ý tưởng app trong chat chính để Build, bấm ▶ Run xem preview, và Publish khi đã có GitHub token trong ⚙ Settings. Hỏi tôi về Publish, preview, Feedback hoặc Settings.'
-        : 'Hello! I am the App Builder — Pi SoloHost assistant. Describe your app idea in the main chat to Build, tap ▶ Run for preview, and Publish after saving a GitHub token in ⚙ Settings. Ask me about Publish, preview, Feedback, or Settings.';
-    }
+    const raw = String(message || '');
+    const m = raw.toLowerCase();
+    const vi = /[àáạảãâăèéêìíòóôơùúưýăđ]|bạn|tôi|không|xin chào|chào|làm gì|ứng dụng/.test(raw);
 
-    if (/publish|xuất bản|xuat ban|github/.test(m)) {
+    if (/^(xin\s*)?chào|hello|hi\b|hey\b|alo/.test(m.trim())) {
       return vi
-        ? 'Để Publish: (1) ▶ Run thành công, (2) ⚙ Settings → nhập GitHub owner + token → Save, (3) bấm 🚀 Publish. Thiếu token thì Publish bị chặn.'
-        : 'To Publish: (1) Run successfully, (2) ⚙ Settings → GitHub owner + token → Save, (3) tap 🚀 Publish. Without a token, Publish is blocked.';
+        ? 'Xin chào! Tôi là trợ lý App Builder — Pi SoloHost. Mô tả ý tưởng app ở chat chính để Build, bấm ▶ Run xem preview, cấu hình GitHub token ở ⚙ rồi Publish. Hỏi tôi về Publish, preview hoặc Feedback.'
+        : 'Hello! I am the App Builder — Pi SoloHost assistant. Describe your app in the main chat to Build, tap ▶ Run for preview, add a GitHub token in ⚙ Settings, then Publish. Ask me about Publish, preview, or Feedback.';
     }
-    if (/preview|run|chạy|chay/.test(m)) {
+    if (/làm gì|what.*(app|this)|app này/.test(m)) {
       return vi
-        ? 'Bấm ▶ Run để mở preview an toàn. Nếu lỗi, mô tả trong chat chính để Improve, rồi Publish khi sẵn sàng.'
-        : 'Tap ▶ Run for a safe local preview. If something fails, describe it in the main chat to Improve, then Publish when ready.';
+        ? 'App Builder giúp bạn tạo app SoloHost cho Pi Network: mô tả ý tưởng → AI sinh code → Run thử → Improve → Publish lên GitHub/GHCR.'
+        : 'App Builder helps you create SoloHost apps for Pi Network: describe an idea → AI generates code → Run → Improve → Publish to GitHub/GHCR.';
     }
-    if (/password|mật khẩu|mat khau|access|đăng nhập|dang nhap/.test(m)) {
+    if (/publish|xuất bản|github/.test(m)) {
       return vi
-        ? 'Nếu SoloHost đặt BUILDER_ACCESS_PASSWORD, mở /login.html và nhập mật khẩu đó trước khi dùng Builder.'
-        : 'If SoloHost sets BUILDER_ACCESS_PASSWORD, open /login.html and enter that password before using Builder.';
+        ? 'Publish cần: (1) ▶ Run OK, (2) ⚙ Settings → GitHub owner + token → Save, (3) 🚀 Publish. Thiếu token sẽ bị chặn.'
+        : 'Publish needs: (1) successful Run, (2) ⚙ Settings → GitHub owner + token → Save, (3) 🚀 Publish. Missing token blocks Publish.';
     }
-    if (/feedback|góp ý|gop y|badge/.test(m)) {
+    if (/preview|run|chạy/.test(m)) {
       return vi
-        ? 'Mở tab Feedback trên panel robot để gửi góp ý hoặc đọc thông báo Hub. Badge chỉ hiện khi còn thông báo chưa đọc. Thông tin ủng hộ chỉ lấy từ Hub, không hard-code.'
-        : 'Open the Feedback tab on the robot panel to send feedback or read Hub notices. The badge shows only when there are unread notices. Donate info comes from Hub sync only.';
+        ? 'Bấm ▶ Run để mở preview an toàn. Lỗi thì mô tả trong chat chính để Improve.'
+        : 'Tap ▶ Run for a safe preview. If it fails, describe the issue in the main chat to Improve.';
     }
-    if (/ai|model|provider|key|token|gemini|deepseek/.test(m)) {
+    if (/feedback|góp ý/.test(m)) {
       return vi
-        ? 'Panel này có Settings AI riêng (provider + API key). ⚙ Settings trên cùng cấu hình AI coding (tạo/sửa app). Cả hai đều hỗ trợ Custom / Personal AI Hub.'
-        : 'This panel has its own AI Settings (provider + API key). Top ⚙ Settings configures the coding AI that builds/repairs apps. Both support Custom / Personal AI Hub.';
+        ? 'Tab Feedback trên panel robot: gửi góp ý và đọc thông báo Hub. Badge chỉ hiện khi còn thông báo chưa đọc.'
+        : 'Feedback tab on the robot panel: send feedback and read Hub notices. Badge shows only when unread notices exist.';
+    }
+    if (/ai|model|key|token|provider/.test(m)) {
+      return vi
+        ? 'AI coding cấu hình ở ⚙ Settings trên cùng. Panel robot dùng chung AI đó nếu bạn chưa dán key riêng trong panel Settings.'
+        : 'Coding AI is configured in top ⚙ Settings. The robot panel reuses that AI when you have not set a separate panel key.';
     }
     return vi
-      ? 'Tôi là hướng dẫn offline của App Builder — Pi SoloHost. Thêm API key trong Settings của panel để chat AI đầy đủ. Hỏi về build, preview, Publish, GitHub token hoặc Feedback.'
-      : 'I am the offline guide for App Builder — Pi SoloHost. Add an API key in this panel\'s Settings for full AI chat. Ask about build, preview, Publish, GitHub token, or Feedback.';
+      ? 'Hướng dẫn offline App Builder — Pi SoloHost. Thêm AI ở ⚙ Settings để chat đầy đủ. Hỏi về build, Run, Publish hoặc Feedback.'
+      : 'Offline guide for App Builder — Pi SoloHost. Add AI in ⚙ Settings for full chat. Ask about build, Run, Publish, or Feedback.';
   },
 };
