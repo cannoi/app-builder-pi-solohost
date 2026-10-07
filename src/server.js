@@ -16,6 +16,7 @@ import { registerRoutes } from './api/routes.js';
 import { createApp, listen } from './http.js';
 import { createPreviewHandler } from './preview.js';
 import { gcDocker, reapIdlePreviews } from './docker/cleanup.js';
+import { mountUniversalModules } from './universal/mount-universal.js';
 
 const cfg = loadConfig();
 const log = createLogger(cfg.logLevel);

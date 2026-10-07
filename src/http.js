@@ -28,6 +28,7 @@ export function createApp() {
   const app = {
     get: (r, h) => add('GET', r, h),
     post: (r, h) => add('POST', r, h),
+    delete: (r, h) => add('DELETE', r, h),
     use() {},
     async handle(req, res) {
       const url = new URL(req.url, 'http://localhost');

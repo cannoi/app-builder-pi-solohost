@@ -126,14 +126,14 @@ export function registerRoutes(r, app) {
   });
 
 
+  // Legacy alias — never expose ingestToken to the browser
   r.get('/api/shfh-config', (_req, res) => {
     const hub = cfg.feedbackHub || {};
-    const hubUrl = String(hub.url || 'http://14.176.78.46:8090').replace(/\/$/, '');
+    const hubUrl = String(hub.url || process.env.SHFH_HUB_URL || '').replace(/\/$/, '');
     res.json({
-      hubId: hub.hubId || 'FH-CANNOI-0905428801SH',
+      hubId: hub.hubId || process.env.SHFH_HUB_ID || '',
       hubUrl,
-      formUrl: hubUrl + '/feedback',
-      ingestToken: hub.ingestToken || '',
+      formUrl: hubUrl ? hubUrl + '/feedback' : '',
       appId: hub.appId || 'app-builder-pi-solohost',
       appName: hub.appName || 'App Builder — Pi SoloHost',
       version: cfg.version,
