@@ -1093,6 +1093,9 @@ async function loadFeedbackConfig() {
   return state.feedbackConfig;
 }
 async function initFeedbackHub() {
+  // UNIVERSAL_PANEL_OWNS_FEEDBACK — old SHFH UI disabled; robot panel handles Feedback
+  return;
+
   if (!window.SHFH) return;
   const cfg = state.feedbackConfig || await loadFeedbackConfig();
   const hubUrl = cfg?.hubUrl || FEEDBACK_HUB_URL;

@@ -142,45 +142,7 @@ export function registerRoutes(r, app) {
     });
   });
 
-  r.post('/api/feedback/submit', async (req, res) => {
-    const hubUrl = String(cfg.feedbackHub?.url || 'http://14.176.78.46:8090').replace(/\/$/, '');
-    if (!hubUrl) return res.status(503).json({ ok: false, error: 'Feedback Hub is not configured.' });
-    const message = String(req.body?.message || '').trim();
-    if (!message) return res.status(400).json({ ok: false, error: 'Feedback message is required.' });
-    const type = ['bug', 'improvement', 'question'].includes(String(req.body?.type)) ? String(req.body.type) : 'improvement';
-    const payload = {
-      schema_version: '2.2',
-      app_id: cfg.feedbackHub.appId || 'app-builder-pi-solohost',
-      app_name: 'App Builder — Pi SoloHost',
-      version: cfg.version,
-      platform: 'solohost',
-      anonymous_id: String(req.body?.anonymousId || ''),
-      installed_at: String(req.body?.installedAt || ''),
-      locale: String(req.body?.locale || cfg.locale || 'en'),
-      event: 'feedback',
-      type,
-      rating: Number(req.body?.rating) || 0,
-      message,
-    };
-    try {
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 12000);
-      const upstream = await fetch(hubUrl + '/api/feedback', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Accept: 'application/json', ...(cfg.feedbackHub?.ingestToken ? { Authorization: 'Bearer ' + cfg.feedbackHub.ingestToken } : {}) },
-        body: JSON.stringify(payload),
-        signal: controller.signal,
-      });
-      clearTimeout(timer);
-      const text = await upstream.text();
-      let data = {};
-      try { data = JSON.parse(text); } catch {}
-      if (!upstream.ok) return res.status(502).json({ ok: false, error: data.error || ('Feedback Hub HTTP ' + upstream.status) });
-      return res.json({ ok: true, upstream: data });
-    } catch (err) {
-      return res.status(502).json({ ok: false, error: err?.name === 'AbortError' ? 'Feedback Hub timeout.' : 'Feedback Hub is unreachable.' });
-    }
-  });
+  // legacy /api/feedback/submit removed — use Universal Feedback POST /api/feedback
 
   r.get('/api/access/status', (_req, res) => {
     res.json({ passwordRequired: accessPasswordConfigured(cfg) });

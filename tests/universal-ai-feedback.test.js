@@ -60,3 +60,8 @@ test('mountUniversalModules loads without throw', async () => {
   });
   assert.ok(true);
 });
+
+test('server.js actually mounts universal modules', () => {
+  const src = fs.readFileSync(path.join(root, 'src/server.js'), 'utf8');
+  assert.match(src, /mountUniversalModules\(app/);
+});
