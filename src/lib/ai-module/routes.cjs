@@ -18,12 +18,17 @@ function mountAIRoutes(router, ai) {
   router.post('/api/ai/chat', async(req,res)=>{
     try {
       const b=req.body||{};
+      const msg = String(b.message||'').slice(0,80);
+      ai.log('info','ai.chat.request',{hasMessage:Boolean(b.message),len:String(b.message||'').length,preview:msg,source:b.context?.surface||'panel'});
+      console.log('[ai-panel] POST /api/ai/chat', msg);
       if(!b.message) return res.status(400).json({ok:false,error:'message required'});
       const out=await ai.chat({message:b.message,history:Array.isArray(b.history)?b.history.slice(-8):[],context:b.context||{},knowledge:b.knowledge});
-      ai.log('info','ai.chat',{provider:out.provider,model:out.model});
+      ai.log('info','ai.chat',{provider:out.provider,model:out.model,source:out.source,replyLen:String(out.reply||'').length});
+      console.log('[ai-panel] chat ok', out.source||out.provider, String(out.reply||'').slice(0,60));
       res.json(out);
     } catch(e){
       ai.log('error','ai.chat.fail',{error:e.message});
+      console.error('[ai-panel] chat fail', e.message);
       res.status(502).json({ok:false,error:safePublicError(e),code:errorCode(e)});
     }
   });

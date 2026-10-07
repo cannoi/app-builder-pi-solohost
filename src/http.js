@@ -29,6 +29,7 @@ export function createApp() {
     get: (r, h) => add('GET', r, h),
     post: (r, h) => add('POST', r, h),
     delete: (r, h) => add('DELETE', r, h),
+    options: (r, h) => add('OPTIONS', r, h),
     use() {},
     async handle(req, res) {
       const url = new URL(req.url, 'http://localhost');
@@ -68,6 +69,23 @@ export function listen(app, { port, bind, publicDir, log, preview = null, cfg = 
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('X-Frame-Options', 'SAMEORIGIN');
     res.setHeader('Referrer-Policy', 'no-referrer');
+    // CORS for AI panel / Feedback (same-origin + SoloHost reverse-proxy / iframe cases)
+    const origin = req.headers.origin;
+    if (origin) {
+      res.setHeader('Access-Control-Allow-Origin', origin);
+      res.setHeader('Access-Control-Allow-Credentials', 'true');
+      res.setHeader('Vary', 'Origin');
+    } else {
+      res.setHeader('Access-Control-Allow-Origin', '*');
+    }
+    res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-AI-Key, X-Builder-Access, X-Requested-With, Accept');
+    res.setHeader('Access-Control-Max-Age', '86400');
+    if (req.method === 'OPTIONS') {
+      res.writeHead(204);
+      res.end();
+      return;
+    }
     try {
       const url = new URL(req.url, 'http://localhost');
       req.path = url.pathname;

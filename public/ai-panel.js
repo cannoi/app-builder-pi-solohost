@@ -151,7 +151,11 @@ async function sendAI() {
       (local ? '<div style="opacity:.55;font-size:.75rem">Local guide</div>' : ''));
   } catch (e) {
     loading.remove();
-    appendMsg('ai', escapeHtml(e.message || 'AI connection failed'));
+    console.error('[ai-panel] sendAI failed', e);
+    const tip = /ACCESS_PASSWORD|401/.test(String(e.message||''))
+      ? '<div style="opacity:.7;font-size:.75rem;margin-top:4px">Open /login.html if Builder access password is enabled.</div>'
+      : '<div style="opacity:.7;font-size:.75rem;margin-top:4px">Check panel Settings or top ⚙ coding AI. See browser console for details.</div>';
+    appendMsg('ai', escapeHtml(e.message || 'AI connection failed') + tip);
   }
 }
 document.getElementById('aiSend')?.addEventListener('click', sendAI);

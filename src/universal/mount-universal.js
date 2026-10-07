@@ -94,7 +94,7 @@ export function mountUniversalModules(app, { cfg, log, builderAI = null } = {}) 
   const fbOpts = {
     appId: cfg?.feedbackHub?.appId || process.env.FEEDBACK_APP_ID || SHFH_DEFAULTS.appId,
     appName: cfg?.feedbackHub?.appName || SHFH_DEFAULTS.appName,
-    version: cfg?.version || '1.4.75',
+    version: cfg?.version || '1.4.76',
     hubId: process.env.SHFH_HUB_ID || cfg?.feedbackHub?.hubId || SHFH_DEFAULTS.hubId,
     baseUrl: process.env.SHFH_HUB_URL || cfg?.feedbackHub?.url || SHFH_DEFAULTS.baseUrl,
     ingestToken: process.env.SHFH_INGEST_TOKEN || cfg?.feedbackHub?.ingestToken || SHFH_DEFAULTS.ingestToken,

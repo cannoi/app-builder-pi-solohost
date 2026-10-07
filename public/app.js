@@ -1135,9 +1135,6 @@ function updateFeedbackBadge(count) {
   badge.textContent = n > 99 ? '99+' : String(n);
 }
 async function openFeedback() {
-  // Redirect to universal robot panel Feedback tab
-  const fab = document.getElementById('aiFab');
-  if (fab) { fab.click(); setTimeout(() => document.querySelector('.tab[data-tab="feedback"]')?.click(), 50); return; }
   const modal = $('feedbackModal');
   if (!modal) return;
   modal.hidden = false;
