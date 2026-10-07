@@ -26,6 +26,7 @@ function ensureDir(dir){ fs.mkdirSync(dir,{recursive:true}); }
 function maskKey(k){ if(!k) return ''; k=String(k); return k.length<=8?'****':k.slice(0,4)+'…'+k.slice(-4); }
 
 function createAIService(options={}) {
+  const cloudFallback = typeof options.cloudFallback === 'function' ? options.cloudFallback : null;
   const dataDir = options.dataDir || path.join(process.cwd(),'data');
   ensureDir(dataDir);
   const settingsFile = path.join(dataDir,'ai-settings.json');
@@ -131,7 +132,16 @@ function createAIService(options={}) {
 - Return ONLY JSON with shape {"reply":"...","actions":[{"name":"allowed_name","args":{}}]} when actions are needed; otherwise {"reply":"...","actions":[]}.`;
     const msgs=[{role:'system',content:system},...history.slice(-8),{role:'user',content:String(message).slice(0,4000)}];
     if(!configured()) {
-      let reply = 'AI chưa được cấu hình. Mở Settings để chọn Provider và dán API key. Game vẫn chơi bình thường.';
+      if (cloudFallback) {
+        try {
+          const fb = await cloudFallback({ message, history, context: live, knowledge: appKnowledge });
+          const text = String(fb?.reply || fb?.text || '').trim();
+          if (text) {
+            return { ok:true, reply:text, actions:Array.isArray(fb?.actions)?fb.actions:[], configured:true, provider:fb?.provider||'builder-hub', model:fb?.model||'auto', source:'builder-hub' };
+          }
+        } catch (e) { /* fall through to offline local guide */ }
+      }
+      let reply = 'AI is not configured yet. Open this panel Settings to add a provider key, or configure coding AI in Builder Settings.';
       if (typeof adapter.localReply === 'function') {
         try { reply = await adapter.localReply(String(message||''), live) || reply; } catch (e) {}
       }

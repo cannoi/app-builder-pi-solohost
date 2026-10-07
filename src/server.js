@@ -80,7 +80,7 @@ setInterval(() => {
 
 const app = createApp();
 registerRoutes(app, ctx);
-mountUniversalModules(app, { cfg, log });
+mountUniversalModules(app, { cfg, log, builderAI: ai });
 
 const publicDir = path.resolve(path.dirname(new URL(import.meta.url).pathname), '../public');
 const server = listen(app, {

@@ -66,7 +66,12 @@ LIMITS & SAFETY
 
   async localReply(message) {
     const m = String(message || '').toLowerCase();
-    const vi = /[àáạảãâăđèéêìíòóôơùúưý]|bạn|tôi|không|cách|làm|gì/.test(String(message || ''));
+    const vi = /[àáạảãâăđèéêìíòóôơùúưý]|bạn|tôi|không|cách|làm|gì|xin chào|chào/.test(String(message || ''));
+    if (/^(xin\s*)?chào|hello|hi\b|hey\b/.test(m.trim())) {
+      return vi
+        ? 'Xin chào! Tôi là trợ lý App Builder — Pi SoloHost. Bạn có thể mô tả ý tưởng app trong chat chính để Build, bấm ▶ Run xem preview, và Publish khi đã có GitHub token trong ⚙ Settings. Hỏi tôi về Publish, preview, Feedback hoặc Settings.'
+        : 'Hello! I am the App Builder — Pi SoloHost assistant. Describe your app idea in the main chat to Build, tap ▶ Run for preview, and Publish after saving a GitHub token in ⚙ Settings. Ask me about Publish, preview, Feedback, or Settings.';
+    }
 
     if (/publish|xuất bản|xuat ban|github/.test(m)) {
       return vi
