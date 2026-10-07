@@ -1,6 +1,6 @@
 /**
- * Mount Universal AI + Feedback onto Builder.
- * Unifies robot-panel AI with Builder coding AI hub when panel has no own key.
+ * Mount Universal AI + Feedback.
+ * Panel AI routes delegate to Builder AIGateway (single AI plane).
  */
 import { createRequire } from 'node:module';
 import fs from 'node:fs';
@@ -30,7 +30,7 @@ function resolveLibRoot() {
   for (const dir of candidates) {
     if (fs.existsSync(path.join(dir, 'ai-module', 'ai-service.cjs'))) return dir;
   }
-  throw new Error('Universal AI modules not found under src/lib or lib. Checked: ' + candidates.join(', '));
+  throw new Error('Universal AI modules not found under src/lib or lib.');
 }
 
 export function mountUniversalModules(app, { cfg, log, builderAI = null } = {}) {
@@ -41,69 +41,38 @@ export function mountUniversalModules(app, { cfg, log, builderAI = null } = {}) 
   const adapter = require(path.join(libRoot, 'app-adapter.cjs'));
 
   const dataDir = path.join(root, 'data');
-  try { fs.mkdirSync(dataDir, { recursive: true }); } catch { /* ok */ }
+  try {
+    fs.mkdirSync(dataDir, { recursive: true });
+  } catch {}
 
-  async function cloudFallback({ message, history }) {
-    if (!builderAI || typeof builderAI.complete !== 'function') return null;
-    try {
-      const st = typeof builderAI.status === 'function' ? builderAI.status() : {};
-      if (!st?.configured) return null;
-      const system = [
-        adapter.knowledge || '',
-        'You are the in-app assistant for App Builder — Pi SoloHost.',
-        'Reply in the user\'s language (Vietnamese or English). Be short and practical.',
-        'Help with: build app, preview/Run, Publish (needs GitHub token), Feedback panel, Settings.',
-        'Never ask for wallet seeds or private keys. Never expose secrets.',
-      ].join('\n');
-      const hist = Array.isArray(history) ? history.slice(-6) : [];
-      const prompt = hist.length
-        ? `${hist.map((h) => `${h.role}: ${h.content}`).join('\n')}\nuser: ${message}`
-        : String(message || '');
-      const out = await builderAI.complete({
-        task: 'USER_CHAT',
-        prompt,
-        system,
-        json: false,
-      });
-      const reply = String(out?.text || out?.reply || out?.content || '').trim();
-      if (!reply) return null;
-      return { reply, provider: out?.provider || 'builder-hub', model: out?.model || 'auto' };
-    } catch (err) {
-      log?.warn?.('builder AI fallback for panel chat failed', { error: String(err?.message || err) });
-      return null;
-    }
-  }
-
+  // Panel-local service kept for logs + last-resort offline only (NOT a second AI plane)
   const ai = createAIService({
     dataDir,
     appName: cfg?.title || cfg?.appName || SHFH_DEFAULTS.appName,
     adapter,
-    cloudFallback,
     builderReady: () => {
       try {
-        return Boolean(builderAI && typeof builderAI.status === 'function' && builderAI.status()?.configured);
-      } catch { return false; }
+        return Boolean(builderAI?.status?.()?.configured);
+      } catch {
+        return false;
+      }
     },
   });
-  mountAIRoutes(app, ai);
 
-  // Status enrichment: show configured when Builder coding AI is ready
-  const origStatus = app; // routes already mounted; wrap GET /api/ai/status via extra route is hard — instead patch publicSettings
-  // Re-register status is not easy; chat path uses cloudFallback which is enough.
+  mountAIRoutes(app, ai, { builderAI, adapter });
 
   const fbOpts = {
     appId: cfg?.feedbackHub?.appId || process.env.FEEDBACK_APP_ID || SHFH_DEFAULTS.appId,
     appName: cfg?.feedbackHub?.appName || SHFH_DEFAULTS.appName,
-    version: cfg?.version || '1.4.76',
+    version: cfg?.version || '1.4.77',
     hubId: process.env.SHFH_HUB_ID || cfg?.feedbackHub?.hubId || SHFH_DEFAULTS.hubId,
     baseUrl: process.env.SHFH_HUB_URL || cfg?.feedbackHub?.url || SHFH_DEFAULTS.baseUrl,
     ingestToken: process.env.SHFH_INGEST_TOKEN || cfg?.feedbackHub?.ingestToken || SHFH_DEFAULTS.ingestToken,
   };
-
   const fb = createFeedbackService(fbOpts);
   mountFeedbackRoutes(app, fb);
 
-  log?.info?.('Universal AI + Feedback mounted (unified with Builder AI)', {
+  log?.info?.('Universal AI + Feedback mounted (Panel → Builder AIGateway)', {
     appId: fbOpts.appId,
     hubId: fbOpts.hubId,
     libRoot,

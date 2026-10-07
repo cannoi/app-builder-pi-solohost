@@ -3,3 +3,13 @@
 {"ts":"2026-10-07T05:50:24.101Z","level":"error","msg":"ai.chat.fail","provider":"custom","model":"auto","error":"Cannot reach http://127.0.0.1:1/v1/models: fetch failed"}
 {"ts":"2026-10-07T07:37:35.009Z","level":"info","msg":"ai.chat.request","hasMessage":true,"len":8,"preview":"xin chào","source":"panel"}
 {"ts":"2026-10-07T07:37:35.011Z","level":"info","msg":"ai.chat","provider":"none","model":"auto","source":"local","replyLen":196}
+{"ts":"2026-10-07T08:06:11.936Z","level":"info","msg":"ai.chat.request","hasMessage":true,"len":24,"preview":"Xin chào, app này là gì?","builderConfigured":true}
+{"ts":"2026-10-07T08:06:11.937Z","level":"info","msg":"ai.chat","provider":"gemini","model":"gemini-x","source":"builder-hub","replyLen":43}
+{"ts":"2026-10-07T08:06:11.961Z","level":"info","msg":"ai.chat.request","hasMessage":true,"len":5,"preview":"hello","builderConfigured":true}
+{"ts":"2026-10-07T08:06:11.961Z","level":"info","msg":"ai.chat","provider":"deepseek","model":"deepseek-chat","source":"builder-hub","replyLen":26}
+{"ts":"2026-10-07T08:06:11.969Z","level":"info","msg":"ai.chat.request","hasMessage":true,"len":25,"preview":"Tôi muốn tạo app máy tính","builderConfigured":true}
+{"ts":"2026-10-07T08:06:11.969Z","level":"info","msg":"ai.chat","provider":"gemini","model":"gemini-x","source":"builder-hub","replyLen":35}
+{"ts":"2026-10-07T08:06:11.980Z","level":"info","msg":"ai.chat.request","hasMessage":true,"len":8,"preview":"xin chào","builderConfigured":false}
+{"ts":"2026-10-07T08:06:11.983Z","level":"info","msg":"ai.chat","source":"local","offline":true}
+{"ts":"2026-10-07T08:06:11.994Z","level":"info","msg":"ai.chat.request","hasMessage":true,"len":4,"preview":"test","builderConfigured":true}
+{"ts":"2026-10-07T08:06:11.995Z","level":"error","msg":"ai.chat.builder_fail","error":"gemini request failed","code":502}

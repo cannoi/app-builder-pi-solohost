@@ -127,11 +127,17 @@ async function refreshStatus() {
   const dot = document.getElementById('aiStatusDot');
   try {
     const j = await ai.status();
-    const configured = !!(j.configured || (j.settings && j.settings.hasKey));
-    const provider = (j.settings && j.settings.provider) || j.provider || '';
-    if (bar) bar.textContent = configured ? ('AI ready · ' + provider) : 'Local guide ON · add key in Settings';
+    const configured = !!(j.configured || j.settings?.hasKey || j.settings?.builderLinked);
+    const provider = j.provider || j.settings?.provider || '';
+    const label = provider && provider !== 'none' ? provider : 'Builder AI';
+    if (bar) {
+      bar.textContent = configured
+        ? ('AI ready · ' + label)
+        : 'AI unavailable · configure provider in ⚙ Settings';
+    }
     if (dot) { dot.classList.toggle('on', configured); dot.classList.toggle('off', !configured); }
   } catch (e) {
+    console.error('[ai-panel] status', e);
     if (bar) bar.textContent = 'AI unavailable';
   }
 }
