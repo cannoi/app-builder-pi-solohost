@@ -9,8 +9,8 @@ const require = createRequire(import.meta.url);
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 test('catalog lists all expected providers', () => {
-  const { createAIService } = require(path.join(root, 'lib/ai-module/ai-service.cjs'));
-  const adapter = require(path.join(root, 'lib/app-adapter.cjs'));
+  const { createAIService } = require(path.join(root, 'src/lib/ai-module/ai-service.cjs'));
+  const adapter = require(path.join(root, 'src/lib/app-adapter.cjs'));
   const ai = createAIService({ dataDir: path.join(root, 'data'), appName: 'Test', adapter });
   const ids = ai.catalog().map((p) => p.id);
   for (const id of ['openai', 'gemini', 'deepseek', 'anthropic', 'openrouter', 'groq', 'mistral', 'xai', 'custom', 'local']) {
@@ -19,8 +19,8 @@ test('catalog lists all expected providers', () => {
 });
 
 test('chat without key returns localReply', async () => {
-  const { createAIService } = require(path.join(root, 'lib/ai-module/ai-service.cjs'));
-  const adapter = require(path.join(root, 'lib/app-adapter.cjs'));
+  const { createAIService } = require(path.join(root, 'src/lib/ai-module/ai-service.cjs'));
+  const adapter = require(path.join(root, 'src/lib/app-adapter.cjs'));
   const ai = createAIService({ dataDir: path.join(root, 'data'), appName: 'Test', adapter });
   const out = await ai.chat({ message: 'How do I publish?' });
   assert.notEqual(out.ok, false);
@@ -33,7 +33,7 @@ test('shfh-config and feedback config must not expose cannoi_ ingest token', () 
   const idx = routes.indexOf("/api/shfh-config");
   const block = routes.slice(idx, idx + 600);
   assert.doesNotMatch(block, /ingestToken/);
-  const fb = fs.readFileSync(path.join(root, 'lib/feedback-module/feedback-service.cjs'), 'utf8');
+  const fb = fs.readFileSync(path.join(root, 'src/lib/feedback-module/feedback-service.cjs'), 'utf8');
   // public config handler should not res.json ingestToken
   assert.doesNotMatch(fb, /res\.json\(\{[^}]*ingestToken/);
 });

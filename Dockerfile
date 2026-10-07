@@ -12,6 +12,7 @@ COPY package.json ./
 RUN npm install --omit=dev --ignore-scripts --no-audit --no-fund --no-package-lock
 
 COPY src ./src
+COPY lib ./lib
 COPY public ./public
 COPY templates ./templates
 COPY docs ./docs
