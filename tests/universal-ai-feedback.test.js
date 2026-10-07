@@ -48,6 +48,9 @@ test('public assets and FAB markup exist', () => {
   assert.match(html, /ai-module\/ai-module\.js/);
   assert.match(html, /feedback-module\/feedback-module\.js/);
   assert.match(html, /ai-panel\.js/);
+  assert.doesNotMatch(html, /id="setProvider"/);
+  assert.doesNotMatch(html, /id="setApiKey"/);
+  assert.doesNotMatch(fs.readFileSync(path.join(root, 'public', 'ai-panel.js'), 'utf8'), /setApiKey|setProvider|setBaseUrl|setSave|setTest|setModels/);
 });
 
 test('mountUniversalModules loads without throw', async () => {

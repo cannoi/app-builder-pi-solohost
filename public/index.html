@@ -323,6 +323,10 @@
 
     </div>
 
+    <div class="row" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
+      <button id="hubLoadModels" class="ws-btn" type="button">↻ Load models</button>
+    </div>
+
     <label>
       GitHub owner
       <input
@@ -410,7 +414,6 @@
       <div class="panel-tabs" id="panelTabs">
         <button type="button" class="tab active" data-tab="chat">Chat</button>
         <button type="button" class="tab" data-tab="feedback">Feedback <span class="tab-badge" id="fbTabBadge" hidden></span></button>
-        <button type="button" class="tab" data-tab="settings">Settings</button>
         <button type="button" class="tab" data-tab="logs">Logs</button>
       </div>
 
@@ -451,48 +454,6 @@
         </div>
       </div>
 
-      <!-- Settings tab -->
-      <div class="tab-pane" id="tab-settings">
-        <div class="panel-body settings-body">
-          <label class="fb-label">Provider</label>
-          <select id="setProvider">
-            <option value="none">— None —</option>
-            <option value="openai">OpenAI</option>
-            <option value="gemini">Google Gemini</option>
-            <option value="deepseek">DeepSeek</option>
-            <option value="anthropic">Anthropic</option>
-            <option value="openrouter">OpenRouter</option>
-            <option value="groq">Groq</option>
-            <option value="mistral">Mistral</option>
-            <option value="xai">xAI</option>
-            <option value="custom">Custom OpenAI-compatible</option>
-            <option value="local">Local OpenAI-compatible</option>
-          </select>
-          <label class="fb-label">API Key</label>
-          <input type="password" id="setApiKey" placeholder="sk-… (không hiện lại sau khi lưu)" autocomplete="off">
-          <p class="fb-hint" id="setKeyHint">Key hiện tại: (chưa có)</p>
-          <label class="fb-label">Base URL <small>(bắt buộc cho Custom / Local)</small></label>
-          <input type="text" id="setBaseUrl" placeholder="https://api.example.com/v1">
-          <label class="fb-label">Model</label>
-          <input type="text" id="setModel" placeholder="auto" value="auto">
-          <label class="fb-label">Mode</label>
-          <select id="setMode">
-            <option value="cloud_enabled">Cloud Enabled</option>
-            <option value="prefer_local">Prefer Local</option>
-            <option value="local_only">Local Only</option>
-            <option value="balanced">Balanced</option>
-            <option value="custom">Custom</option>
-          </select>
-          <div class="row" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
-            <button type="button" class="fb-submit" id="setSave">Save Settings</button>
-            <button type="button" class="ws-btn" id="setTest">Check token</button>
-            <button type="button" class="ws-btn" id="setModels">Load models</button>
-          </div>
-          <p class="fb-status" id="setStatus"></p>
-          <p class="fb-hint" id="setModelsHint"></p>
-        </div>
-      </div>
-
       <!-- Logs tab -->
       <div class="tab-pane" id="tab-logs">
         <div class="panel-body logs-body">
@@ -518,6 +479,6 @@ alt="Made with App Builder — Pi SoloHost">
 <script src="/ai-hub-sdk.js"></script>
 <script src="/ai-module/ai-module.js?v=1.4.77"></script>
 <script src="/feedback-module/feedback-module.js?v=1.4.77"></script>
-<script src="/ai-panel.js?v=1.4.77"></script>
+<script src="/ai-panel.js?v=1.4.78"></script>
 </body>
                                              </html>

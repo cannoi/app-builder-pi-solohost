@@ -143,6 +143,8 @@ test('AI Provider UI uses Add/Save flow and selected model pair without legacy m
   assert.match(html, /id="hubAdd"/);
   assert.match(html, /id="saveSettings"/);
   assert.match(html, /id="hubList"/);
+  assert.match(html, /id="hubLoadModels"/);
+  assert.doesNotMatch(html, /data-tab="settings"/);
   assert.match(html, /id="hubKey"/);
   assert.doesNotMatch(html, /id="setProvider"/);
   assert.doesNotMatch(html, />AUTO<\/option>/);

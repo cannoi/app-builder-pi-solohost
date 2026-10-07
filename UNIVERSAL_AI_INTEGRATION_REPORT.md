@@ -33,7 +33,7 @@ Unify AI Builder (coding) and AI Panel (robot FAB) into **one user-facing AI sys
 - Feedback Hub **hardcoded** (no user input required):
   - Hub ID: `SHFH-CANNOI-0905428801`
   - Public base URL: `http://14.176.78.46:8090`
-  - Ingest token: server-only (`cannoi_7Kp9xV2mQ8rN4tY6cL3wA5zD1eF0uH9`)
+  - Ingest token: server-only, encrypted at rest in `data/feedback-hub.credentials.json`; never returned to browser/UI
 - Env overrides still allowed: `SHFH_HUB_ID`, `SHFH_HUB_URL`, `SHFH_INGEST_TOKEN`.
 - `GET /api/feedback/config` → `{ enabled, hubId, appId, appName, version }` — **no ingestToken**.
 - Legacy `GET /api/shfh-config` → same; **no ingestToken**.
@@ -51,8 +51,8 @@ Unify AI Builder (coding) and AI Panel (robot FAB) into **one user-facing AI sys
 - [x] FAB `#aiFab` fixed bottom-right, `/ai-icon.png`, badge `#aiBadge`, status dot
 - [x] Badge only when unread > 0 (never digit 0)
 - [x] Opening panel hides FAB; closing shows FAB
-- [x] Tabs: Chat | Feedback | Settings | Logs
-- [x] Settings: full provider catalog + custom + local, apiKey, baseUrl, model, mode, Save, Check token, models
+- [x] Tabs: Chat | Feedback | Logs
+- [x] Builder Settings is the only AI configuration surface; AI Panel has no provider/key/model settings
 - [x] Feedback: notices + mark read; donate only from `sync.donate`; form type/rating/message
 - [x] Scripts: ai-module.js → feedback-module.js → ai-panel.js
 - [x] Old feedback modal kept hidden (`display:none!important`); `openFeedback()` redirects to panel Feedback tab

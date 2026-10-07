@@ -67,37 +67,38 @@ test('hub stores a selected model pair without AUTO/PROVIDER/MANUAL modes', () =
   assert.deepEqual(state.preferredModels, ['gemini-a', 'deepseek-b']);
 });
 
-test('Feedback Hub integration is optional and never embeds an ingest token', () => {
+test('Feedback Hub integration is server-proxied and never embeds an ingest token', () => {
   const html = fs.readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
   const js = fs.readFileSync(new URL('../public/app.js', import.meta.url), 'utf8');
-  assert.match(html, /id="feedbackBtn"/);
-  assert.match(html, /id="feedbackBadge"/);
-  assert.match(js, /SHFH\.create/);
-  assert.match(js, /ingestToken:\s*''/);
+  const client = fs.readFileSync(new URL('../public/feedback-module/feedback-module.js', import.meta.url), 'utf8');
+  const server = fs.readFileSync(new URL('../src/lib/feedback-module/feedback-service.cjs', import.meta.url), 'utf8');
+  assert.match(html, /id="aiFab"/);
+  assert.match(html, /id="fbTabBadge"/);
+  assert.match(client, /\/api\/feedback/);
   assert.doesNotMatch(js, /cannoi_[A-Za-z0-9]{20,}/);
+  assert.doesNotMatch(client, /cannoi_[A-Za-z0-9]{20,}/);
+  assert.doesNotMatch(server, /cannoi_[A-Za-z0-9]{20,}/);
 });
 
-test('Feedback send uses the Hub SDK and official form fallback', () => {
-  const js = fs.readFileSync(new URL('../public/app.js', import.meta.url), 'utf8');
+test('Feedback send uses the server-proxied Hub endpoint and official form fallback', () => {
+  const client = fs.readFileSync(new URL('../public/feedback-module/feedback-module.js', import.meta.url), 'utf8');
+  const html = fs.readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
   const routes = fs.readFileSync(new URL('../src/api/routes.js', import.meta.url), 'utf8');
-  assert.match(js, /state\.feedbackHub\.sendFeedback\(\{ type, message \}\)/);
-  assert.doesNotMatch(js, /\/api\/feedback\/submit/);
-  assert.match(js, /window\.open\(FEEDBACK_HUB_URL \+ '\/feedback'/);
+  assert.match(client, /json\('\/api\/feedback'/);
   assert.match(routes, /\/api\/feedback/);
+  assert.match(html, /data-tab="feedback"/);
 });
 
-
-test('Feedback Hub client keeps Hub identity internal and sends directly through SDK', () => {
+test('Feedback Hub client keeps credentials out of the browser', () => {
   const html = fs.readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
   const js = fs.readFileSync(new URL('../public/app.js', import.meta.url), 'utf8');
+  const client = fs.readFileSync(new URL('../public/feedback-module/feedback-module.js', import.meta.url), 'utf8');
   const routes = fs.readFileSync(new URL('../src/api/routes.js', import.meta.url), 'utf8');
   assert.doesNotMatch(html, /id="feedbackHubUrl"/);
   assert.doesNotMatch(html, /id="feedbackAppId"/);
-  assert.match(js, /const FEEDBACK_HUB_URL\s*=\s*['"]http:\/\/14\.176\.78\.46:8090['"]/);
-  assert.match(js, /const FEEDBACK_APP_ID\s*=\s*['"]app-builder-pi-solohost['"]/);
-  assert.match(js, /state\.feedbackHub\.sendFeedback\(\{ type, message \}\)/);
   assert.doesNotMatch(js, /api\/feedback\/submit/);
+  assert.doesNotMatch(client, /ingestToken/);
+  assert.doesNotMatch(client, /cannoi_[A-Za-z0-9]{20,}/);
+  assert.match(routes, /\/api\/feedback/);
   assert.doesNotMatch(html, /name="password"|id="feedbackPassword"/i);
-  assert.match(js, /ingestToken:\s*''/);
-  assert.doesNotMatch(js, /cannoi_[A-Za-z0-9]{20,}/);
 });

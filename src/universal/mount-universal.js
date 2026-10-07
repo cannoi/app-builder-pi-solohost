@@ -14,7 +14,6 @@ const root = path.resolve(__dirname, '../..');
 const SHFH_DEFAULTS = {
   hubId: 'SHFH-CANNOI-0905428801',
   baseUrl: 'http://14.176.78.46:8090',
-  ingestToken: 'cannoi_7Kp9xV2mQ8rN4tY6cL3wA5zD1eF0uH9',
   appId: 'app-builder-pi-solohost',
   appName: 'App Builder — Pi SoloHost',
 };
@@ -67,7 +66,8 @@ export function mountUniversalModules(app, { cfg, log, builderAI = null } = {}) 
     version: cfg?.version || '1.4.77',
     hubId: process.env.SHFH_HUB_ID || cfg?.feedbackHub?.hubId || SHFH_DEFAULTS.hubId,
     baseUrl: process.env.SHFH_HUB_URL || cfg?.feedbackHub?.url || SHFH_DEFAULTS.baseUrl,
-    ingestToken: process.env.SHFH_INGEST_TOKEN || cfg?.feedbackHub?.ingestToken || SHFH_DEFAULTS.ingestToken,
+    ingestToken: process.env.SHFH_INGEST_TOKEN || cfg?.feedbackHub?.ingestToken || '',
+    dataDir,
   };
   const fb = createFeedbackService(fbOpts);
   mountFeedbackRoutes(app, fb);

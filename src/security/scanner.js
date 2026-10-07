@@ -196,6 +196,8 @@ function buildSecurityReport({ critical, warning, notices, findings }) {
   lines.push(`blocking=${critical} warnings=${warning} notices=${notices || 0}`);
   for (const f of findings.slice(0, 40)) {
     lines.push(`- [${f.severity}/${f.class || 'n/a'}/${f.operationImpact || 'n/a'}] ${f.file}: ${f.title}`);
+    if (f.rootCause) lines.push(`  ROOT_CAUSE: ${f.rootCause}`);
+    if (f.fix) lines.push(`  FIX: ${f.fix}`);
   }
   return lines.join('\n');
 }

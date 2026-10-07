@@ -1,8 +1,5 @@
 const $ = (id) => document.getElementById(id);
-const FEEDBACK_HUB_URL = 'http://14.176.78.46:8090';
-const FEEDBACK_APP_ID = 'app-builder-pi-solohost';
-const FEEDBACK_APP_NAME = 'App Builder — Pi SoloHost';
-const state = { projectId: null, projects: [], busy: false, jobId: null, poll: null, pollFailures: 0, seenEvents: 0, files: [], settings: null, feedbackHub: null, feedbackSnapshot: null, feedbackSync: null, pollInFlight: false, pollInFlightJobId: null, watchSeq: 0, lastNotice: '' };
+const state = { projectId: null, projects: [], busy: false, jobId: null, poll: null, pollFailures: 0, seenEvents: 0, files: [], settings: null, pollInFlight: false, pollInFlightJobId: null, watchSeq: 0, lastNotice: '' };
 
 async function api(url, options = {}) {
   const r = await fetch(url, { headers: { 'Content-Type': 'application/json', ...(options.headers || {}) }, ...options });
@@ -990,7 +987,6 @@ async function loadSettings() {
   try {
     state.settings = await api('/api/settings');
     $('setGhOwner').value = state.settings.github?.owner || '';
-    await initFeedbackHub();
     $('settingsState').textContent = '';
     await loadHub();
   } catch {}
@@ -1044,6 +1040,20 @@ async function runAdvisorFromSettings() {
 $('closeSettings').onclick = () => $('settings').hidden = true;
 $('saveSettings').onclick = saveSettings;
 if ($('hubAdd')) $('hubAdd').onclick = addHubProvider;
+if ($('hubLoadModels')) $('hubLoadModels').onclick = async () => {
+  const b = $('hubLoadModels'); const old = b.textContent;
+  b.disabled = true; b.textContent = 'Loading…';
+  try {
+    const rows = await api('/api/ai/hub');
+    const connections = rows.connections || [];
+    if (!connections.length) { $('settingsState').textContent = 'Add an AI provider first.'; return; }
+    let ok = 0;
+    for (const c of connections) { try { await refreshHub(c.id); ok++; } catch {} }
+    await loadHub();
+    $('settingsState').textContent = ok ? ('Models loaded for ' + ok + ' provider' + (ok > 1 ? 's.' : '.')) : 'No model list could be loaded.';
+  } catch (e) { $('settingsState').textContent = e.message || 'Could not load models.'; }
+  finally { b.disabled = false; b.textContent = old; }
+};
 if ($('hubRefresh')) $('hubRefresh').onclick = async () => { const rows = await api('/api/ai/hub'); for (const c of (rows.connections || [])) await refreshHub(c.id); };
 $('hubList').addEventListener('click', (e) => { const r=e.target.closest('[data-hub-refresh]'); const x=e.target.closest('[data-hub-remove]'); if(r) refreshHub(r.dataset.hubRefresh); if(x) removeHub(x.dataset.hubRemove); });
 if ($('logRefresh')) $('logRefresh').onclick = () => loadActivityLog();
@@ -1083,111 +1093,6 @@ $('chat').addEventListener('scroll', maybeJump);
 setBusy(false, 'Ready');
 $('chat').addEventListener('click', (e) => { const b = e.target.closest('[data-container]'); if (b) inspectNamedContainer(b.dataset.container); });
 
-async function loadFeedbackConfig() {
-  try {
-    const cfg = await api('/api/shfh-config');
-    if (cfg && cfg.enabled !== false) state.feedbackConfig = cfg;
-  } catch {
-    state.feedbackConfig = { hubUrl: FEEDBACK_HUB_URL, appId: FEEDBACK_APP_ID, appName: FEEDBACK_APP_NAME, ingestToken: '', formUrl: FEEDBACK_HUB_URL + '/feedback', version: '1.4.61', platform: 'solohost', enabled: true };
-  }
-  return state.feedbackConfig;
-}
-async function initFeedbackHub() {
-  // UNIVERSAL_PANEL_OWNS_FEEDBACK — old SHFH UI disabled; robot panel handles Feedback
-  return;
-
-  if (!window.SHFH) return;
-  const cfg = state.feedbackConfig || await loadFeedbackConfig();
-  const hubUrl = cfg?.hubUrl || FEEDBACK_HUB_URL;
-  const appId = cfg?.appId || FEEDBACK_APP_ID;
-  if (!hubUrl || !appId || cfg?.enabled === false) { state.feedbackHub = null; updateFeedbackBadge(0); return; }
-  try {
-    state.feedbackHub = window.SHFH.create({
-      hubUrl,
-      ingestToken: cfg.ingestToken || '',
-      appId,
-      appName: cfg.appName || FEEDBACK_APP_NAME,
-      version: cfg.version || state.settings?.version || '1.4.61',
-      platform: cfg.platform || 'solohost',
-      locale: state.settings?.locale || 'en',
-    });
-    await syncFeedbackHub();
-    if (!state.feedbackSync) state.feedbackSync = setInterval(syncFeedbackHub, 60000);
-    state.feedbackSync.unref?.();
-  } catch {
-    state.feedbackHub = null;
-    updateFeedbackBadge(0);
-  }
-}
-async function syncFeedbackHub() {
-  if (!state.feedbackHub) return;
-  try {
-    const snap = await state.feedbackHub.sync();
-    state.feedbackSnapshot = snap;
-    updateFeedbackBadge((snap.notices || []).length);
-  } catch {}
-}
-function updateFeedbackBadge(count) {
-  const badge = $('feedbackBadge');
-  if (!badge) return;
-  const n = Math.max(0, Number(count) || 0);
-  badge.hidden = n === 0;
-  badge.textContent = n > 99 ? '99+' : String(n);
-}
-async function openFeedback() {
-  const modal = $('feedbackModal');
-  if (!modal) return;
-  modal.hidden = false;
-  await syncFeedbackHub();
-  const notices = state.feedbackSnapshot?.notices || [];
-  const box = $('feedbackNotices');
-  if (box) {
-    box.hidden = !notices.length;
-    box.textContent = notices.length ? notices.map((n) => `🔔 ${n.title || 'Feedback update'}\n${n.body || ''}`).join('\n\n') : '';
-  }
-  if (state.feedbackHub) for (const n of notices) await state.feedbackHub.markRead(n.id).catch(() => {});
-  updateFeedbackBadge(0);
-}
-async function sendFeedbackHub() {
-  const message = String($('feedbackMessage')?.value || '').trim();
-  if (!message) { add('ai', 'Please enter your feedback first.'); return; }
-  const type = $('feedbackType')?.value || 'improvement';
-  const btn = $('sendFeedback');
-  if (btn) { btn.disabled = true; btn.textContent = 'Sending…'; }
-  const cfg = state.feedbackConfig || await loadFeedbackConfig();
-  const formUrl = cfg?.formUrl || (FEEDBACK_HUB_URL + '/feedback');
-  try {
-    if (!state.feedbackHub) await initFeedbackHub();
-    let result = null;
-    if (state.feedbackHub) result = await state.feedbackHub.sendFeedback({ type, message });
-    if (!result?.ok) {
-      result = await api('/api/feedback/submit', { method: 'POST', body: JSON.stringify({
-        type, message,
-        anonymousId: state.feedbackHub?.anonymousId || '',
-        installedAt: state.feedbackHub?.installedAt || '',
-        locale: state.settings?.locale || 'en',
-      }) });
-    }
-    if (result?.ok) {
-      $('feedbackMessage').value = '';
-      add('system', 'Feedback sent. Thank you.');
-      await syncFeedbackHub();
-      return;
-    }
-    if (result?.queued) {
-      $('feedbackMessage').value = '';
-      add('system', 'Feedback saved. It will be sent when the Hub is reachable.');
-      return;
-    }
-    throw new Error(result?.error || 'Feedback could not be sent.');
-  } catch (err) {
-    add('ai', 'Feedback Hub is unavailable. Opening the official form.');
-    window.open(formUrl, '_blank', 'noopener');
-  } finally {
-    if (btn) { btn.disabled = false; btn.textContent = 'Send feedback'; }
-  }
-}
-
 function openSupport() {
   $('supportModal').hidden = false;
   add('ai', 'Thank you for supporting App Builder — Pi SoloHost. Choose Pi Wallet or MB Bank, copy the details, and send what you can.');
@@ -1211,9 +1116,6 @@ function bindSupport() {
   });
 }
 bindSupport();
-$('closeFeedback') && ($('closeFeedback').onclick = () => { $('feedbackModal').hidden = true; });
-$('sendFeedback') && ($('sendFeedback').onclick = sendFeedbackHub);
-
 Promise.all([loadStatus(), loadProjects(), loadSettings(), loadFeedbackConfig()]).then(async () => {
   await initFeedbackHub();
   const id = savedProjectId();

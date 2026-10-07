@@ -18,15 +18,7 @@ window.UniversalAI = (() => {
     return apiRoot() + p;
   }
   function authHeaders() {
-    const h = { 'Content-Type': 'application/json', Accept: 'application/json' };
-    try {
-      const k = localStorage.getItem('builder_panel_ai_key') || sessionStorage.getItem('builder_panel_ai_key');
-      if (k) {
-        h['Authorization'] = 'Bearer ' + k;
-        h['X-AI-Key'] = k;
-      }
-    } catch {}
-    return h;
+    return { 'Content-Type': 'application/json', Accept: 'application/json' };
   }
   async function json(path, options = {}) {
     const full = url(path);

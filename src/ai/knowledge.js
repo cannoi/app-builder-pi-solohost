@@ -5,13 +5,14 @@ What this app is:
 - UI is one chat. Buttons are shortcuts for Build, Run, Improve, Check, Publish, Zip.
 
 Required path:
-1. Settings: DeepSeek or Gemini key. For Publish: GitHub username + classic token (repo, workflow, write:packages).
-2. Describe the app in the user's language. Questions get answers. Only a clear "create/build this app" starts generation.
-3. Build writes source, Dockerfile, GitHub Actions workflow, made-by badge.
-4. Run starts a safe local preview, checks the app, and opens the preview link. GitHub Actions builds the final Docker image when publishing.
-5. If Run fails, send the error in chat. Improve then Run again.
-6. Publish creates/updates the GitHub repo, uploads files, and prepares docker-compose.yml + config_options.yml. Do not install on SoloHost until the GHCR image exists.
-7. SoloHost pulls a public image. It does not build from source.
+1. Settings: AI provider connections and model selection are managed ONLY in the main Builder ⚙ Settings. The robot AI Panel has Chat, Feedback, and Logs only; it has no independent AI credentials/settings.
+2. In Builder Settings, add/verify a provider, choose Model 1 (primary) and optional Model 2 (reviewer), then use ↻ Load models to refresh the verified model list. The selected model routing is shared by main chat, Upgrade/Diagnose, and the AI Panel. For Publish: GitHub username + classic token (repo, workflow, write:packages).
+3. Describe the app in the user's language. Questions get answers. Only a clear "create/build this app" starts generation.
+4. Build writes source, Dockerfile, GitHub Actions workflow, made-by badge.
+5. Run starts a safe local preview, checks the app, and opens the preview link. GitHub Actions builds the final Docker image when publishing.
+6. If Run fails, send the error in chat. Improve then Run again.
+7. Publish creates/updates the GitHub repo, uploads files, and prepares docker-compose.yml + config_options.yml. Do not install on SoloHost until the GHCR image exists.
+8. SoloHost pulls a public image. It does not build from source.
 
 Common errors:
 - exportImage / missing runner method: Builder should save the image with docker save; Run must not crash if save fails.
@@ -34,7 +35,13 @@ Never:
 GitHub beginner setup:
 - Use the official token page: https://github.com/settings/tokens/new for Personal access token (classic). Select repo, workflow, and write:packages for this Builder's GitHub source + workflow + GHCR flow.
 - After creating the repository, open Settings → Actions → General → Workflow permissions and choose Read and write permissions when the workflow needs to write.
-- Keep the token private. App Builder stores it in runtime configuration and masks it in the UI.
+- Keep provider/GitHub credentials private. App Builder stores provider credentials in its encrypted credential vault and masks them in the UI.
+- Feedback Hub is server-proxied: the browser receives only Hub/app metadata; the Feedback ingest token never appears in the AI Panel, Builder Settings, public config, or generated app source.
+
+Current Builder architecture:
+- Main Builder Settings is the single source of truth for AI provider credentials and model routing.
+- AI Panel never owns a second provider/key/model configuration.
+- Feedback is integrated through the Builder backend and the SoloHost Feedback Hub; users only enter feedback text/type/rating.
 
 Troubleshooting principle:
 - When the user reports an error/problem/issue in natural language, treat it as a debugging task even if they never say the word fix. Diagnose the actual evidence, identify root cause, apply the smallest safe fix, rerun tests, and only report success when the verification really passed. If a human step is required, explain exactly where to click and why.

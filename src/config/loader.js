@@ -13,7 +13,8 @@ export function loadConfig() {
       url: String(process.env.SHFH_HUB_URL || process.env.FEEDBACK_HUB_URL || 'http://14.176.78.46:8090').replace(/\/$/, ''),
       appId: process.env.SHFH_APP_ID || process.env.FEEDBACK_APP_ID || 'app-builder-pi-solohost',
       appName: process.env.SHFH_APP_NAME || 'App Builder — Pi SoloHost',
-      ingestToken: process.env.SHFH_INGEST_TOKEN || 'cannoi_7Kp9xV2mQ8rN4tY6cL3wA5zD1eF0uH9',
+      // Feedback ingest token is resolved server-side from the encrypted credential bundle.
+      ingestToken: process.env.SHFH_INGEST_TOKEN || '',
       enabled: process.env.SHFH_ENABLED !== '0',
     },
     version: '1.4.77',
