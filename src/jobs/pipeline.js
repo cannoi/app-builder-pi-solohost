@@ -697,6 +697,7 @@ export function registerPipeline(app) {
     }
     emit('github', 'running', 'Publishing to GitHub…');
     const pushed = await publishToGitHub({
+      upgradeOrigin: typeof upgradeOrigin !== 'undefined' && Boolean(upgradeOrigin),
       github,
       project,
       sourceDir: projects.sourceDir(project.slug),
@@ -826,6 +827,7 @@ export function registerPipeline(app) {
     } else if (github.configured() && payload.push !== false) {
       emit('github', 'running', 'Publishing source…');
       githubPublish = await publishToGitHub({
+        upgradeOrigin: typeof upgradeOrigin !== 'undefined' && Boolean(upgradeOrigin),
         github,
         project,
         sourceDir: source,
@@ -1030,6 +1032,7 @@ export function registerPipeline(app) {
       emit('repair', dare.ok ? 'running' : 'done', formatDareReport(dare));
       if (dare.ok) {
         const republish = await publishToGitHub({
+          upgradeOrigin: typeof upgradeOrigin !== 'undefined' && Boolean(upgradeOrigin),
           github, project, sourceDir: source, version, emit,
           runtimeOk: true, repoName: repo, existingAction: 'overwrite', refreshWorkflow: false,
         });
@@ -1078,6 +1081,7 @@ export function registerPipeline(app) {
           await fs.writeFile(df, next);
         }
         const republish = await publishToGitHub({
+          upgradeOrigin: typeof upgradeOrigin !== 'undefined' && Boolean(upgradeOrigin),
           github, project, sourceDir: source, version, emit,
           runtimeOk: true, repoName: repo, existingAction: 'overwrite', refreshWorkflow: false,
         });
@@ -1128,6 +1132,7 @@ export function registerPipeline(app) {
       }
       await stampMadeBy(source, cfg);
       const republish = await publishToGitHub({
+        upgradeOrigin: typeof upgradeOrigin !== 'undefined' && Boolean(upgradeOrigin),
         github, project, sourceDir: source, version, emit,
         runtimeOk: true, repoName: repo, existingAction: 'overwrite', refreshWorkflow: false,
       });

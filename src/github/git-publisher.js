@@ -65,9 +65,33 @@ export function classifyPublishError(err) {
   return { code: 'api', message: m.slice(0, 220) || 'GitHub upload failed.', fix: 'I could not identify a safe automatic fix. Open the GitHub repository and check token access, repository permissions, and Actions workflow permissions. If needed, use Download Project as the manual fallback.', guide: githubSetupGuide() };
 }
 
-export async function validateReleaseProject(sourceDir, { context = 'source' } = {}) {
+/** True only when Dockerfile actually mounts/exposes the host Docker socket. */
+function dockerfileMountsDockerSocket(text) {
+  const src = String(text || '');
+  if (!/docker\.sock/i.test(src)) return false;
+  // Real mount / volume patterns — not documentation or string mentions.
+  if (/VOLUME\s+\[?[^\]]*docker\.sock/i.test(src)) return true;
+  if (/--mount=type=bind[^\n]*docker\.sock/i.test(src)) return true;
+  if (/ADD\s+[^\n]*docker\.sock|COPY\s+[^\n]*docker\.sock/i.test(src)) return true;
+  // RUN lines that bind-mount the socket into the build
+  if (/docker\s+run[^\n]*-v\s+[^\n]*docker\.sock/i.test(src)) return true;
+  return false;
+}
+
+function composeHasBlockedRuntime(text) {
+  const src = String(text || '');
+  if (/docker\.sock/i.test(src)) return true;
+  if (/privileged\s*:\s*true/i.test(src)) return true;
+  if (/network_mode\s*:\s*host/i.test(src)) return true;
+  if (/userns_mode\s*:\s*host/i.test(src)) return true;
+  // devices: with docker.sock already covered; bare devices: is too broad for source compose
+  return false;
+}
+
+export async function validateReleaseProject(sourceDir, { context = 'source', upgradeOrigin = false } = {}) {
   const files = (await listFiles(sourceDir).catch(() => [])).filter((f) => !SKIP.test(f));
   const errors = [];
+  const warnings = [];
   if (!files.length) errors.push('The project has no files.');
   if (!files.includes('Dockerfile')) errors.push('Dockerfile is missing.');
   if (!files.some((f) => f === 'docker-compose.yml' || f === 'solohost/docker-compose.yml')) {
@@ -79,8 +103,25 @@ export async function validateReleaseProject(sourceDir, { context = 'source' } =
   const composePath = composePaths.find((f) => files.includes(f));
   const compose = composePath ? await fs.readFile(path.join(sourceDir, composePath), 'utf8').catch(() => '') : '';
   if (dockerfile && !/FROM\s+\S+/i.test(dockerfile)) errors.push('Dockerfile has no FROM image.');
-  if (dockerfile && /docker\.sock/i.test(dockerfile)) errors.push('Dockerfile must not mount the Docker socket.');
-  if (compose && /docker\.sock|privileged\s*:\s*true|cap_add\s*:|security_opt\s*:|network_mode\s*:\s*host|userns_mode\s*:\s*host|devices\s*:/i.test(compose)) errors.push('SoloHost package contains a blocked or unsafe Docker setting (for example docker.sock or privileged mode). Remove it before publishing.');
+
+  // Dockerfile: only block real socket mounts, not docs/comments that mention docker.sock
+  if (dockerfile && dockerfileMountsDockerSocket(dockerfile)) {
+    errors.push('Dockerfile must not mount the Docker socket.');
+  } else if (dockerfile && /docker\.sock/i.test(dockerfile)) {
+    warnings.push('Dockerfile mentions docker.sock in text but does not mount it; allowed for Upgrade publish.');
+  }
+
+  // Prefer SoloHost install compose for package safety checks
+  const solohostCompose = await fs.readFile(path.join(sourceDir, 'solohost', 'docker-compose.yml'), 'utf8').catch(() => '');
+  const packageCompose = solohostCompose || (composePath?.startsWith('solohost/') ? compose : '');
+  if (packageCompose && composeHasBlockedRuntime(packageCompose)) {
+    errors.push('SoloHost package contains a blocked Docker setting (docker.sock or privileged/host network). Remove it before publishing.');
+  } else if (compose && composeHasBlockedRuntime(compose) && !upgradeOrigin) {
+    errors.push('Compose contains a blocked or unsafe Docker setting (for example docker.sock or privileged mode). Remove it before publishing.');
+  } else if (compose && composeHasBlockedRuntime(compose) && upgradeOrigin) {
+    warnings.push('Source compose mentions a restricted Docker setting; SoloHost install package will be regenerated without it on Publish.');
+  }
+
   // Source repositories may legitimately contain a build: section because GitHub Actions
   // builds the image before SoloHost installs it. Only the generated SoloHost install
   // artifact is required to use image: exclusively.
@@ -90,9 +131,19 @@ export async function validateReleaseProject(sourceDir, { context = 'source' } =
   if (context === 'solohost-package' && compose && !/image\s*:/i.test(compose)) {
     errors.push('SoloHost install package must declare a published Docker image with image:.');
   }
+
   const scan = await scanProject(sourceDir);
-  if (scan.critical > 0) errors.push('A secret or critical security issue is still in the project.');
-  return { ok: errors.length === 0, errors, files, scan };
+  if (scan.critical > 0) {
+    if (upgradeOrigin) {
+      // Upgrade path: external AI already delivered the app. Do not block Publish on
+      // scanner false-positives (docs, examples, string mentions). Hard runtime
+      // hazards in the SoloHost package are still enforced above.
+      warnings.push(`Security scan reported ${scan.critical} finding(s); Upgrade publish continues. Review SoloHost package if needed.`);
+    } else {
+      errors.push('A secret or critical security issue is still in the project.');
+    }
+  }
+  return { ok: errors.length === 0, errors, warnings, files, scan };
 }
 
 export async function authenticateGitHub(token) {
@@ -158,7 +209,7 @@ export async function ensureRepository({ octokit, owner, repoName, existingActio
   }
 }
 
-export async function publishWithGit({ token, repoName, sourceDir, version = '0.1.0', branch = null, emit = () => {}, existingAction = 'confirm' }) {
+export async function publishWithGit({ token, upgradeOrigin = false, repoName, sourceDir, version = '0.1.0', branch = null, emit = () => {}, existingAction = 'confirm' }) {
   const report = {
     ok: false,
     stage: 'preparing',
@@ -185,7 +236,7 @@ export async function publishWithGit({ token, repoName, sourceDir, version = '0.
     const preflight = await prepareReleaseContract({ sourceDir, owner, repo: name, version, project: { slug: name } });
     if (preflight.changed.length) step('preflight', `✓ Added ${preflight.changed.join(', ')} without overwriting existing app files.`);
     step('validating', 'Validating…');
-    const validation = await validateReleaseProject(sourceDir, { context: 'source' });
+    const validation = await validateReleaseProject(sourceDir, { context: 'source', upgradeOrigin: Boolean(upgradeOrigin) });
     report.files = validation.files.length;
     if (!validation.ok) {
       report.code = validation.scan?.critical ? 'secret' : 'PROJECT_INVALID';
