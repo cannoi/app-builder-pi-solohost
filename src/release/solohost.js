@@ -103,10 +103,30 @@ async function discoverRuntimeContract(sourceDir, image, containerPort = null) {
     ? rawImage
     : `ghcr.io/OWNER/${String(sourceDir).split(path.sep).pop() || 'app'}:latest`;
 
+  // Only user-facing / compose-declared vars — not process noise (HOME, npm_*, etc.)
+  const NOISE = new Set([
+    'HOME', 'HOSTNAME', 'HOST', 'PATH', 'PWD', 'USER', 'SHELL', 'LANG', 'TERM', 'SHLVL',
+    'NODE_ENV', 'NODE_OPTIONS', 'npm_package_version', 'npm_package_name', 'npm_config_user_agent',
+    'OLDPWD', 'TMPDIR', 'TMP', 'TEMP', '_',
+  ]);
+  const fromCompose = new Set();
+  for (const match of composeText.matchAll(/\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-[^}]*)?\}/g)) fromCompose.add(match[1]);
+  for (const match of composeText.matchAll(/(?:^|\s)-\s*([A-Za-z_][A-Za-z0-9_]*)=\$\{?/gm)) fromCompose.add(match[1]);
+
+  const filtered = [...envVars].filter((name) => {
+    if (!name || NOISE.has(name)) return false;
+    if (/^(npm_|NODE_|_)/.test(name)) return false;
+    // Prefer compose / .env.example declarations; allow clear app settings from source
+    if (fromCompose.has(name)) return true;
+    if (/^(AI_|OLLAMA_|SHFH_|PUBLIC_|SOLOHOST_|DATA_DIR|SERVICE_NAME|HOST_PORT|PORT$)/i.test(name)) return true;
+    if (/_(KEY|TOKEN|PASSWORD|SECRET|URL|MODEL|PROVIDER|MODE)$/i.test(name)) return true;
+    return false;
+  }).sort();
+
   return {
     sourceCompose: composeFile?.path || null,
     composeText,
-    envVars: [...envVars].filter((x) => x !== 'PORT' || /\$\{PORT\}/.test(composeText)).sort(),
+    envVars: filtered.filter((x) => x !== 'PORT' || /\$\{PORT\}/.test(composeText)),
     containerPort: detectedPort || 8080,
     image: safeImage,
   };
@@ -251,7 +271,10 @@ fields:
     additions.push(fieldYaml(name));
   }
   if (additions.length) {
-    if (!/\bfields:\s*$/.test(base)) base += '\nfields:\n';
+    // Append under existing fields: — never start a second fields: key
+    if (!/\bfields\s*:/.test(base)) {
+      base = `${base.trimEnd()}\nfields:\n`;
+    }
     base = `${base.trimEnd()}\n${additions.join('\n')}\n`;
   }
   return base.endsWith('\n') ? base : `${base}\n`;

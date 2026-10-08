@@ -20,6 +20,77 @@ function compactNotice(text) {
   if (raw.length > 280 && /GitHub Actions failed/i.test(raw)) return 'GHCR: GitHub Actions smoke test failed. The image built, then the container died or did not listen. Copy the one-line Actions error, not this whole chat.';
   return String(text || '');
 }
+
+function isSoloHostKitPayload(text) {
+  const s = String(text || '');
+  return s.includes('"kind":"solohost_install"') || s.includes('"kind": "solohost_install"') || /=== docker-compose\.yml ===/.test(s);
+}
+function parseSoloHostKit(text) {
+  const s = String(text || '');
+  try {
+    const j = JSON.parse(s);
+    if (j && j.kind === 'solohost_install') return j;
+  } catch {}
+  const composeM = s.match(/=== docker-compose\.yml ===\s*\n([\s\S]*?)(?=\n=== config_options\.yml ===|\n—— end ——|$)/);
+  const configM = s.match(/=== config_options\.yml ===\s*\n([\s\S]*?)(?=\n—— end ——|$)/);
+  if (!composeM && !configM) return null;
+  return {
+    kind: 'solohost_install',
+    compose: (composeM?.[1] || '').trim(),
+    config: (configM?.[1] || '').trim(),
+    guide: { en: '1) SoloHost → Add app  2) Paste files  3) Save → Start', vi: '1) SoloHost → Thêm app  2) Dán 2 file  3) Lưu → Start' },
+  };
+}
+function copyText(label, value) {
+  const v = String(value || '');
+  if (navigator.clipboard?.writeText) {
+    navigator.clipboard.writeText(v).then(() => toast(`✓ Copied ${label}`)).catch(() => fallbackCopy(label, v));
+  } else fallbackCopy(label, v);
+}
+function fallbackCopy(label, v) {
+  const ta = document.createElement('textarea');
+  ta.value = v; document.body.appendChild(ta); ta.select();
+  try { document.execCommand('copy'); toast(`✓ Copied ${label}`); } catch { toast(`Could not copy ${label}`); }
+  ta.remove();
+}
+function renderSoloHostKitCard(kit) {
+  const box = document.createElement('div');
+  box.className = 'msg ai solohostKit';
+  const title = document.createElement('div');
+  title.className = 'solohostKitTitle';
+  title.textContent = '📦 SoloHost install kit';
+  box.appendChild(title);
+  const steps = document.createElement('div');
+  steps.className = 'solohostKitSteps';
+  steps.textContent = (kit.guide?.vi || kit.guide?.en || '1) SoloHost → Add app  2) Paste the two files  3) Save → Start');
+  box.appendChild(steps);
+
+  function section(filename, body) {
+    const sec = document.createElement('div');
+    sec.className = 'solohostFile';
+    const head = document.createElement('div');
+    head.className = 'solohostFileHead';
+    const name = document.createElement('strong');
+    name.textContent = filename;
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'solohostCopyBtn';
+    btn.textContent = '📋 Copy';
+    btn.addEventListener('click', () => copyText(filename, body));
+    head.appendChild(name);
+    head.appendChild(btn);
+    const pre = document.createElement('pre');
+    pre.className = 'solohostPre';
+    pre.textContent = body || '(empty)';
+    sec.appendChild(head);
+    sec.appendChild(pre);
+    return sec;
+  }
+  if (kit.compose) box.appendChild(section('docker-compose.yml', kit.compose));
+  if (kit.config) box.appendChild(section('config_options.yml', kit.config));
+  return box;
+}
+
 function shouldSkipNotice(text) {
   const key = compactNotice(text).slice(0, 180);
   if (!key) return true;
@@ -95,9 +166,27 @@ async function downloadScript(kind) {
   } catch (e) { add('ai', e.message); }
 }
 function event(stage, status, message) {
+  // Structured SoloHost install kit (JSON or legacy markers)
+  if (stage === 'solohost_files' || isSoloHostKitPayload(message)) {
+    const kit = parseSoloHostKit(message);
+    if (kit && (kit.compose || kit.config)) {
+      const stick = chatNearBottom();
+      $('chat').appendChild(renderSoloHostKitCard(kit));
+      if (stick) $('chat').scrollTop = $('chat').scrollHeight; else maybeJump();
+      return;
+    }
+  }
   const shown = compactNotice(message);
   if (shouldSkipNotice(`${status}:${shown}`)) return;
-  const el = document.createElement('div'); el.className = `event ${status}`; el.textContent = `${status === 'done' ? '✓' : status === 'failed' ? '⚠' : '•'} ${shown}`;
+  const el = document.createElement('div');
+  el.className = `event ${status}`;
+  // Preserve multi-line diagnostics
+  if (String(message || '').includes('\n') && String(message || '').length > 120) {
+    el.style.whiteSpace = 'pre-wrap';
+    el.textContent = `${status === 'done' ? '✓' : status === 'failed' ? '⚠' : '•'} ${String(message || '')}`;
+  } else {
+    el.textContent = `${status === 'done' ? '✓' : status === 'failed' ? '⚠' : '•'} ${shown}`;
+  }
   $('chat').appendChild(el); if (chatNearBottom()) $('chat').scrollTop = $('chat').scrollHeight; else maybeJump();
 }
 function toast(message) { add('system', message); }
@@ -622,6 +711,15 @@ async function watch(jobId, { preserveEvents = false, resetFailures = true } = {
     state.pollFailures = 0;
     const events = job.events || [];
     for (let i = state.seenEvents; i < events.length; i++) event(events[i].stage, events[i].status, events[i].message);
+    if (job.status === 'done' && (job.result?.solohostFiles?.compose || job.result?.solohostFiles?.config)) {
+      const sf = job.result.solohostFiles;
+      const stick = chatNearBottom();
+      $('chat').appendChild(renderSoloHostKitCard({
+        compose: sf.compose, config: sf.config,
+        guide: { en: '1) SoloHost → Add app  2) Copy each file  3) Save → Start', vi: '1) SoloHost → Thêm app  2) Copy từng file  3) Lưu → Start' },
+      }));
+      if (stick) $('chat').scrollTop = $('chat').scrollHeight; else maybeJump();
+    }
     state.seenEvents = events.length;
 
     if (job.status === 'done' || job.status === 'failed' || job.status === 'cancelled') {

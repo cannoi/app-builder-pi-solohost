@@ -1,5 +1,7 @@
-data/*.json
-data/.ai-master-key
 .env
+.env.*
 node_modules/
-*.zip
+artifacts/
+data/
+*.db
+.git/

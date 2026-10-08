@@ -981,27 +981,35 @@ export function registerPipeline(app) {
       composeYaml = await fs.readFile(path.join(source, 'solohost', 'docker-compose.yml'), 'utf8');
       configYaml = await fs.readFile(path.join(source, 'solohost', 'config_options.yml'), 'utf8');
     } catch {}
-    const copyGuide = installReady && composeYaml
-      ? (
-          '\n\n—— SoloHost install (copy these 2 files) ——\n'
-          + '1) Open SoloHost → Add / Import app\n'
-          + '2) Paste docker-compose.yml and config_options.yml\n'
-          + '3) Save settings → Start\n\n'
-          + '=== docker-compose.yml ===\n'
-          + composeYaml.trim().slice(0, 6000)
-          + '\n\n=== config_options.yml ===\n'
-          + configYaml.trim().slice(0, 6000)
-          + '\n—— end ——\n'
-        )
+    // Short chat event; full YAML delivered via result.solohostFiles for structured UI.
+    const copyGuide = installReady
+      ? '\n📦 SoloHost install kit ready — use the copy cards below (or download ZIP).'
       : '';
 
     const checklist = ['✓ Build', runtime.health ? '✓ Test' : '• Test', githubUrl ? '✓ GitHub' : '✗ GitHub', imageOk ? '✓ GHCR' : '✗ GHCR', installReady ? '✓ SoloHost' : '• SoloHost'];
     const next = installReady
-      ? 'Copy the two SoloHost files below (or download the SoloHost ZIP) → SoloHost → Save → Start.'
+      ? 'Copy docker-compose.yml + config_options.yml into SoloHost → Save → Start.'
       : 'GHCR is verified, but the SoloHost ZIP was not created. Use Zip to retry packaging.';
-    if (installReady) emit('release', 'done', `GitHub ✓ · GHCR ✓ · SoloHost install kit ✓${copyGuide}`);
+    if (installReady) {
+      emit('release', 'done', `GitHub ✓ · GHCR ✓ · SoloHost install kit ✓${copyGuide}`);
+      // Structured payload so UI can render two copyable YAML panels
+      emit('solohost_files', 'done', JSON.stringify({
+        kind: 'solohost_install',
+        compose: composeYaml.trim().slice(0, 12000),
+        config: configYaml.trim().slice(0, 12000),
+        guide: {
+          en: '1) SoloHost → Add app  2) Paste the two files  3) Save → Start',
+          vi: '1) SoloHost → Thêm app  2) Dán 2 file  3) Lưu → Start',
+        },
+      }));
+    }
     return {
       status, release: rec, quality, githubUrl, githubPublish, installReady, checklist,
+      solohostFiles: installReady ? {
+        compose: composeYaml.trim(),
+        config: configYaml.trim(),
+        filenames: ['docker-compose.yml', 'config_options.yml'],
+      } : null,
       image: registryImage, imageVerification, workflowRun, workflowDiagnostics, autoRepair, soloHostPackage: packageInfo, validation, imageOk,
       downloads: [
         zip ? { kind: 'solohost', filename: zip.filename, url: `/api/projects/${project.id}/download?kind=solohost` } : null,
