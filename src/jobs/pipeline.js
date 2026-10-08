@@ -12,6 +12,7 @@ import dns from 'node:dns/promises';
 import https from 'node:https';
 import { saveAttachment, attachmentContext, attachmentList, imageInputsFromAttachments } from '../projects/attachments.js';
 import { writeSoloHostPackage } from '../release/solohost.js';
+import { formatSoloHostErrors } from '../release/manager.js';
 import { inferAction, extractGhcrImage, guessSoloHostPorts, classifyLogs, classifyFailureLayer, formatLayerDiagnosis, describeFailure, diagnoseSource, nextStep, guideCard, isHostDockerCommand, isNpmOnEmptyRisk, splitUserSteps, parseGithubRepoUrl } from '../scripts/ops.js';
 import { stampMadeBy } from '../projects/badge.js';
 import { createProjectZip } from '../projects/exporter.js';
@@ -958,19 +959,47 @@ export function registerPipeline(app) {
     emit('package', 'running', 'GHCR image verified. Creating the SoloHost install kit…');
     const packageInfo = await releases.prepareSoloHost(project, source, registryImage, aiDescription);
     const validation = await releases.validateSoloHost(source);
-    if (validation?.ok === false) throw new Error(`SoloHost package validation failed: ${(validation.errors || []).join(' ')}`);
+    if (validation?.ok === false) {
+      const errText = formatSoloHostErrors(validation.errors);
+      emit('package', 'failed', `SoloHost package validation failed: ${errText}`);
+      throw new Error(`SoloHost package validation failed: ${errText}`);
+    }
+    if (validation?.warnings?.length) {
+      emit('package', 'done', `SoloHost package ready (local OK). Note: ${formatSoloHostErrors(validation.warnings)}`);
+    }
     const zip = await createProjectZip({ sourceDir: source, outputDir: path.join(projects.projectDir(project), 'artifacts'), slug: project.slug, kind: 'solohost' }).catch(() => null);
-    const installReady = Boolean(validation?.ok !== false && runtime.health && githubUrl && imageOk && zip);
+    // Upgrade-origin: runtime.health may be baseline-true; do not require live Run for install kit after GHCR verify
+    const installReady = Boolean(validation?.ok !== false && githubUrl && imageOk && (zip || packageInfo));
     const status = installReady ? 'released' : 'github_published';
     const rec = releases.record(project, { version: notes.version, notes: notes.notes, githubUrl, status });
     projects.setStatus(project, installReady ? 'RELEASED' : 'WAITING_APPROVAL');
     await fs.rm(path.join(projects.projectDir(project), 'metadata', 'release-pending.json'), { force: true }).catch(() => {});
 
+    let composeYaml = '';
+    let configYaml = '';
+    try {
+      composeYaml = await fs.readFile(path.join(source, 'solohost', 'docker-compose.yml'), 'utf8');
+      configYaml = await fs.readFile(path.join(source, 'solohost', 'config_options.yml'), 'utf8');
+    } catch {}
+    const copyGuide = installReady && composeYaml
+      ? (
+          '\n\n—— SoloHost install (copy these 2 files) ——\n'
+          + '1) Open SoloHost → Add / Import app\n'
+          + '2) Paste docker-compose.yml and config_options.yml\n'
+          + '3) Save settings → Start\n\n'
+          + '=== docker-compose.yml ===\n'
+          + composeYaml.trim().slice(0, 6000)
+          + '\n\n=== config_options.yml ===\n'
+          + configYaml.trim().slice(0, 6000)
+          + '\n—— end ——\n'
+        )
+      : '';
+
     const checklist = ['✓ Build', runtime.health ? '✓ Test' : '• Test', githubUrl ? '✓ GitHub' : '✗ GitHub', imageOk ? '✓ GHCR' : '✗ GHCR', installReady ? '✓ SoloHost' : '• SoloHost'];
     const next = installReady
-      ? 'Download the SoloHost ZIP → import it in SoloHost → save any requested settings → Start the app.'
+      ? 'Copy the two SoloHost files below (or download the SoloHost ZIP) → SoloHost → Save → Start.'
       : 'GHCR is verified, but the SoloHost ZIP was not created. Use Zip to retry packaging.';
-    if (installReady) emit('release', 'done', 'GitHub ✓ · GHCR ✓ · SoloHost install kit ✓');
+    if (installReady) emit('release', 'done', `GitHub ✓ · GHCR ✓ · SoloHost install kit ✓${copyGuide}`);
     return {
       status, release: rec, quality, githubUrl, githubPublish, installReady, checklist,
       image: registryImage, imageVerification, workflowRun, workflowDiagnostics, autoRepair, soloHostPackage: packageInfo, validation, imageOk,

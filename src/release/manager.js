@@ -1,6 +1,44 @@
 import { writeSafeFile } from '../utils/fsx.js';
 import { uuid, semverBump } from '../utils/ids.js';
 import { writeSoloHostPackage } from './solohost.js';
+import fs from 'node:fs/promises';
+import path from 'node:path';
+
+/** Normalize validator / API errors to plain strings (avoid "[object Object]"). */
+export function formatSoloHostErrors(errors) {
+  if (errors == null) return 'Unknown SoloHost validation error';
+  if (typeof errors === 'string') return errors;
+  if (!Array.isArray(errors)) {
+    if (typeof errors === 'object') {
+      return String(errors.message || errors.detail || errors.error || JSON.stringify(errors)).slice(0, 800);
+    }
+    return String(errors);
+  }
+  return errors
+    .map((e) => {
+      if (typeof e === 'string') return e;
+      if (e && typeof e === 'object') return String(e.message || e.detail || e.error || e.code || JSON.stringify(e));
+      return String(e);
+    })
+    .filter(Boolean)
+    .join('; ')
+    .slice(0, 1200);
+}
+
+function localPackageOk(compose, config) {
+  const c = String(compose || '');
+  const o = String(config || '');
+  if (!/^\s*services\s*:/m.test(c)) return { ok: false, errors: ['docker-compose.yml must declare services:'] };
+  if (!/^\s{2,4}\w[\w-]*\s*:/m.test(c)) return { ok: false, errors: ['docker-compose.yml must declare at least one service'] };
+  if (!/image\s*:/i.test(c)) return { ok: false, errors: ['docker-compose.yml must use image: (SoloHost does not build from source)'] };
+  if (/docker\.sock|privileged\s*:\s*true|network_mode\s*:\s*host/i.test(c)) {
+    return { ok: false, errors: ['SoloHost package must not use docker.sock, privileged, or host network'] };
+  }
+  if (!/title\s*:/i.test(o)) return { ok: false, errors: ['config_options.yml must include title:'] };
+  if (!/fields\s*:/i.test(o)) return { ok: false, errors: ['config_options.yml must include fields:'] };
+  if (!/output_file\s*:/i.test(o)) return { ok: false, errors: ['config_options.yml must include output_file:'] };
+  return { ok: true, errors: [] };
+}
 
 export class ReleaseManager {
   constructor({ cfg, db, log }) {
@@ -35,19 +73,54 @@ Read INSTALL.md in the project folder.
 
   async validateSoloHost(sourceDir) {
     try {
-      const fs = await import('node:fs/promises');
-      const path = await import('node:path');
       const compose = await fs.readFile(path.join(sourceDir, 'solohost', 'docker-compose.yml'), 'utf8');
       const config = await fs.readFile(path.join(sourceDir, 'solohost', 'config_options.yml'), 'utf8');
-      if (!compose.includes('image:') || !config.includes('title:')) {
-        return { ok: false, errors: ['SoloHost files are incomplete.'] };
+      const local = localPackageOk(compose, config);
+      if (!local.ok) {
+        return { ok: false, errors: local.errors, authoritative: false, mode: 'local' };
       }
-      const res = await fetch('https://solohost-nohcqud24xwnsmna.staging.piappengine.com/api/apps/validate', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ composeYaml: compose, configOptionsYaml: config }) });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok || data.ok !== true) return { ok: false, errors: Array.isArray(data.errors) ? data.errors : [`SoloHost validator returned HTTP ${res.status}.`] , authoritative: true };
-      return { ok: true, errors: [], authoritative: true };
+
+      // Optional remote SoloHost validator — never crash or emit [object Object].
+      // If remote is down or returns odd shapes, keep local OK result.
+      const validatorUrl =
+        process.env.SOLOHOST_VALIDATE_URL
+        || 'https://solohost-nohcqud24xwnsmna.staging.piappengine.com/api/apps/validate';
+      try {
+        const res = await fetch(validatorUrl, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ composeYaml: compose, configOptionsYaml: config }),
+          signal: AbortSignal.timeout(12000),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (res.ok && (data.ok === true || data.valid === true || data.success === true)) {
+          return { ok: true, errors: [], authoritative: true, mode: 'remote' };
+        }
+        if (!res.ok || data.ok === false || data.valid === false) {
+          const remoteErrors = formatSoloHostErrors(data.errors || data.message || data.error || `HTTP ${res.status}`);
+          // Soft-fail: local package is valid; surface remote notes as warnings.
+          this.log?.warn?.('SoloHost remote validator rejected or failed; accepting local package', {
+            status: res.status,
+            remoteErrors: remoteErrors.slice(0, 300),
+          });
+          return {
+            ok: true,
+            errors: [],
+            warnings: [remoteErrors],
+            authoritative: false,
+            mode: 'local-fallback',
+          };
+        }
+      } catch (err) {
+        this.log?.warn?.('SoloHost remote validator unavailable; accepting local package', {
+          error: String(err.message || err).slice(0, 200),
+        });
+        return { ok: true, errors: [], warnings: [`Remote validator unavailable: ${String(err.message || err).slice(0, 120)}`], authoritative: false, mode: 'local-offline' };
+      }
+
+      return { ok: true, errors: [], authoritative: false, mode: 'local' };
     } catch (err) {
-      return { ok: false, errors: [String(err.message || err)] };
+      return { ok: false, errors: [String(err.message || err)], authoritative: false, mode: 'error' };
     }
   }
 

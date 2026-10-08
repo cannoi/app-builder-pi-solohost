@@ -17,7 +17,7 @@ export function loadConfig() {
       ingestToken: process.env.SHFH_INGEST_TOKEN || '',
       enabled: process.env.SHFH_ENABLED !== '0',
     },
-    version: '1.5.2',
+    version: '1.5.3',
     accessPassword: process.env.BUILDER_ACCESS_PASSWORD || process.env.ACCESS_PASSWORD || '',
     runtime: {
       mode: process.env.PREVIEW_MODE || 'auto',

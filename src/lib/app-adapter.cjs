@@ -9,6 +9,7 @@ PHASES (Agent v3)
 - Upgrade: change requested behavior only — no auto DARE/full scan/repair.
 - Re-import ZIP into an Upgrade project: accept files as-is; no security auto-repair. User can Publish directly.
 - Upgrade Publish: docs/comments mentioning docker.sock do not block; only real socket mounts in SoloHost package block.
+- After GHCR verify, Builder writes docker-compose.yml + config_options.yml from the app (or defaults) and shows them in chat to copy into SoloHost.
 - Build: scan, DARE, evidence-based repair, runtime verify.
 - Publish: correct image + synchronized SoloHost package (docker-compose.yml + config_options.yml).
 - Robot panel uses the same Builder AI (one key in ⚙ Settings).
