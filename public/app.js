@@ -265,23 +265,57 @@ function renderProviderSelector(hub) {
   if (preferred && rows.some((c) => c.provider === preferred)) top.value = preferred;
   else if (rows[0]) top.value = rows[0].provider;
 }
+
+function fillModelOptionsFromList(models, provider) {
+  const list = $('hubModelOptions');
+  const input = $('hubModel');
+  if (!list) return;
+  const p = provider || $('hubProvider')?.value || 'ai';
+  const opts = (models || []).map((m) => {
+    const id = typeof m === 'string' ? m : (m.id || m.name || '');
+    if (!id) return '';
+    const value = id.includes(':') ? id : `${p}:${id}`;
+    return `<option value="${esc(value)}">${esc(id)}</option>`;
+  }).filter(Boolean);
+  // Merge with existing options
+  const seen = new Set();
+  const merged = [];
+  for (const html of opts) {
+    const v = html.match(/value="([^"]*)"/)?.[1];
+    if (v && !seen.has(v)) { seen.add(v); merged.push(html); }
+  }
+  for (const o of Array.from(list.options || [])) {
+    if (o.value && !seen.has(o.value)) { seen.add(o.value); merged.push(`<option value="${esc(o.value)}">${esc(o.label || o.value)}</option>`); }
+  }
+  list.innerHTML = merged.join('');
+  if (input && !input.value && models?.[0]) {
+    const id = typeof models[0] === 'string' ? models[0] : models[0].id;
+    if (id) input.value = id.includes(':') ? id : `${p}:${id}`;
+  }
+}
+
 function renderModelSelectors(hub) {
+  const list = $('hubModelOptions');
+  const input = $('hubModel');
+  if (!list && !input) return;
   const all = [];
   for (const c of (hub?.connections || [])) {
     const name = c.name || c.provider || 'provider';
     const models = (c.models || []).slice().sort((a, b) => Number(!!b.verified) - Number(!!a.verified));
     for (const m of models) {
       if (!m?.id) continue;
-      const mark = m.verified ? '' : ' (available)';
-      all.push({ value: modelRef(c, m), label: `${name} · ${m.id}${mark}` });
+      all.push({ value: modelRef(c, m), label: `${name} · ${m.id}${m.verified ? '' : ''}` });
     }
   }
-  const make = (id, empty) => {
-    const el = $(id); if (!el) return;
-    const current = el.value; el.innerHTML = `<option value="">${empty}</option>` + all.map(x => `<option value="${esc(x.value)}">${esc(x.label)}</option>`).join('');
-    if (all.some(x => x.value === current)) el.value = current;
-  };
-  make('hubModel', 'Select model');
+  if (list) {
+    list.innerHTML = all.map((x) => `<option value="${esc(x.value)}">${esc(x.label)}</option>`).join('');
+  }
+  // Keep select-style compatibility if hubModel is still a <select>
+  if (input && input.tagName === 'SELECT') {
+    const current = input.value;
+    input.innerHTML = `<option value="">Select model</option>` + all.map((x) => `<option value="${esc(x.value)}">${esc(x.label)}</option>`).join('');
+    if (all.some((x) => x.value === current)) input.value = current;
+  }
 }
 async function loadActivityLog() {
   const out = $('logOut');
@@ -1155,15 +1189,38 @@ if ($('hubLoadModels')) $('hubLoadModels').onclick = async () => {
   const b = $('hubLoadModels'); const old = b.textContent;
   b.disabled = true; b.textContent = 'Loading…';
   try {
-    const rows = await api('/api/ai/hub');
-    const connections = rows.connections || [];
-    if (!connections.length) { $('settingsState').textContent = 'Add an AI provider first.'; return; }
-    let ok = 0;
-    for (const c of connections) { try { await refreshHub(c.id); ok++; } catch {} }
-    await loadHub();
-    $('settingsState').textContent = ok ? ('Models loaded for ' + ok + ' provider' + (ok > 1 ? 's.' : '.')) : 'No model list could be loaded.';
-  } catch (e) { $('settingsState').textContent = e.message || 'Could not load models.'; }
-  finally { b.disabled = false; b.textContent = old; }
+    const provider = ($('hubProvider')?.value || '').trim();
+    const apiKey = ($('hubKey')?.value || '').trim();
+    const baseUrl = ($('hubBase')?.value || '').trim();
+    if (!provider) {
+      $('settingsState').textContent = 'Choose an AI provider first.';
+      return;
+    }
+    $('settingsState').textContent = apiKey
+      ? `Fetching models from ${provider} with the key you entered…`
+      : `Fetching models for ${provider} (using saved key if any)…`;
+    const r = await api('/api/ai/hub/discover', {
+      method: 'POST',
+      body: JSON.stringify({ provider, apiKey, baseUrl }),
+    });
+    fillModelOptionsFromList(r.models || [], provider);
+    if (r.hub) {
+      renderHubList(r.hub);
+      renderModelSelectors(r.hub);
+    }
+    const n = (r.models || []).length;
+    if (n && $('hubModel') && !$('hubModel').value) {
+      const id = r.verifiedModel || r.models[0]?.id || r.models[0];
+      if (id) $('hubModel').value = String(id).includes(':') ? id : `${provider}:${id}`;
+    }
+    $('settingsState').textContent = n
+      ? `Loaded ${n} model(s) from ${provider}. Type or pick a model, then ＋ Add.`
+      : (r.warning || `No models returned for ${provider}. You can still type a model id manually.`);
+  } catch (e) {
+    $('settingsState').textContent = e.message || 'Could not load models. Check provider + API key.';
+  } finally {
+    b.disabled = false; b.textContent = old;
+  }
 };
 if ($('hubRefresh')) $('hubRefresh').onclick = async () => { const rows = await api('/api/ai/hub'); for (const c of (rows.connections || [])) await refreshHub(c.id); };
 $('hubList').addEventListener('click', (e) => { const r=e.target.closest('[data-hub-refresh]'); const x=e.target.closest('[data-hub-remove]'); if(r) refreshHub(r.dataset.hubRefresh); if(x) removeHub(x.dataset.hubRemove); });
@@ -1223,18 +1280,6 @@ async function importModelListFromFile(file) {
   return r;
 }
 
-if ($('hubUploadModels')) $('hubUploadModels').onclick = () => $('hubModelFile')?.click();
-if ($('hubModelFile')) $('hubModelFile').onchange = async (e) => {
-  const file = e.target.files?.[0];
-  e.target.value = '';
-  if (!file) return;
-  try {
-    if ($('settingsState')) $('settingsState').textContent = `Reading ${file.name}…`;
-    await importModelListFromFile(file);
-  } catch (err) {
-    if ($('settingsState')) $('settingsState').textContent = err.message || 'Upload failed';
-  }
-};
 $('projectSelect').onchange = async () => { if (state.busy) return; state.projectId = $('projectSelect').value || null; if (state.projectId) await openProject(state.projectId); else { rememberProject(null); renderWelcome(); } };
 $('jumpDown').onclick = () => { $('chat').scrollTop = $('chat').scrollHeight; $('jumpDown').hidden = true; };
 $('chat').addEventListener('scroll', maybeJump);

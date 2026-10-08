@@ -6,7 +6,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>App Builder — Pi SoloHost</title>
   <meta name="theme-color" content="#0e1116">
-  <link rel="stylesheet" href="/styles.css?v=1.5.7">
+  <link rel="stylesheet" href="/styles.css?v=1.5.8">
 <style>.paf-made-by{position:fixed;right:8px;bottom:8px;width:min(72px,12vw);max-width:12vw;height:auto;object-fit:contain;opacity:.5;background:transparent;padding:0;border:0;box-shadow:none;filter:none;pointer-events:none;z-index:30}</style>
   <link rel="stylesheet" href="/ai-panel.css">
 </head><body>
@@ -305,15 +305,13 @@
 
     <label>
       Model
-      <select id="hubModel">
-        <option value="">Select model (optional before Add)</option>
-      </select>
+      <input id="hubModel" type="text" list="hubModelOptions" autocomplete="off"
+        placeholder="Type model id or Load models then pick">
+      <datalist id="hubModelOptions"></datalist>
     </label>
 
     <div class="row hubModelActions" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-      <button id="hubUploadModels" class="ws-btn" type="button" title="Upload JSON or text list of model ids">⬆ Upload model list</button>
-      <input id="hubModelFile" type="file" accept=".json,.txt,.csv,application/json,text/plain" hidden>
-      <button id="hubLoadModels" class="ws-btn" type="button">↻ Load models</button>
+      <button id="hubLoadModels" class="ws-btn" type="button" title="Fetch models from Provider + API key">↻ Load models</button>
     </div>
 
     <button id="hubAdd" class="wide" type="button">＋ Add</button>
@@ -460,7 +458,7 @@
 
   
 
-<!-- shfh-client removed: universal feedback panel --><script src="/app.js?v=1.5.7"></script><img
+<!-- shfh-client removed: universal feedback panel --><script src="/app.js?v=1.5.8"></script><img
 class="paf-made-by"
 src="/made-by.png"
 alt="Made with App Builder — Pi SoloHost">

@@ -243,6 +243,62 @@ export function registerRoutes(r, app) {
     }
   });
 
+
+  // Discover models using Provider + API key from Settings form (before or after Add).
+  r.post('/api/ai/hub/discover', async (req, res) => {
+    try {
+      const body = req.body || {};
+      const provider = String(body.provider || '').toLowerCase().trim();
+      const apiKey = String(body.apiKey || '').trim();
+      const baseUrl = String(body.baseUrl || '').trim();
+      if (!provider) return res.status(400).json({ error: 'Choose an AI provider.' });
+      // Prefer form key; else reuse stored connection key for that provider
+      let key = apiKey;
+      let url = baseUrl;
+      if (!key) {
+        const st = ai.hub.state();
+        const row = (st.connections || []).find((c) => c.provider === provider) || (st.connections || [])[0];
+        if (!row) return res.status(400).json({ error: 'Paste an API key first, or Add a provider, then Load models.' });
+        key = ai.hub.key(row);
+        url = url || row.baseUrl || '';
+      }
+      if (!key) return res.status(400).json({ error: 'Paste an API key for this provider.' });
+      const probed = await ai.hub.testConnection({ provider, apiKey: key, baseUrl: url, model: body.model });
+      const models = Array.isArray(probed?.models) ? probed.models : [];
+      // If this provider already connected, merge models onto it for the dropdown
+      const st = ai.hub.state();
+      const existing = (st.connections || []).find((c) => c.provider === provider);
+      if (existing && models.length) {
+        const map = new Map((existing.models || []).map((m) => [m.id || m, typeof m === 'object' ? m : { id: m }]));
+        for (const m of models) {
+          const id = m.id || m;
+          if (!id) continue;
+          if (!map.has(id)) map.set(id, { id, verified: !!m.verified, displayName: m.displayName || id });
+        }
+        ai.hub.upsertConnection({
+          id: existing.id,
+          provider: existing.provider,
+          baseUrl: existing.baseUrl,
+          credentialRef: existing.credentialRef,
+          status: existing.status || 'READY',
+          models: [...map.values()].slice(0, 80),
+          lastVerified: existing.lastVerified || null,
+          lastError: null,
+        });
+      }
+      res.json({
+        ok: true,
+        models,
+        verifiedModel: probed?.verifiedModel || models[0]?.id || null,
+        warning: probed?.warning || null,
+        hub: ai.hub.publicState(),
+      });
+    } catch (err) {
+      const cls = err.classify || { user: err.message };
+      res.status(400).json({ error: cls.user || err.message, code: cls.code || 'DISCOVER_FAILED' });
+    }
+  });
+
   r.post('/api/ai/hub/connect', async (req, res) => {
     const body = req.body || {};
     const provider = String(body.provider || '').toLowerCase();
