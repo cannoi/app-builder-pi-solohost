@@ -281,7 +281,7 @@ function renderModelSelectors(hub) {
     const current = el.value; el.innerHTML = `<option value="">${empty}</option>` + all.map(x => `<option value="${esc(x.value)}">${esc(x.label)}</option>`).join('');
     if (all.some(x => x.value === current)) el.value = current;
   };
-  make('hubModel1', 'Select verified model'); make('hubModel2', 'Optional reviewer model');
+  make('hubModel', 'Select model');
 }
 async function loadActivityLog() {
   const out = $('logOut');
@@ -310,8 +310,10 @@ async function loadHub() {
   try {
     const hub = await api('/api/ai/hub');
     renderHubList(hub); renderProviderSelector(hub); renderModelSelectors(hub);
-    if ($('hubModel1')) $('hubModel1').value = hub.preferredModels?.[0] || '';
-    if ($('hubModel2')) $('hubModel2').value = hub.preferredModels?.[1] || '';
+    if ($('hubModel')) {
+      const pref = hub.preferredModels?.[0] || '';
+      if (pref) $('hubModel').value = pref;
+    }
     return hub;
   } catch (e) { if ($('settingsState')) $('settingsState').textContent = e.message; return null; }
 }
@@ -336,20 +338,27 @@ async function loadProjects() {
 }
 function renderUpgradeSession(session) {
   if (!session) return;
-  const box = document.createElement('div'); box.className = 'msg ai';
+  const reason = String(session.lastError?.message || session.pauseReason || '').slice(0, 200);
+  const key = [session.status, session.currentStep || '', reason, (session.completedSteps || []).join(',')].join('|');
+  // One card only — openProject + job.done both used to append duplicates
+  if (state._upgradeSessionKey === key) return;
+  state._upgradeSessionKey = key;
+  document.querySelectorAll('.msg.ai.upgradeSessionCard').forEach((el) => el.remove());
+  const box = document.createElement('div'); box.className = 'msg ai upgradeSessionCard';
   const title = document.createElement('div'); title.style.fontWeight = '700';
   title.textContent = session.status === 'paused' ? '⏸ Upgrade paused — work is saved' : '🔧 Upgrade progress';
   box.appendChild(title);
   const body = document.createElement('div'); body.className = 'small';
   const completed = (session.completedSteps || []).join(', ') || 'none';
   const files = (session.changedFiles || []).join(', ') || 'none';
-  body.textContent = `Step: ${session.currentStep || '—'}\nCompleted: ${completed}\nFiles changed: ${files}${session.lastError?.message ? `\nPause reason: ${session.lastError.message}` : ''}`;
+  body.textContent = `Step: ${session.currentStep || '—'}\nCompleted: ${completed}\nFiles changed: ${files}${reason ? `\nPause reason: ${reason}` : ''}`;
   body.style.whiteSpace = 'pre-wrap'; box.appendChild(body);
   const row = document.createElement('div'); row.className = 'actionCard';
   if (session.resumable && session.status === 'paused') {
     const resume = document.createElement('button'); resume.className = 'primary'; resume.textContent = '▶ Continue Upgrade';
     resume.onclick = async () => {
       if (state.busy) return;
+      state._upgradeSessionKey = null; // allow a fresh card after resume
       setBusy(true, 'Continuing Upgrade from the saved plan…');
       try { const r = await api(`/api/projects/${state.projectId}/upgrade/resume`, { method: 'POST', body: '{}' }); watch(r.jobId); }
       catch (e) { handleJobActionError(e); }
@@ -362,7 +371,7 @@ function renderUpgradeSession(session) {
 async function openProject(id, announce = true) {
   state.projectId = id; rememberProject(id); await loadProjects();
   const p = await api(`/api/projects/${id}`);
-  if (announce) $('chat').innerHTML = '';
+  if (announce) { $('chat').innerHTML = ''; state._upgradeSessionKey = null; }
   const recent = Array.isArray(p.releases) ? p.releases : [];
   // Refresh/reconnect must use the authoritative current-job endpoint first. The
   // activity list is historical and can lag while a long Publish is still running.
@@ -1060,9 +1069,15 @@ async function addHubProvider() {
   if (!apiKey) { $('settingsState').textContent = 'Paste an API key first.'; return; }
   $('settingsState').textContent = 'Checking token and discovering usable models…';
   try {
+    const selectedModel = ($('hubModel')?.value || '').trim();
     const r = await api('/api/ai/hub/connect', { method: 'POST', body: JSON.stringify({ provider, apiKey, baseUrl }) });
     $('hubKey').value = ''; $('hubBase').value = '';
-    renderHubList(r.hub); renderModelSelectors(r.hub);
+    if (selectedModel && selectedModel.startsWith(provider + ':')) {
+      await api('/api/ai/hub/routing', { method: 'POST', body: JSON.stringify({ preferredProvider: provider, preferredModels: [selectedModel] }) });
+    } else if (selectedModel && !selectedModel.includes(':')) {
+      await api('/api/ai/hub/routing', { method: 'POST', body: JSON.stringify({ preferredProvider: provider, preferredModels: [`${provider}:${selectedModel}`] }) });
+    }
+    await loadHub();
     $('settingsState').textContent = `${provider} added. First key is used first. Tap Save if you also set GitHub.`;
     await loadStatus();
   } catch (e) { $('settingsState').textContent = e.message; }
@@ -1172,16 +1187,53 @@ if ($('aiSelect')) $('aiSelect').onchange = async () => {
   add('system', `AI provider is now ${name}${preferredModels[0] ? ` · ${preferredModels[0].split(':').slice(1).join(':')}` : ''}.`);
   $('aiSelect').value = applied?.hub?.preferredProvider || provider;
 };
-if ($('hubModel1')) $('hubModel1').onchange = async () => {
-  const first = $('hubModel1').value; const second = $('hubModel2')?.value || '';
+if ($('hubModel')) $('hubModel').onchange = async () => {
+  const first = $('hubModel').value;
   if (!first) return;
-  await api('/api/ai/hub/routing', { method: 'POST', body: JSON.stringify({ preferredProvider: first.split(':')[0], preferredModels: [first, second].filter(Boolean).slice(0, 2) }) });
+  await api('/api/ai/hub/routing', { method: 'POST', body: JSON.stringify({ preferredProvider: first.split(':')[0], preferredModels: [first] }) });
   await loadHub();
+  if ($('settingsState')) $('settingsState').textContent = `Model selected: ${first}`;
 };
-if ($('hubModel2')) $('hubModel2').onchange = async () => {
-  const first = $('hubModel1')?.value || ''; const second = $('hubModel2').value;
-  await api('/api/ai/hub/routing', { method: 'POST', body: JSON.stringify({ preferredProvider: first.split(':')[0] || second.split(':')[0], preferredModels: [first, second].filter(Boolean).slice(0, 2) }) });
+
+function parseModelListFile(text) {
+  const raw = String(text || '').trim();
+  if (!raw) return [];
+  try {
+    const j = JSON.parse(raw);
+    if (Array.isArray(j)) return j.map((x) => (typeof x === 'string' ? x : (x.id || x.name || ''))).filter(Boolean);
+    if (Array.isArray(j.models)) return j.models.map((x) => (typeof x === 'string' ? x : (x.id || x.name || ''))).filter(Boolean);
+    if (j.data && Array.isArray(j.data)) return j.data.map((x) => x.id || x).filter(Boolean);
+  } catch {}
+  return raw.split(/[\n,]+/).map((s) => s.trim()).filter((s) => s && !s.startsWith('#'));
+}
+
+async function importModelListFromFile(file) {
+  if (!file) return;
+  const text = await file.text();
+  const models = parseModelListFile(text);
+  if (!models.length) throw new Error('No model ids in file. Use JSON ["model-a"] or one id per line.');
+  const provider = $('hubProvider')?.value || '';
+  const r = await api('/api/ai/hub/models/import', {
+    method: 'POST',
+    body: JSON.stringify({ models, provider }),
+  });
   await loadHub();
+  if ($('hubModel') && r.preferredModels?.[0]) $('hubModel').value = r.preferredModels[0];
+  if ($('settingsState')) $('settingsState').textContent = `Imported ${r.imported || models.length} model(s). Selected: ${r.preferredModels?.[0] || models[0]}`;
+  return r;
+}
+
+if ($('hubUploadModels')) $('hubUploadModels').onclick = () => $('hubModelFile')?.click();
+if ($('hubModelFile')) $('hubModelFile').onchange = async (e) => {
+  const file = e.target.files?.[0];
+  e.target.value = '';
+  if (!file) return;
+  try {
+    if ($('settingsState')) $('settingsState').textContent = `Reading ${file.name}…`;
+    await importModelListFromFile(file);
+  } catch (err) {
+    if ($('settingsState')) $('settingsState').textContent = err.message || 'Upload failed';
+  }
 };
 $('projectSelect').onchange = async () => { if (state.busy) return; state.projectId = $('projectSelect').value || null; if (state.projectId) await openProject(state.projectId); else { rememberProject(null); renderWelcome(); } };
 $('jumpDown').onclick = () => { $('chat').scrollTop = $('chat').scrollHeight; $('jumpDown').hidden = true; };

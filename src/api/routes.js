@@ -183,6 +183,66 @@ export function registerRoutes(r, app) {
     res.json(ai.hub.publicState());
   });
 
+
+  // Robot panel chat — SAME AIGateway as main Builder (Gemini/DeepSeek/Hub).
+  // Prefer this path so the panel never depends on a second Universal AI plane.
+  r.post('/api/panel/chat', async (req, res) => {
+    try {
+      const message = String(req.body?.message || '').trim();
+      if (!message) return res.status(400).json({ ok: false, error: 'message required' });
+      const st = ai.status?.() || {};
+      if (!st.configured) {
+        const vi = /[àáạảãâăèéêìíòóôơùúưýăđ]|bạn|xin chào|làm gì/i.test(message);
+        return res.json({
+          ok: true,
+          configured: false,
+          source: 'local',
+          provider: 'local',
+          model: 'guide',
+          reply: vi
+            ? 'Chưa có AI. Mở ⚙ Settings → thêm Gemini (hoặc DeepSeek/Custom) → Save, rồi chat lại ở panel.'
+            : 'No AI configured. Open ⚙ Settings → add Gemini (or DeepSeek/Custom) → Save, then try the panel again.',
+        });
+      }
+      const hist = Array.isArray(req.body?.history) ? req.body.history.slice(-4) : [];
+      const histText = hist
+        .map((h) => `${h.role || 'user'}: ${String(h.content || '').slice(0, 400)}`)
+        .filter(Boolean)
+        .join('\n');
+      const system = [
+        'App Builder — Pi SoloHost robot panel. Reply in the user language. Be short and practical.',
+        'Help with Build, Run, Improve, Publish, GitHub token, SoloHost install (2 files), Feedback.',
+        'You are App Builder, not Personal AI Hub. Never invent Publish success.',
+      ].join('\n');
+      const prompt = histText ? `${histText}\nuser: ${message}` : message;
+      const out = await Promise.race([
+        ai.complete({ task: 'USER_CHAT', prompt, system, json: false }),
+        new Promise((_, rej) => setTimeout(() => rej(Object.assign(new Error('AI timed out after 55s'), { code: 'TIMEOUT' })), 55000)),
+      ]);
+      const reply = String(out?.text || out?.reply || out?.content || '').trim();
+      if (!reply) return res.status(502).json({ ok: false, configured: true, error: 'Empty AI response', source: 'builder-hub' });
+      return res.json({
+        ok: true,
+        reply,
+        configured: true,
+        source: 'builder-hub',
+        provider: out.provider || st.primary || 'builder',
+        model: out.model || 'auto',
+        actions: [],
+      });
+    } catch (err) {
+      const msg = String(err.message || err).slice(0, 240);
+      return res.status(502).json({
+        ok: false,
+        configured: true,
+        source: 'builder-hub',
+        error: `AI unavailable: ${msg}`,
+        reply: `AI unavailable: ${msg}`,
+        code: err.code || 'AI_ERROR',
+      });
+    }
+  });
+
   r.post('/api/ai/hub/connect', async (req, res) => {
     const body = req.body || {};
     const provider = String(body.provider || '').toLowerCase();
@@ -235,6 +295,47 @@ export function registerRoutes(r, app) {
     ai.hub.removeConnection(id);
     ai.refresh();
     res.json({ ok: true, hub: ai.hub.publicState() });
+  });
+
+
+  // Import a user-supplied model id list into the preferred (or first) connection.
+  r.post('/api/ai/hub/models/import', (req, res) => {
+    try {
+      const raw = req.body?.models;
+      const list = Array.isArray(raw)
+        ? raw
+        : String(raw || '')
+          .split(/[\n,]+/)
+          .map((s) => s.trim())
+          .filter(Boolean);
+      const ids = [...new Set(list.map((x) => String(x).replace(/^models\//, '').trim()).filter(Boolean))].slice(0, 80);
+      if (!ids.length) return res.status(400).json({ error: 'No model ids found. Upload a JSON array or one model id per line.' });
+      const hub = ai.hub.publicState();
+      const preferred = String(req.body?.provider || hub.preferredProvider || req.body?.connectionId || '').trim();
+      let conn = (hub.connections || []).find((c) => c.id === preferred || c.provider === preferred);
+      if (!conn) conn = (hub.connections || [])[0];
+      if (!conn) return res.status(400).json({ error: 'Add a provider token first, then upload a model list.' });
+      const existing = new Map((conn.models || []).map((m) => [m.id || m, m]));
+      for (const id of ids) {
+        if (!existing.has(id)) existing.set(id, { id, verified: false, displayName: id });
+      }
+      const models = [...existing.values()].slice(0, 80);
+      ai.hub.upsertConnection({
+        id: conn.id,
+        provider: conn.provider,
+        baseUrl: conn.baseUrl,
+        credentialRef: conn.credentialRef,
+        status: conn.status || 'READY',
+        models,
+        lastVerified: conn.lastVerified || null,
+        lastError: null,
+      });
+      const preferredModels = [`${conn.provider}:${ids[0]}`];
+      ai.hub.setRouting({ preferredProvider: conn.provider, preferredModels });
+      res.json({ ok: true, imported: ids.length, models, preferredModels, hub: ai.hub.publicState() });
+    } catch (err) {
+      res.status(400).json({ error: err.message || 'Could not import model list.' });
+    }
   });
 
   r.post('/api/ai/hub/routing', (req, res) => {
