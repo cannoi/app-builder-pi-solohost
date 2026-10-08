@@ -183,26 +183,24 @@ function mountAIRoutes(router, ai, opts = {}) {
       // 1) PRIMARY: Builder AIGateway (same plane as main Builder chat)
       if (builderAI && typeof builderAI.complete === 'function' && builderConfigured()) {
         try {
-          const knowledge =
-            (adapter && adapter.knowledge) ||
-            'You are the assistant for App Builder — Pi SoloHost. Help users build SoloHost apps. Reply in the user language.';
-          const hist = Array.isArray(b.history) ? b.history.slice(-8) : [];
+          // Keep system prompt small for fast panel replies (coding tasks use full Builder prompts).
+          let knowledge = String((adapter && adapter.knowledge) ||
+            'App Builder — Pi SoloHost. Help Build/Run/Publish. Reply in user language. Be short.').trim();
+          if (knowledge.length > 900) knowledge = knowledge.slice(0, 900);
+          const hist = Array.isArray(b.history) ? b.history.slice(-4) : [];
           const histText = hist
-            .map((h) => `${h.role || 'user'}: ${h.content || ''}`)
+            .map((h) => `${h.role || 'user'}: ${String(h.content || '').slice(0, 500)}`)
             .filter(Boolean)
             .join('\n');
           const prompt = histText ? `${histText}\nuser: ${message}` : message;
+          const ctxBits = b.context && typeof b.context === 'object'
+            ? Object.entries(b.context).slice(0, 6).map(([k, v]) => `${k}=${String(v).slice(0, 40)}`).join('; ')
+            : '';
           const system = [
             knowledge,
-            'You are App Builder — Pi SoloHost assistant (robot panel).',
-            'Reply in the user\'s language (Vietnamese or English).',
-            'Be concise and practical. Help with Build, Run, Improve, Publish, GitHub token, Feedback.',
-            'This product is App Builder, not Personal AI Hub. Only mention Personal AI Hub if the user asks about it as a provider.',
-            'Never invent successful Build/Publish without user action.',
-            JSON.stringify(b.context || {}),
-          ]
-            .filter(Boolean)
-            .join('\n\n');
+            'Robot panel. Concise. User language. Never invent Publish success.',
+            ctxBits ? `Context: ${ctxBits}` : '',
+          ].filter(Boolean).join('\n');
 
           const out = await builderAI.complete({
             task: 'USER_CHAT',

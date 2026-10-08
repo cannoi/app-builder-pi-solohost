@@ -78,13 +78,13 @@ window.UniversalAI = (() => {
           body: JSON.stringify({
             message,
             context,
-            history: history.slice(-8),
+            history: history.slice(-4),
             actions: extra.actions || [],
           }),
         });
         history.push({ role: 'user', content: message });
         history.push({ role: 'assistant', content: out.reply || '' });
-        while (history.length > 20) history.splice(0, 2);
+        while (history.length > 8) history.splice(0, 2);
         if (Array.isArray(out.actions)) opts.onActions?.(out.actions);
         return out;
       },

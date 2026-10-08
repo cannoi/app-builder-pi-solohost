@@ -992,16 +992,6 @@ export function registerPipeline(app) {
       : 'GHCR is verified, but the SoloHost ZIP was not created. Use Zip to retry packaging.';
     if (installReady) {
       emit('release', 'done', `GitHub ✓ · GHCR ✓ · SoloHost install kit ✓${copyGuide}`);
-      // Structured payload so UI can render two copyable YAML panels
-      emit('solohost_files', 'done', JSON.stringify({
-        kind: 'solohost_install',
-        compose: composeYaml.trim().slice(0, 12000),
-        config: configYaml.trim().slice(0, 12000),
-        guide: {
-          en: '1) SoloHost → Add app  2) Paste the two files  3) Save → Start',
-          vi: '1) SoloHost → Thêm app  2) Dán 2 file  3) Lưu → Start',
-        },
-      }));
     }
     return {
       status, release: rec, quality, githubUrl, githubPublish, installReady, checklist,

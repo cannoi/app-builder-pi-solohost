@@ -1,38 +1,20 @@
 'use strict';
+/**
+ * Panel knowledge — keep SHORT for fast AI replies.
+ * Long Agent/Upgrade docs belong in Builder coding prompts, not the robot panel.
+ */
 module.exports = {
-  knowledge: `
-App Builder — Pi SoloHost helps users create apps for Pi Network SoloHost.
-
-Reply in the user's language (Vietnamese or English). Be short and practical.
-
-PHASES (Agent v3)
-- Upgrade: change requested behavior only — no auto DARE/full scan/repair.
-- Re-import ZIP into an Upgrade project: accept files as-is; no security auto-repair. User can Publish directly.
-- Upgrade Publish: docs/comments mentioning docker.sock do not block; only real socket mounts in SoloHost package block.
-- After GHCR verify, Builder shows two SoloHost files as separate cards with Copy buttons (docker-compose.yml + config_options.yml), not one collapsed text block.
-- Build: scan, DARE, evidence-based repair, runtime verify.
-- Publish: correct image + synchronized SoloHost package (docker-compose.yml + config_options.yml).
-- Robot panel uses the same Builder AI (one key in ⚙ Settings).
-
-WHAT THIS APP DOES
-- Main chat: describe an idea → Build → ▶ Run preview → Improve → 🚀 Publish.
-- Publish needs successful Run + GitHub owner + token in top ⚙ Settings.
-- Robot panel uses the SAME AI as Builder (one configuration in ⚙ Settings).
-- Feedback tab: Hub notices and user feedback (no second AI system).
-
-IDENTITY
-- You are App Builder — Pi SoloHost.
-- Personal AI Hub is only an optional Custom provider endpoint, not this product's name.
-- Never present yourself as Personal AI Hub.
-
-SAFETY
-- Never ask for wallet seeds or private keys.
-- Never invent Publish/GitHub success.
-`,
+  knowledge: `App Builder — Pi SoloHost (Pi Network).
+Help users Build / Run / Improve / Publish SoloHost apps. Reply in the user's language (VI or EN). Be short.
+Flow: describe idea → Build → ▶ Run → Improve → 🚀 Publish (needs GitHub owner+token in ⚙ Settings).
+Robot panel uses the SAME AI as top Settings — one key only.
+Upgrade: import/re-import ZIP accepts files; Publish syncs SoloHost docker-compose.yml + config_options.yml (copy cards).
+Feedback tab = Hub notices. Never ask for wallet seeds. Never invent Publish success.
+You are App Builder, not Personal AI Hub (PAH is only an optional Custom provider).`,
 
   actions: [
-    { name: 'open_builder_settings', description: 'Open top Settings for GitHub and coding AI.' },
-    { name: 'explain_publish', description: 'Explain Publish requirements.' },
+    { name: 'open_builder_settings', description: 'Open Settings for GitHub and AI.' },
+    { name: 'explain_publish', description: 'Explain Publish steps.' },
     { name: 'explain_preview', description: 'Explain Run/preview.' },
     { name: 'explain_feedback', description: 'Explain Feedback tab.' },
   ],
@@ -54,26 +36,31 @@ SAFETY
 
     if (/^(xin\s*)?chào|hello|hi\b|hey\b|alo/.test(m.trim()) || /app (này |gì)|làm gì/.test(m)) {
       return vi
-        ? 'Xin chào! Đây là App Builder — Pi SoloHost. Bạn mô tả ứng dụng muốn tạo ở chat chính, tôi (và AI đã cấu hình ở ⚙ Settings) sẽ giúp Build, Run và Publish.'
-        : 'Hello! This is App Builder — Pi SoloHost. Describe the app you want in the main chat; the AI from ⚙ Settings helps you Build, Run, and Publish.';
+        ? 'Xin chào! App Builder — Pi SoloHost. Mô tả app ở chat chính để Build/Run/Publish. AI cấu hình một lần ở ⚙ Settings.'
+        : 'Hello! App Builder — Pi SoloHost. Describe your app in the main chat to Build/Run/Publish. Configure AI once in ⚙ Settings.';
     }
     if (/publish|xuất bản|github/.test(m)) {
       return vi
-        ? 'Publish cần: (1) ▶ Run thành công, (2) ⚙ Settings → GitHub owner + token, (3) 🚀 Publish.'
-        : 'Publish needs: (1) successful Run, (2) GitHub owner + token in ⚙ Settings, (3) 🚀 Publish.';
+        ? 'Publish: (1) Run OK, (2) ⚙ Settings → GitHub owner + token, (3) 🚀 Publish. Sau đó copy 2 file SoloHost (compose + config_options).'
+        : 'Publish: (1) Run OK, (2) GitHub owner + token in ⚙ Settings, (3) 🚀 Publish. Then copy the two SoloHost files.';
     }
-    if (/preview|run|chạy/.test(m)) {
+    if (/preview|run|chạy|sandbox/.test(m)) {
       return vi
-        ? 'Bấm ▶ Run để mở preview an toàn. Lỗi thì mô tả trong chat chính để Improve.'
-        : 'Tap ▶ Run for a safe preview. If it fails, describe the issue in the main chat to Improve.';
+        ? 'Bấm ▶ Run để xem trước. Lỗi thì mô tả trong chat chính để Improve.'
+        : 'Tap ▶ Run for a preview. If it fails, describe the issue in the main chat to Improve.';
     }
-    if (/ai|key|provider|cấu hình|settings/.test(m)) {
+    if (/ai|key|provider|cấu hình|settings|panel|chậm|slow/.test(m)) {
       return vi
-        ? 'Cấu hình AI một lần ở ⚙ Settings trên cùng (Gemini/DeepSeek/Custom). Panel robot dùng chung — không cần nhập key lần hai.'
-        : 'Configure AI once in top ⚙ Settings (Gemini/DeepSeek/Custom). The robot panel uses the same AI — no second key.';
+        ? 'AI một lần ở ⚙ Settings (Gemini/DeepSeek/Custom). Panel robot dùng chung — không nhập key lần hai.'
+        : 'Configure AI once in ⚙ Settings (Gemini/DeepSeek/Custom). The robot panel shares it — no second key.';
+    }
+    if (/solohost|compose|config_options|cài đặt/.test(m)) {
+      return vi
+        ? 'Sau Publish: copy docker-compose.yml và config_options.yml vào SoloHost → Lưu → Start (hoặc tải ZIP SoloHost).'
+        : 'After Publish: copy docker-compose.yml and config_options.yml into SoloHost → Save → Start (or download the SoloHost ZIP).';
     }
     return vi
-      ? 'Hướng dẫn offline App Builder — Pi SoloHost. Thêm AI ở ⚙ Settings để chat đầy đủ. Hỏi về Build, Run, Publish hoặc Feedback.'
-      : 'Offline guide for App Builder — Pi SoloHost. Add AI in ⚙ Settings for full chat. Ask about Build, Run, Publish, or Feedback.';
+      ? 'Hỏi về Build, Run, Publish, GitHub token, Feedback hoặc SoloHost install.'
+      : 'Ask about Build, Run, Publish, GitHub token, Feedback, or SoloHost install.';
   },
 };

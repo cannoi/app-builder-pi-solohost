@@ -166,15 +166,9 @@ async function downloadScript(kind) {
   } catch (e) { add('ai', e.message); }
 }
 function event(stage, status, message) {
-  // Structured SoloHost install kit (JSON or legacy markers)
+  // Do not render SoloHost kit from events (avoids duplicate cards). Kit comes once from job.result.solohostFiles.
   if (stage === 'solohost_files' || isSoloHostKitPayload(message)) {
-    const kit = parseSoloHostKit(message);
-    if (kit && (kit.compose || kit.config)) {
-      const stick = chatNearBottom();
-      $('chat').appendChild(renderSoloHostKitCard(kit));
-      if (stick) $('chat').scrollTop = $('chat').scrollHeight; else maybeJump();
-      return;
-    }
+    return; // skip noisy JSON event line
   }
   const shown = compactNotice(message);
   if (shouldSkipNotice(`${status}:${shown}`)) return;
@@ -712,13 +706,17 @@ async function watch(jobId, { preserveEvents = false, resetFailures = true } = {
     const events = job.events || [];
     for (let i = state.seenEvents; i < events.length; i++) event(events[i].stage, events[i].status, events[i].message);
     if (job.status === 'done' && (job.result?.solohostFiles?.compose || job.result?.solohostFiles?.config)) {
-      const sf = job.result.solohostFiles;
-      const stick = chatNearBottom();
-      $('chat').appendChild(renderSoloHostKitCard({
-        compose: sf.compose, config: sf.config,
-        guide: { en: '1) SoloHost → Add app  2) Copy each file  3) Save → Start', vi: '1) SoloHost → Thêm app  2) Copy từng file  3) Lưu → Start' },
-      }));
-      if (stick) $('chat').scrollTop = $('chat').scrollHeight; else maybeJump();
+      const kitKey = `${jobId}:${(job.result.solohostFiles.compose || '').length}:${(job.result.solohostFiles.config || '').length}`;
+      if (state._solohostKitShown !== kitKey) {
+        state._solohostKitShown = kitKey;
+        const sf = job.result.solohostFiles;
+        const stick = chatNearBottom();
+        $('chat').appendChild(renderSoloHostKitCard({
+          compose: sf.compose, config: sf.config,
+          guide: { en: '1) SoloHost → Add app  2) Copy each file  3) Save → Start', vi: '1) SoloHost → Thêm app  2) Copy từng file  3) Lưu → Start' },
+        }));
+        if (stick) $('chat').scrollTop = $('chat').scrollHeight; else maybeJump();
+      }
     }
     state.seenEvents = events.length;
 

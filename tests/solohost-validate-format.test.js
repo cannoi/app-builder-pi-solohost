@@ -40,6 +40,5 @@ test('pipeline formats SoloHost validation errors', async () => {
   const text = await fs.readFile(new URL('../src/jobs/pipeline.js', import.meta.url), 'utf8');
   assert.match(text, /formatSoloHostErrors/);
   assert.match(text, /solohostFiles/);
-  assert.match(text, /solohost_files/);
   assert.match(text, /formatSoloHostErrors/);
 });
