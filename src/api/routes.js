@@ -386,9 +386,17 @@ export function registerRoutes(r, app) {
       const uploaded = req.body?.file;
       if (!uploaded?.buffer) return res.status(400).json({ error: 'Upload a ZIP file.' });
       const idea = String(req.body.idea || req.body.note || `Imported app: ${uploaded.originalname || 'upload.zip'}`);
+      const upgradeMode = req.body.upgrade === true || req.body.upgrade === 'true' || req.body.mode === 'upgrade';
       const job = jobs.enqueue({
         type: 'import_app',
-        payload: { idea, filename: uploaded.originalname || 'upload.zip', improve: req.body.improve === 'true' || req.body.improve === true },
+        payload: {
+          idea,
+          filename: uploaded.originalname || 'upload.zip',
+          improve: !upgradeMode && (req.body.improve === 'true' || req.body.improve === true),
+          upgrade: upgradeMode,
+          skipRepair: upgradeMode,
+          mode: upgradeMode ? 'upgrade' : 'build',
+        },
       });
       job._zip = uploaded.buffer;
       setImmediate(() => jobs.kick(job));
@@ -406,7 +414,15 @@ export function registerRoutes(r, app) {
     const job = jobs.enqueue({
       type: 'import_app',
       projectId: p.id,
-      payload: { projectId: p.id, idea: p.idea, filename: uploaded.originalname || 'upload.zip', replace: true },
+      payload: {
+        projectId: p.id,
+        idea: p.idea,
+        filename: uploaded.originalname || 'upload.zip',
+        replace: true,
+        upgrade: true,
+        skipRepair: true,
+        mode: 'upgrade',
+      },
     });
     job._zip = uploaded.buffer;
     setImmediate(() => jobs.kick(job));

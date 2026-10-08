@@ -1613,6 +1613,64 @@ export function registerPipeline(app) {
     }
     await projects.saveMetadata(project, 'requirements.json', { ...(await projects.readMetadata(project, 'requirements.json', {})), stack, imported: true, filename: job.payload.filename });
     await projects.saveMetadata(project, 'user-language.json', { language: detectUserLanguage(job.payload.idea || job.payload.filename || 'Imported app'), source: job.payload.idea || job.payload.filename || 'Imported app' });
+
+    // Upgrade / external-AI path: accept the ZIP as the new source of truth.
+    // Do NOT run Build-phase scan, DARE, deterministic repair, or security auto-fix.
+    const originMeta = await projects.readMetadata(project, 'origin.json', {});
+    const upgradeOriginMeta = await projects.readMetadata(project, 'upgrade-origin.json', null);
+    const statusName = String(project.status || projects.get(project.id)?.status || '');
+    const upgradeImport = Boolean(
+      job.payload.upgrade === true
+      || job.payload.mode === 'upgrade'
+      || job.payload.skipRepair === true
+      || originMeta?.origin === 'upgrade'
+      || upgradeOriginMeta?.origin === 'upgrade'
+      || statusName.startsWith('UPGRADE_')
+      || job.payload.projectId // re-import into existing project = replace source for Upgrade/Publish, not Build
+    );
+
+    if (upgradeImport) {
+      await projects.saveMetadata(project, 'origin.json', {
+        ...(originMeta || {}),
+        origin: 'upgrade',
+        importedAt: new Date().toISOString(),
+        filename: job.payload.filename || 'upload.zip',
+      });
+      await projects.saveMetadata(project, 'upgrade-origin.json', {
+        ...(upgradeOriginMeta || {}),
+        origin: 'upgrade',
+        baselineHash: upgradeOriginMeta?.baselineHash || null,
+        lastImportAt: new Date().toISOString(),
+        lastImportFile: job.payload.filename || 'upload.zip',
+        policy: 'accept-external-source-no-auto-repair',
+      });
+      // Clear stale security block state from prior Build runs so Publish is not stuck
+      await projects.saveMetadata(project, 'security.json', {
+        status: 'UPGRADE_ACCEPTED',
+        critical: 0,
+        summary: 'Upgrade import: security gate deferred. External AI changes accepted without Build repair.',
+        findings: [],
+        operationImpact: 'CONTINUE',
+      });
+      await projects.saveMetadata(project, 'test-plan.json', {
+        status: 'upgrade-import-skipped',
+        staticResult: { status: 'skipped' },
+        nodeResult: { status: 'skipped' },
+        note: 'Import in Upgrade mode does not run Build tests or DARE.',
+      });
+      projects.setStatus(projects.get(project.id), 'UPGRADE_READY');
+      emit('import', 'done',
+        '✓ Upgrade import complete. External changes accepted as-is — no scan, DARE, or security auto-repair.\n'
+        + 'Next: Run if you want a preview, then Publish. SoloHost package will sync on Publish.');
+      return {
+        projectId: project.id,
+        stack,
+        upgradeImport: true,
+        tested: { skipped: true, reason: 'upgrade-origin' },
+        summary: `Imported ${job.payload.filename || 'ZIP'} for Upgrade (no auto-repair). Stack: ${stack.language}.`,
+      };
+    }
+
     projects.setStatus(project, 'READY_TO_BUILD');
     emit('scan', 'running', 'Checking the imported files…');
     const tested = await testAndMaybeFix(projects.get(project.id), emit);
