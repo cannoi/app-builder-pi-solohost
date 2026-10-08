@@ -65,7 +65,7 @@ test('Upgrade inspection appends history as an array', async () => {
   await inspectUpgrade({ project, projects, snapshots, log: { info() {} } });
   const history = await projects.readMetadata(project, 'upgrade-history.json', []);
   assert.equal(Array.isArray(history), true);
-  assert.equal(history[0].kind, 'inspect');
+  assert.equal(history[0].kind, 'baseline');
   await fs.rm(root, { recursive: true, force: true });
 });
 
@@ -90,17 +90,30 @@ test('Upgrade still rolls back a high-risk plan when verification regresses', as
   await fs.rm(root, { recursive: true, force: true });
 });
 
-test('Upgrade baseline catches SoloHost EACCES runtime permission even when source tests are otherwise healthy', async () => {
+test('Upgrade baseline never performs DARE/runtime repair', async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'paf-upgrade-solohost-runtime-'));
-  await fs.writeFile(path.join(root, 'Dockerfile'), 'FROM node:18-alpine\nWORKDIR /app\nCOPY . .\nUSER node\nCMD ["node","server.js"]\n');
+  const original = 'FROM node:18-alpine\nWORKDIR /app\nCOPY . .\nUSER node\nCMD ["node","server.js"]\n';
+  await fs.writeFile(path.join(root, 'Dockerfile'), original);
   await fs.writeFile(path.join(root, 'server.js'), "const fs = require('fs'); fs.mkdirSync('/app/data', { recursive: true });\n");
   const { project, projects, snapshots } = fakeProject(root);
   const result = await inspectUpgrade({ project, projects, snapshots, log: { info() {} } });
   assert.equal(result.ready, true);
-  assert.equal(result.safeRepairs.length >= 1, true);
-  assert.equal(result.safeRepairs[0].ruleId, 'RUNTIME_FILESYSTEM_PERMISSION');
-  const dockerfile = await fs.readFile(path.join(root, 'Dockerfile'), 'utf8');
-  assert.match(dockerfile, /mkdir -p '\/app\/data' && chown 'node' '\/app\/data'/);
-  assert.doesNotMatch(dockerfile, /chmod\s+(-R\s+)?777/);
+  assert.deepEqual(result.safeRepairs, []);
+  assert.equal(result.baseline.qualityGate, 'NOT_RUN');
+  assert.equal(await fs.readFile(path.join(root, 'Dockerfile'), 'utf8'), original);
+  await fs.rm(root, { recursive: true, force: true });
+});
+
+test('Upgrade uses targeted verification instead of the Build quality gate', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'paf-upgrade-targeted-'));
+  await fs.writeFile(path.join(root, 'app.js'), 'const message = "old";\nconsole.log(message);\n');
+  const { project, projects, snapshots } = fakeProject(root);
+  await inspectUpgrade({ project, projects, snapshots, log: { info() {} } });
+  const result = await applyUpgrade({
+    project, projects, snapshots, request: 'Change message',
+    plan: { files: [{ path: 'app.js', content: 'const message = "new";\nconsole.log(message);\n' }], expected_result: 'Message changes.' },
+  });
+  assert.deepEqual(result.files, ['app.js']);
+  assert.ok(result.verification.some((x) => x.check === 'javascript_syntax' && x.ok));
   await fs.rm(root, { recursive: true, force: true });
 });

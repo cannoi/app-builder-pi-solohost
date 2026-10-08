@@ -95,3 +95,57 @@ test('SoloHost package generation does not assume container port 8080 when app l
   assert.doesNotMatch(compose, /18273:8080/);
   await fs.rm(root, { recursive: true, force: true });
 });
+
+
+test('SoloHost package synchronization discovers new runtime environment variables', async () => {
+  const fs = await import('node:fs/promises');
+  const os = await import('node:os');
+  const path = await import('node:path');
+  const { writeSoloHostPackage } = await import('../src/release/solohost.js');
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'paf-solohost-sync-'));
+  await fs.writeFile(path.join(root, 'server.js'), 'const port = process.env.PORT || 3000; const model = process.env.AI_MODEL; const search = process.env.ENABLE_SEARCH;');
+  await fs.writeFile(path.join(root, 'Dockerfile'), 'EXPOSE 3000\n');
+  await fs.writeFile(path.join(root, 'docker-compose.yml'), `services:
+  app:
+    build: .
+    environment:
+      PORT: 3000
+      API_KEY: \${API_KEY}
+      AI_MODEL: \${AI_MODEL}
+      ENABLE_SEARCH: \${ENABLE_SEARCH}
+`);
+  await fs.writeFile(path.join(root, 'config_options.yml'), `title: "Demo"
+output_file: .env
+fields:
+  - name: API_KEY
+    label: API key
+    type: password
+`);
+  const result = await writeSoloHostPackage({ project: { name: 'Demo', idea: 'Demo', slug: 'demo' }, sourceDir: root, image: 'ghcr.io/demo/demo:2.0.0', hostPort: 18280 });
+  const compose = await fs.readFile(path.join(root, 'solohost/docker-compose.yml'), 'utf8');
+  const config = await fs.readFile(path.join(root, 'solohost/config_options.yml'), 'utf8');
+  assert.match(compose, /image:\s*ghcr\.io\/demo\/demo:2\.0\.0/);
+  assert.match(compose, /127\.0\.0\.1:18280:3000/);
+  assert.doesNotMatch(compose, /^\s{4}build:/m);
+  assert.match(config, /name:\s*AI_MODEL/);
+  assert.match(config, /name:\s*ENABLE_SEARCH/);
+  assert.match(result.synchronization.envVars.join(','), /AI_MODEL/);
+  await fs.rm(root, { recursive: true, force: true });
+});
+
+test('SoloHost package synchronization is idempotent for unchanged source', async () => {
+  const fs = await import('node:fs/promises');
+  const os = await import('node:os');
+  const path = await import('node:path');
+  const { writeSoloHostPackage } = await import('../src/release/solohost.js');
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'paf-solohost-idempotent-'));
+  await fs.writeFile(path.join(root, 'server.js'), 'const PORT = process.env.PORT || 8080;');
+  const args = { project: { name: 'Demo', idea: 'Demo', slug: 'demo' }, sourceDir: root, image: 'ghcr.io/demo/demo:1.0.0', hostPort: 18281 };
+  await writeSoloHostPackage(args);
+  const firstCompose = await fs.readFile(path.join(root, 'solohost/docker-compose.yml'), 'utf8');
+  const firstConfig = await fs.readFile(path.join(root, 'solohost/config_options.yml'), 'utf8');
+  await writeSoloHostPackage(args);
+  assert.equal(await fs.readFile(path.join(root, 'solohost/docker-compose.yml'), 'utf8'), firstCompose);
+  assert.equal(await fs.readFile(path.join(root, 'solohost/config_options.yml'), 'utf8'), firstConfig);
+  await fs.rm(root, { recursive: true, force: true });
+});

@@ -13,3 +13,23 @@
 {"ts":"2026-10-07T08:06:11.983Z","level":"info","msg":"ai.chat","source":"local","offline":true}
 {"ts":"2026-10-07T08:06:11.994Z","level":"info","msg":"ai.chat.request","hasMessage":true,"len":4,"preview":"test","builderConfigured":true}
 {"ts":"2026-10-07T08:06:11.995Z","level":"error","msg":"ai.chat.builder_fail","error":"gemini request failed","code":502}
+{"ts":"2026-10-08T01:14:12.323Z","level":"info","msg":"ai.chat.request","hasMessage":true,"len":24,"preview":"Xin chào, app này là gì?","builderConfigured":true}
+{"ts":"2026-10-08T01:14:12.324Z","level":"info","msg":"ai.chat","provider":"gemini","model":"gemini-x","source":"builder-hub","replyLen":43}
+{"ts":"2026-10-08T01:14:12.344Z","level":"info","msg":"ai.chat.request","hasMessage":true,"len":5,"preview":"hello","builderConfigured":true}
+{"ts":"2026-10-08T01:14:12.344Z","level":"info","msg":"ai.chat","provider":"deepseek","model":"deepseek-chat","source":"builder-hub","replyLen":26}
+{"ts":"2026-10-08T01:14:12.359Z","level":"info","msg":"ai.chat.request","hasMessage":true,"len":25,"preview":"Tôi muốn tạo app máy tính","builderConfigured":true}
+{"ts":"2026-10-08T01:14:12.360Z","level":"info","msg":"ai.chat","provider":"gemini","model":"gemini-x","source":"builder-hub","replyLen":35}
+{"ts":"2026-10-08T01:14:12.369Z","level":"info","msg":"ai.chat.request","hasMessage":true,"len":8,"preview":"xin chào","builderConfigured":false}
+{"ts":"2026-10-08T01:14:12.373Z","level":"info","msg":"ai.chat","source":"local","offline":true}
+{"ts":"2026-10-08T01:14:12.380Z","level":"info","msg":"ai.chat.request","hasMessage":true,"len":4,"preview":"test","builderConfigured":true}
+{"ts":"2026-10-08T01:14:12.380Z","level":"error","msg":"ai.chat.builder_fail","error":"gemini request failed","code":502}
+{"ts":"2026-10-08T01:14:24.337Z","level":"info","msg":"ai.chat.request","hasMessage":true,"len":24,"preview":"Xin chào, app này là gì?","builderConfigured":true}
+{"ts":"2026-10-08T01:14:24.339Z","level":"info","msg":"ai.chat","provider":"gemini","model":"gemini-x","source":"builder-hub","replyLen":43}
+{"ts":"2026-10-08T01:14:24.372Z","level":"info","msg":"ai.chat.request","hasMessage":true,"len":5,"preview":"hello","builderConfigured":true}
+{"ts":"2026-10-08T01:14:24.372Z","level":"info","msg":"ai.chat","provider":"deepseek","model":"deepseek-chat","source":"builder-hub","replyLen":26}
+{"ts":"2026-10-08T01:14:24.383Z","level":"info","msg":"ai.chat.request","hasMessage":true,"len":25,"preview":"Tôi muốn tạo app máy tính","builderConfigured":true}
+{"ts":"2026-10-08T01:14:24.383Z","level":"info","msg":"ai.chat","provider":"gemini","model":"gemini-x","source":"builder-hub","replyLen":35}
+{"ts":"2026-10-08T01:14:24.389Z","level":"info","msg":"ai.chat.request","hasMessage":true,"len":8,"preview":"xin chào","builderConfigured":false}
+{"ts":"2026-10-08T01:14:24.390Z","level":"info","msg":"ai.chat","source":"local","offline":true}
+{"ts":"2026-10-08T01:14:24.398Z","level":"info","msg":"ai.chat.request","hasMessage":true,"len":4,"preview":"test","builderConfigured":true}
+{"ts":"2026-10-08T01:14:24.398Z","level":"error","msg":"ai.chat.builder_fail","error":"gemini request failed","code":502}

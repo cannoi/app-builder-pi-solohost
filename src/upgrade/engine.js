@@ -3,18 +3,27 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { sha256, fileClass } from '../utils/hash.js';
 import { listFiles, readJson } from '../utils/fsx.js';
-import { scanProject } from '../security/scanner.js';
-import { runStaticTests, runNodeTests } from '../testing/engine.js';
-import { runDare } from '../dare/engine.js';
 import { findMissingNodeModules } from '../projects/deps-fix.js';
 import { writeGeneratedFiles } from '../projects/generator.js';
 import { parseRule, capabilityGap, formatRuleStatus, buildRuleTasks, normalizeExecution } from './rules.js';
 import { readUpgradeSession, createUpgradeSession, updateUpgradeSession, pauseUpgradeSession, resumeUpgradeSession, completeUpgradeSession } from './session.js';
 import { normalizeArray } from '../utils/validate.js';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+import { runAgentTools } from '../ai/agent-tools.js';
+import { saveWorkingMemory, loadWorkingMemory } from '../agent/working-memory.js';
+import { recordAttempt } from '../agent/attempt-ledger.js';
+import { assertPhaseAllows, PHASE } from '../agent/scope-guard.js';
+
+const execFileAsync = promisify(execFile);
 
 const MAX_SAFE_REPAIRS = 2;
 const MAX_AUTO_UPGRADE_FILES = 24;
 const MAX_AUTO_UPGRADE_BYTES = 6 * 1024 * 1024;
+
+export function assertUpgradeScope(operation) {
+  assertPhaseAllows(PHASE.UPGRADE, operation);
+}
 
 export function isUpgradePauseError(err) {
   const code = String(err?.code || '');
@@ -126,86 +135,99 @@ export function planHasFileChanges(plan) {
 
 export async function inspectUpgrade({ project, projects, snapshots, log }) {
   const sourceDir = projects.sourceDir(project.slug);
-  let before = await fileManifest(sourceDir);
-  const remoteSource = await projects.readMetadata(project, 'upgrade-source.json', {});
-  const remoteBaselineManifest = before;
-  const remoteSourceHash = manifestHash(remoteBaselineManifest);
+  const before = await fileManifest(sourceDir);
+  const sourceMeta = await projects.readMetadata(project, 'upgrade-source.json', {});
+  const sourceHash = manifestHash(before);
   const stack = await discoverStack(sourceDir);
-  const security = await scanProject(sourceDir);
-  const staticResult = await runStaticTests(sourceDir);
-  const nodeResult = await runNodeTests(sourceDir, 45000);
-  const issues = classifyIssues({ stack, security, staticResult, nodeResult });
-
-  const safeRepairs = [];
-  let repairHistory = await projects.readMetadata(project, 'upgrade-repair-history.json', []);
-  for (let attempt = 0; attempt < MAX_SAFE_REPAIRS; attempt += 1) {
-    // Upgrade inspection must include the SoloHost runtime contract even when
-    // source-level tests are green. A non-root Docker image can pass Node tests
-    // and still crash at startup on SoloHost (for example EACCES /app/data).
-    const candidate = await hasDeterministicCandidate(sourceDir);
-    if (!candidate && attempt > 0) break;
-    const checkpoint = await snapshots.create(project, `before-upgrade-safe-${attempt + 1}`);
-    const repair = await runDare({
-      sourceDir,
-      logs: 'Upgrade preflight deterministic inspection.',
-      extra: { message: 'SOLOHOST_UPGRADE_PREFLIGHT' },
-      history: repairHistory,
-    });
-    if (!repair?.ok) {
-      if (repair?.stopped || repair?.next === 'AI' || repair?.next === 'USER_ACTION') break;
-      break;
-    }
-    const after = await fileManifest(sourceDir);
-    const changed = diffManifest(before, after);
-    const allowed = new Set([...(repair.files || []), ...(repair.expectedFiles || []), ...(repair.derivedFiles || [])].map(normalize));
-    const unexpected = changed.filter((f) => !allowed.has(normalize(f)));
-    if (unexpected.length) {
-      await snapshots.restore(project, checkpoint.id);
-      throw new Error(`Upgrade safety check stopped: unexpected files changed: ${unexpected.join(', ')}`);
-    }
-    const afterStatic = await runStaticTests(sourceDir);
-    const afterNode = await runNodeTests(sourceDir, 45000);
-    const afterSecurity = await scanProject(sourceDir);
-    if (score(afterStatic, afterNode, afterSecurity) > score(staticResult, nodeResult, security)) {
-      await snapshots.restore(project, checkpoint.id);
-      break;
-    }
-    const entry = {
-      at: new Date().toISOString(), fingerprint: repair.fingerprint, ruleId: repair.ruleId,
-      files: repair.files || [], reason: repair.reason, checkpointId: checkpoint.id,
-      beforeHash: manifestHash(before), afterHash: manifestHash(after),
-    };
-    repairHistory = [...repairHistory, entry].slice(-20);
-    safeRepairs.push(entry);
-    before = after;
-    // Re-run DARE against the new source state. History prevents a repeat patch.
-  }
-
-  await projects.saveMetadata(project, 'upgrade-repair-history.json', repairHistory);
-  const after = await fileManifest(sourceDir);
-  const refreshed = await inspectState(sourceDir);
-  const knowledge = buildKnowledgeMap(project, stack, refreshed, after, safeRepairs);
+  const deployment = await discoverDeploymentContract(sourceDir);
   const baseline = {
     createdAt: new Date().toISOString(),
-    sourceHash: manifestHash(after),
-    remoteSourceHash,
-    sourceCommit: remoteSource.commit || remoteSource.ref || 'HEAD',
-    workingHash: manifestHash(after),
-    fileCount: after.length,
+    sourceHash,
+    remoteSourceHash: sourceMeta.commit ? sourceMeta.commit : sourceHash,
+    sourceCommit: sourceMeta.commit || sourceMeta.ref || 'HEAD',
+    workingHash: sourceHash,
+    fileCount: before.length,
     stack,
-    health: refreshed.health,
-    security: summarizeSecurity(refreshed.security),
-    knownIssues: refreshed.issues,
-    safeRepairs,
-    evidence: { static: refreshed.staticResult.status, node: refreshed.nodeResult.status },
+    deployment,
+    // Upgrade baseline is identity/context only. It is deliberately NOT a quality
+    // verdict and does not run Build/DARE/security/runtime repair.
+    qualityGate: 'NOT_RUN',
+    knownIssues: [],
+    safeRepairs: [],
+    evidence: { files: before.length, sourceHash, mode: 'baseline-only' },
   };
+  const knowledge = buildUpgradeKnowledgeMap(project, stack, baseline, before, deployment);
   await projects.saveMetadata(project, 'upgrade-knowledge.json', knowledge);
   await projects.saveMetadata(project, 'upgrade-baseline.json', baseline);
-  await appendUpgradeHistory(projects, project, {
-    kind: 'inspect', at: baseline.createdAt, result: 'baseline-created', safeRepairs,
+  await projects.saveMetadata(project, 'upgrade-origin.json', {
+    origin: 'upgrade',
+    baselineHash: sourceHash,
+    sourceHash,
+    sourceCommit: baseline.sourceCommit,
+    importedAt: sourceMeta.importedAt || new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
   });
-  log?.info?.('Upgrade baseline created', { project: project.slug, files: after.length, safeRepairs: safeRepairs.length });
-  return { baseline, knowledge, issues: refreshed.issues, safeRepairs, ready: true };
+  await projects.saveMetadata(project, 'upgrade-repair-history.json', []);
+  await appendUpgradeHistory(projects, project, {
+    kind: 'baseline', at: baseline.createdAt, result: 'baseline-created-no-repair',
+  });
+  log?.info?.('Upgrade baseline created (no quality scan/repair)', {
+    project: project.slug, files: before.length, sourceHash,
+  });
+  return {
+    baseline,
+    knowledge,
+    issues: [],
+    safeRepairs: [],
+    ready: true,
+    origin: 'upgrade',
+    qualityGate: 'NOT_RUN',
+  };
+}
+
+async function discoverDeploymentContract(sourceDir) {
+  const candidates = [
+    'solohost/docker-compose.yml',
+    'solohost/compose.yml',
+    'docker-compose.yml',
+    'compose.yml',
+    'compose.yaml',
+    'docker-compose.yaml',
+  ];
+  const composeFiles = [];
+  for (const rel of candidates) {
+    const text = await fs.readFile(path.join(sourceDir, rel), 'utf8').catch(() => '');
+    if (text.trim()) composeFiles.push({ path: rel, sha256: sha256(text) });
+  }
+  const configCandidates = ['solohost/config_options.yml', 'config_options.yml'];
+  const configFiles = [];
+  for (const rel of configCandidates) {
+    const text = await fs.readFile(path.join(sourceDir, rel), 'utf8').catch(() => '');
+    if (text.trim()) configFiles.push({ path: rel, sha256: sha256(text) });
+  }
+  return { composeFiles, configFiles, source: composeFiles[0]?.path || null, config: configFiles[0]?.path || null };
+}
+
+function buildUpgradeKnowledgeMap(project, stack, baseline, manifest, deployment) {
+  return {
+    project: { id: project.id, slug: project.slug, name: project.name },
+    architecture: { entryPoints: stack.entryPoints, routes: stack.routes, docker: stack.docker },
+    stack,
+    features: discoverFeatures(manifest, stack),
+    deployment,
+    baseline: {
+      sourceHash: baseline.sourceHash,
+      fileCount: baseline.fileCount,
+      qualityGate: 'NOT_RUN',
+    },
+    rules: [
+      'Upgrade preserves the existing app.',
+      'Upgrade does not run Build scan/DARE/auto-repair.',
+      'Only requested behavior is changed.',
+      'Publish later synchronizes the SoloHost deployment artifact from current source/image evidence.',
+    ],
+    generatedAt: new Date().toISOString(),
+  };
 }
 
 export async function beginUpgradeSession({ project, projects, request, mode = 'normal', ruleName = '' }) {
@@ -215,7 +237,7 @@ export async function beginUpgradeSession({ project, projects, request, mode = '
   if (existing && existing.request === String(request || '').trim() && existing.status === 'paused' && existing.resumable) {
     return resumeUpgradeSession(projects, project);
   }
-  return createUpgradeSession(projects, project, {
+  const created = await createUpgradeSession(projects, project, {
     sourceCommit: baseline.sourceCommit || source.commit || source.ref || 'HEAD',
     baselineHash: baseline.remoteSourceHash || baseline.sourceHash || '',
     request, mode, ruleName,
@@ -225,6 +247,13 @@ export async function beginUpgradeSession({ project, projects, request, mode = '
       { id: 'verify', label: 'Verify and finalize' },
     ],
   });
+  await projects.saveMetadata(project, 'agent-working-memory.json', {
+    ...(await projects.readMetadata(project, 'agent-working-memory.json', {})),
+    goal: String(request || '').trim(), phase: 'upgrade', status: 'running',
+    plan: created?.steps || [], currentTask: 'diagnose', nextAction: 'understand and plan',
+    updatedAt: new Date().toISOString(),
+  });
+  return created;
 }
 
 export async function resumeUpgrade({ project, projects, snapshots, ai, request = '', emit = () => {} }) {
@@ -330,40 +359,72 @@ Return JSON only with:
   "alternatives": [{"name":"...","risk":"...","scope":"..."}]
 }
 Rules: do not invent facts; do not propose dependency-wide upgrades; do not modify secrets, credentials, database schema, auth, payment, wallet, or Docker architecture unless explicitly required and marked high risk. If the rule lists required secrets, set needs_user_action instead of writing secrets into source.`;
+  await projects.saveMetadata(project, 'agent-working-memory.json', {
+    ...(await projects.readMetadata(project, 'agent-working-memory.json', {})),
+    goal: String(request || '').trim(), phase: 'upgrade', status: 'planning',
+    constraints: ['preserve existing app', 'no Build scan/DARE/auto-repair'],
+    currentTask: taskBrief?.capability || 'upgrade request',
+    updatedAt: new Date().toISOString(),
+  });
   const result = await ai.completeJson({
     task: 'UPGRADE_WORKSHOP',
-    system: 'You are the Upgrade Workshop. Inspect first, diagnose from evidence, recommend the smallest effective change, and preserve the existing app.',
+    system: 'You are the Upgrade Workshop. Inspect first, diagnose from evidence, recommend the smallest effective change, and preserve the existing app. You are tool-driven: when the supplied context is insufficient, return tool_actions using only list_files, search_text, read_file, read_range, inspect_compose, inspect_config_options. Do not invent file contents.',
     prompt,
     projectId: project.id,
     validateJson: validateUpgradePlan,
   });
-  return { ...(result.json || {}), rule: parsed.valid ? parsed : null, gap, ruleStatus: parsed.valid ? formatRuleStatus(parsed, gap) : '', provider: result.provider || null };
+  let finalJson = result.json || {};
+  const toolActions = Array.isArray(finalJson.tool_actions) ? finalJson.tool_actions : [];
+  if (toolActions.length) {
+    const toolResults = await runAgentTools({ sourceDir, actions: toolActions });
+    const follow = await ai.completeJson({
+      task: 'UPGRADE_WORKSHOP_TOOL_FOLLOWUP',
+      system: 'You are the Upgrade Workshop continuing from tool evidence. Use only the tool results and prior request. Return the smallest safe upgrade plan. No Build scan, DARE, security repair, runtime repair, or unrelated fixes.',
+      prompt: `${prompt}\n\nTOOL ACTIONS:\n${JSON.stringify(toolActions)}\n\nTOOL RESULTS:\n${JSON.stringify(toolResults)}\n\nReturn the same JSON contract without tool_actions unless another read is strictly necessary.`,
+      projectId: project.id,
+      validateJson: validateUpgradePlan,
+    });
+    finalJson = follow.json || finalJson;
+    await projects.saveMetadata(project, 'agent-working-memory.json', {
+      ...(await projects.readMetadata(project, 'agent-working-memory.json', {})),
+      toolCalls: toolActions.map((x) => ({ tool: x.tool, args: x })),
+      evidence: toolResults,
+      status: 'planned',
+      updatedAt: new Date().toISOString(),
+    });
+  }
+  return { ...finalJson, rule: parsed.valid ? parsed : null, gap, ruleStatus: parsed.valid ? formatRuleStatus(parsed, gap) : '', provider: result.provider || null };
 }
 
-export async function applyUpgrade({ project, projects, snapshots, plan, request, approved = false, ruleExecution = false }) {
-  const risk = String(plan?.risk || 'medium').toLowerCase();
+export async function applyUpgrade({
+ project, projects, snapshots, plan, request, approved = false, ruleExecution = false }) {
   const userAction = String(plan?.needs_user_action || '');
-  if (/secret|credential|wallet|private key|payment key/i.test(userAction)) {
+  if (/secret|credential|wallet|private key|payment key|destructive/i.test(userAction)) {
     throw new Error(`NEEDS_USER_ACTION: ${userAction}`);
   }
-  // Risk is not an approval gate. Low, medium, and required high changes run
-  // automatically with a checkpoint. Only secret/destructive work stops.
-  void approved; void ruleExecution; void risk;
+  void approved; void ruleExecution;
   const files = Array.isArray(plan.files) ? plan.files.filter((f) => f && f.path && typeof f.content === 'string') : [];
   if (!files.length) throw Object.assign(new Error('Upgrade plan contains no file changes.'), { code: 'AI_NO_CHANGE', recoverable: true });
   if (files.length > MAX_AUTO_UPGRADE_FILES) throw new Error(`Upgrade scope is too large for an automatic patch (${MAX_AUTO_UPGRADE_FILES} files max).`);
   const totalBytes = files.reduce((sum, f) => sum + Buffer.byteLength(f.content, 'utf8'), 0);
   if (totalBytes > MAX_AUTO_UPGRADE_BYTES) throw new Error('Upgrade patch is too large for an automatic change set.');
+
   const sourceDir = projects.sourceDir(project.slug);
   const before = await fileManifest(sourceDir);
   const checkpoint = await snapshots.create(project, 'before-upgrade');
   const session = await readUpgradeSession(projects, project);
-  if (session) await updateUpgradeSession(projects, project, { phase: 'apply', currentStep: 'apply', checkpoints: [checkpoint.id], stepId: 'apply', step: { status: 'running' } });
+  if (session) await updateUpgradeSession(projects, project, {
+    phase: 'apply', currentStep: 'apply', checkpoints: [checkpoint.id], stepId: 'apply', step: { status: 'running' },
+  });
+
   for (const f of files) {
     const rel = normalize(f.path);
-    if (!rel || rel.startsWith('/') || rel.includes('..') || fileClass(rel) === 'ABSOLUTELY_PROTECTED') throw new Error(`Upgrade attempted to modify a protected or unsafe file: ${rel}`);
+    if (!rel || rel.startsWith('/') || rel.includes('..') || fileClass(rel) === 'ABSOLUTELY_PROTECTED') {
+      throw new Error(`Upgrade attempted to modify a protected or unsafe file: ${rel}`);
+    }
     if (Buffer.byteLength(f.content, 'utf8') > 1024 * 1024) throw new Error(`Upgrade file is too large: ${rel}`);
   }
+
   const written = await writeGeneratedFiles(sourceDir, files);
   const after = await fileManifest(sourceDir);
   const changed = diffManifest(before, after);
@@ -373,22 +434,71 @@ export async function applyUpgrade({ project, projects, snapshots, plan, request
     await snapshots.restore(project, checkpoint.id);
     throw new Error(`Upgrade rolled back: unexpected files changed: ${unexpected.join(', ')}`);
   }
-  const verified = await inspectState(sourceDir);
-  const baseline = await projects.readMetadata(project, 'upgrade-baseline.json', {});
-  const baselineScore = Number(baseline?.health?.score ?? 0);
-  const currentScore = score(verified.staticResult, verified.nodeResult, verified.security);
-  if (verified.security.critical > 0 || currentScore > Math.max(0, baselineScore)) {
+
+  // Upgrade verification is targeted and evidence-based. It must never become the
+  // Build quality gate. The imported app is treated as the working baseline.
+  const verification = await verifyUpgradeChanges(sourceDir, written);
+  if (!verification.ok) {
     await snapshots.restore(project, checkpoint.id);
-    throw new Error('Upgrade rolled back because verification regressed the app.');
+    throw new Error(`UPGRADE_TARGETED_VERIFY_FAILED\n${verification.errors.join('\n')}`);
   }
+
+  const sourceHash = manifestHash(after);
   await appendUpgradeHistory(projects, project, {
     kind: 'upgrade', at: new Date().toISOString(), request, rootCause: plan.root_cause,
-    files: written, verification: verified.health, checkpointId: checkpoint.id, result: 'verified',
+    files: written, verification: verification.checks, checkpointId: checkpoint.id, result: 'verified',
   });
-  const sourceHash = manifestHash(after);
-  await projects.saveMetadata(project, 'upgrade-baseline.json', { ...baseline, updatedAt: new Date().toISOString(), sourceHash, workingHash: sourceHash, knownIssues: verified.issues });
-  if (session) await updateUpgradeSession(projects, project, { phase: 'verify', currentStep: 'verify', workingHash: sourceHash, changedFiles: written, verification: [verified.health], checkpoints: [checkpoint.id], stepId: 'apply', step: { status: 'done', files: written, result: 'Verified changes applied.' }, completedSteps: ['apply'] });
-  return { ok: true, files: written, sourceHash, verification: verified.health, checkpointId: checkpoint.id };
+  const baseline = await projects.readMetadata(project, 'upgrade-baseline.json', {});
+  await projects.saveMetadata(project, 'upgrade-baseline.json', {
+    ...baseline, updatedAt: new Date().toISOString(), sourceHash, workingHash: sourceHash,
+    fileCount: after.length, deployment: await discoverDeploymentContract(sourceDir),
+  });
+  await projects.saveMetadata(project, 'agent-working-memory.json', {
+    ...(await projects.readMetadata(project, 'agent-working-memory.json', {})),
+    status: 'running', phase: 'upgrade', currentTask: request,
+    filesChanged: written, evidence: verification.checks, nextAction: 'continue or publish',
+    updatedAt: new Date().toISOString(),
+  });
+  if (session) await updateUpgradeSession(projects, project, {
+    phase: 'verify', currentStep: 'verify', workingHash: sourceHash, changedFiles: written,
+    verification: verification.checks, checkpoints: [checkpoint.id],
+    stepId: 'apply', step: { status: 'done', files: written, result: 'Targeted verification passed.' },
+    completedSteps: ['apply'],
+  });
+  return { ok: true, files: written, sourceHash, verification: verification.checks, checkpointId: checkpoint.id };
+}
+
+async function verifyUpgradeChanges(sourceDir, files = []) {
+  const checks = [];
+  const errors = [];
+  for (const rel of files.map(normalize)) {
+    const full = path.join(sourceDir, rel);
+    const text = await fs.readFile(full, 'utf8').catch(() => null);
+    if (text == null) {
+      errors.push(`Missing changed file: ${rel}`);
+      continue;
+    }
+    const ext = path.extname(rel).toLowerCase();
+    if (['.js', '.mjs', '.cjs'].includes(ext)) {
+      try {
+        await execFileAsync(process.execPath, ['--check', full], { timeout: 30000 });
+        checks.push({ file: rel, check: 'javascript_syntax', ok: true });
+      } catch (err) {
+        errors.push(`${rel}: JavaScript syntax check failed.`);
+        checks.push({ file: rel, check: 'javascript_syntax', ok: false });
+      }
+    } else if (ext === '.json') {
+      try { JSON.parse(text); checks.push({ file: rel, check: 'json_parse', ok: true }); }
+      catch { errors.push(`${rel}: JSON parse failed.`); checks.push({ file: rel, check: 'json_parse', ok: false }); }
+    } else if (ext === '.yml' || ext === '.yaml') {
+      const ok = !/\t/.test(text) && !/^\s*:\s*$/m.test(text);
+      checks.push({ file: rel, check: 'yaml_shape', ok });
+      if (!ok) errors.push(`${rel}: basic YAML shape check failed.`);
+    } else {
+      checks.push({ file: rel, check: 'file_written', ok: true });
+    }
+  }
+  return { ok: errors.length === 0, checks, errors };
 }
 
 export async function runRuleUpgrade({ project, projects, snapshots, ai, request = '', ruleText = '', emit = () => {}, resume = false }) {
@@ -404,6 +514,13 @@ export async function runRuleUpgrade({ project, projects, snapshots, ai, request
   const initialContext = await relevantContext(sourceDir, parsed.requiredCapabilities.join(' '));
   let gap = capabilityGap(parsed, initialContext);
   let tasks = buildRuleTasks(parsed, gap).slice(0, execution.maxTasks);
+  await projects.saveMetadata(project, 'agent-working-memory.json', {
+    ...(await projects.readMetadata(project, 'agent-working-memory.json', {})),
+    goal: request || parsed.goal, phase: 'upgrade', status: 'running',
+    plan: tasks.map((t) => ({ id: t.id, capability: t.capability, status: t.status })),
+    currentTask: tasks.find((t) => t.status === 'pending')?.capability || null,
+    updatedAt: new Date().toISOString(),
+  });
   const state = resume && history?.rule === parsed.name && Array.isArray(history.tasks)
     ? { ...history, execution, status: 'running', updatedAt: new Date().toISOString() }
     : {
@@ -429,14 +546,7 @@ export async function runRuleUpgrade({ project, projects, snapshots, ai, request
     const context = await relevantContext(sourceDir, parsed.requiredCapabilities.join(' '));
     gap = capabilityGap(parsed, context);
     if (gap.complete && !tasks.some(t => t.status === 'pending' && t.acceptance)) break;
-    if (await hasDeterministicCandidate(sourceDir)) {
-      emit('repair', 'running', `🛠 Cycle ${cycle}/${execution.maxCycles}: Builder applying a proven local fix before asking AI.`);
-      const dare = await runDare({ sourceDir, logs: `Rule cycle ${cycle} deterministic pass.`, extra: { message: 'RULE_ENGINE_CYCLE' }, history: state.history });
-      if (dare?.ok && !dare.alreadyFixed && Array.isArray(dare.files) && dare.files.length) {
-        emit('verify', 'done', `✓ Builder fixed a proven issue on cycle ${cycle} without AI.`);
-        continue;
-      }
-    }
+    // Upgrade Rule execution is an agent workflow, not a repair pipeline. Build/DARE is out of scope here.
     const pending = tasks.filter(t => t.status === 'pending').slice(0, execution.maxTasks);
     if (!pending.length) break;
     const task = pending[0];
@@ -516,6 +626,15 @@ export async function runRuleUpgrade({ project, projects, snapshots, ai, request
       continue;
     }
     await projects.saveMetadata(project, 'upgrade-rule-execution.json', state);
+    await projects.saveMetadata(project, 'agent-working-memory.json', {
+      ...(await projects.readMetadata(project, 'agent-working-memory.json', {})),
+      phase: 'upgrade', status: 'running',
+      currentTask: tasks.find((t) => t.status === 'pending')?.capability || null,
+      successfulActions: tasks.filter((t) => ['done', 'satisfied'].includes(t.status)).map((t) => t.capability),
+      failures: tasks.filter((t) => ['failed', 'blocked'].includes(t.status)).map((t) => ({ capability: t.capability, error: t.error })),
+      nextAction: tasks.find((t) => t.status === 'pending')?.capability || 'verify completion',
+      updatedAt: new Date().toISOString(),
+    });
     // Rebuild task status from fresh evidence after every successful patch.
     const afterContext = await relevantContext(sourceDir, parsed.requiredCapabilities.join(' '));
     gap = capabilityGap(parsed, afterContext);
@@ -563,41 +682,6 @@ function validateUpgradePlan(value) {
   return true;
 }
 
-async function inspectState(sourceDir) {
-  const [security, staticResult, nodeResult, manifest] = await Promise.all([
-    scanProject(sourceDir), runStaticTests(sourceDir), runNodeTests(sourceDir, 45000), fileManifest(sourceDir),
-  ]);
-  const issues = classifyIssues({ stack: await discoverStack(sourceDir), security, staticResult, nodeResult });
-  return {
-    security, staticResult, nodeResult, issues,
-    health: {
-      status: security.critical ? 'NEEDS_ATTENTION' : webAppHealth(staticResult, nodeResult, security),
-      score: score(staticResult, nodeResult, security),
-      fileCount: manifest.length,
-    },
-  };
-}
-
-async function hasDeterministicCandidate(sourceDir) {
-  const deps = await findMissingNodeModules(sourceDir).catch(() => ({ missing: [] }));
-  if (deps.missing?.length) return true;
-  try {
-    const pkg = JSON.parse(await fs.readFile(path.join(sourceDir, 'package.json'), 'utf8'));
-    if (!pkg.scripts?.start) {
-      const results = await Promise.all(['server.js', 'index.js', 'app.js'].map((name) => fs.access(path.join(sourceDir, name)).then(() => true).catch(() => false)));
-      if (results.filter(Boolean).length === 1) return true;
-    }
-  } catch {}
-  const files = await listFiles(sourceDir);
-  for (const rel of files.filter((f) => /\.(js|mjs|cjs|ts|tsx)$/.test(f))) {
-    const text = await fs.readFile(path.join(sourceDir, rel), 'utf8').catch(() => '');
-    if (/\.listen\s*\([^)]*['"](?:127\.0\.0\.1|localhost)['"]/i.test(text)) return true;
-  }
-  const workflow = await fs.readFile(path.join(sourceDir, '.github/workflows/docker.yml'), 'utf8').catch(() => '');
-  if (workflow && /(?:docker\/login-action|docker\/build-push-action|ghcr\.io)/i.test(workflow) && !/^\s*packages:\s*write\s*$/m.test(workflow)) return true;
-  return false;
-}
-
 async function discoverStack(sourceDir) {
   const files = await listFiles(sourceDir);
   const names = new Set(files.map((f) => path.basename(f)));
@@ -630,17 +714,6 @@ function classifyIssues({ stack, security, staticResult, nodeResult }) {
   return out;
 }
 
-function buildKnowledgeMap(project, stack, state, manifest, repairs) {
-  return {
-    project: { id: project.id, slug: project.slug, name: project.name },
-    stack, architecture: { entryPoints: stack.entryPoints, routes: stack.routes, docker: stack.docker },
-    dependencies: stack.dependencies, features: discoverFeatures(manifest, stack),
-    runtime: state.health, security: summarizeSecurity(state.security), knownIssues: state.issues,
-    baselineVersion: project.version, safeRepairs: repairs, evidence: { files: manifest.length, sourceHash: manifestHash(manifest) },
-    generatedAt: new Date().toISOString(),
-  };
-}
-
 async function relevantContext(sourceDir, request) {
   // Unified authoritative snapshot (shared with Ask / Improve / Chat)
   return collectProjectContextText(sourceDir, String(request || ''), 'upgrade', 48000);
@@ -669,20 +742,6 @@ function diffManifest(before, after) {
 
 function manifestHash(manifest) { return sha256(JSON.stringify(manifest || [])); }
 function normalize(p) { return String(p || '').replace(/\\/g, '/').replace(/^\.\//, ''); }
-function score(staticResult, nodeResult, security) { return (staticResult?.status === 'failed' ? 2 : 0) + (nodeResult?.status === 'failed' ? 2 : 0) + Number(security?.critical || 0) * 4 + Number(security?.warning || 0); }
-function summarizeSecurity(s) { return { status: s.status, critical: s.critical, warning: s.warning, findings: (s.findings || []).map((f) => ({ id: f.id, severity: f.severity, file: f.file, title: f.title })) }; }
-
-function webAppHealth(staticResult, nodeResult, security) {
-  if (security?.critical) return 'NEEDS_ATTENTION';
-  if (nodeResult?.status === 'failed' && nodeResult?.reason !== 'No package.json') return 'NEEDS_ATTENTION';
-  if (staticResult?.status === 'failed') {
-    const failed = (staticResult.checks || []).filter((c) => !c.ok).map((c) => c.name);
-    const onlyScaffold = failed.every((n) => /package\.json|README|Dockerfile|\.env\.example/.test(n));
-    if (!onlyScaffold) return 'NEEDS_ATTENTION';
-  }
-  return 'HEALTHY';
-}
-
 function discoverFeatures(manifest, stack) {
   const names = (manifest || []).map((f) => String(f.path || f).toLowerCase());
   const feats = [];

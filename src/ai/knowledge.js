@@ -11,8 +11,14 @@ Required path:
 4. Build writes source, Dockerfile, GitHub Actions workflow, made-by badge.
 5. Run starts a safe local preview, checks the app, and opens the preview link. GitHub Actions builds the final Docker image when publishing.
 6. If Run fails, send the error in chat. Improve then Run again.
-7. Publish creates/updates the GitHub repo, uploads files, and prepares docker-compose.yml + config_options.yml. Do not install on SoloHost until the GHCR image exists.
-8. SoloHost pulls a public image. It does not build from source.
+7. Publish creates/updates the GitHub repo, uploads files, waits for the matching GHCR image when required, then synchronizes a fresh docker-compose.yml + config_options.yml from the current application/runtime contract. Do not blindly reuse stale install files.
+8. Upgrade is separate from Build: imported existing apps are treated as the working baseline. Upgrade does not run full scan, DARE, security/runtime repair, or unrelated bug fixing.
+9. Upgrade uses targeted evidence, working memory, checkpoints, and resumable state. If an AI provider stops, Resume continues from the saved task instead of restarting.
+10. Build is the quality/repair gate: scan → classify → DARE/repair when evidence supports it → runtime/HTTP verification.
+11. Publish of an Upgrade-origin project does not reopen the Build repair pipeline. It synchronizes the deployment artifact, validates the final SoloHost package, and releases the current image/source.
+12. SoloHost package synchronization reconciles environment variables used by Compose/application with config_options.yml. Every Compose \${VAR} must have a real config field; do not invent dead settings just to satisfy validation.
+13. Source → image → SoloHost package must stay consistent. The package must point to the exact image being released and reflect current runtime port/environment evidence.
+14. SoloHost pulls a public pre-built image. It does not build the image from source.
 
 Common errors:
 - exportImage / missing runner method: Builder should save the image with docker save; Run must not crash if save fails.

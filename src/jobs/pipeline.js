@@ -86,9 +86,10 @@ export function registerPipeline(app) {
     jobs.attachProject(job.id, project.id);
     await importZipBuffer(buffer, projects.sourceDir(project.slug), { replace: true });
     await projects.saveMetadata(project, 'upgrade-source.json', { type: 'github-public', url, owner, repo, ref: 'HEAD', commit: sourceCommit, importedAt: new Date().toISOString() });
+    await projects.saveMetadata(project, 'origin.json', { origin: 'upgrade', sourceType: 'github-public', url, owner, repo, commit: sourceCommit, updatedAt: new Date().toISOString() });
     projects.setStatus(project, 'UPGRADE_INSPECTING');
     emit('import', 'done', 'GitHub source imported. Starting the independent Upgrade Workshop.');
-    emit('inspect', 'running', 'Inspecting the imported app and creating an upgrade baseline…');
+    emit('inspect', 'running', 'Registering the imported app and creating an Upgrade baseline (no scan/repair)…');
     let result;
     try {
       result = await withTimeout(
@@ -114,15 +115,16 @@ export function registerPipeline(app) {
 
   jobs.on('upgrade_inspect', async (job, { emit }) => {
     const project = mustProject(job.payload.projectId);
+    await projects.saveMetadata(project, 'origin.json', { ...(await projects.readMetadata(project, 'origin.json', {})), origin: 'upgrade', updatedAt: new Date().toISOString() });
     projects.setStatus(project, 'UPGRADE_INSPECTING');
-    emit('inspect', 'running', 'Inspecting the existing app before any upgrade request…');
+    emit('inspect', 'running', 'Registering the existing app and creating a non-repairing Upgrade baseline…');
     const result = await withTimeout(
       inspectUpgrade({ project: projects.get(project.id), projects, snapshots, log }),
       UPGRADE_INSPECT_TIMEOUT_MS,
       'Upgrade inspection took too long and was stopped. This can happen with large or unusual repositories — try again, or use Import ZIP with just the app source instead.',
     );
     projects.setStatus(projects.get(project.id), result.ready ? 'UPGRADE_READY' : 'FAILED');
-    emit('baseline', 'done', `Baseline ready. ${result.safeRepairs.length} safe repair(s) applied; ${result.issues.length} finding(s) recorded.`);
+    emit('baseline', 'done', `Upgrade baseline ready. No Build scan or repair was run. ${result.baseline.fileCount} file(s) registered.`);
     return result;
   });
 
@@ -707,19 +709,34 @@ export function registerPipeline(app) {
   });
 
   async function runRelease(project, payload, emit) {
-    emit('validate', 'running', '✓ App generated — validating project files…');
+    const originMeta = await projects.readMetadata(project, 'origin.json', {});
+    const upgradeOrigin = originMeta?.origin === 'upgrade'
+      || Boolean((await projects.readMetadata(project, 'upgrade-origin.json', null))?.origin === 'upgrade');
+    emit('validate', 'running', upgradeOrigin
+      ? '✓ Upgrade-origin release — synchronizing deployment artifacts without application repair…'
+      : '✓ App generated — validating project files…');
     const tests = await projects.readMetadata(project, 'test-plan.json', {});
     const source = projects.sourceDir(project.slug);
-    const security = await scanProject(source);
-    await projects.saveMetadata(project, 'security.json', security);
-    const runtime = await projects.readMetadata(project, 'runtime.json', {});
+    let security = await projects.readMetadata(project, 'security.json', {});
+    let runtime = await projects.readMetadata(project, 'runtime.json', {});
+
     if (payload.approved !== true && payload.confirm !== true) throw new Error('Release blocked: approve the tested app first.');
-    if (security.critical > 0) {
-      const report = security.copy_for_ai || 'APP BUILDER SECURITY REPORT\nNo detailed report was generated.';
-      emit('security', 'failed', `${security.summary}\n\n${report}`);
-      throw new Error(`RELEASE_SECURITY_BLOCKED\n${security.summary}\n\n${report}\n\nNEXT: Tap Improve and let the AI apply the smallest targeted security fix, then Run and Publish again.`);
+
+    if (!upgradeOrigin) {
+      security = await scanProject(source);
+      await projects.saveMetadata(project, 'security.json', security);
+      if (security.critical > 0) {
+        const report = security.copy_for_ai || 'APP BUILDER SECURITY REPORT\nNo detailed report was generated.';
+        emit('security', 'failed', `${security.summary}\n\n${report}`);
+        throw new Error(`RELEASE_SECURITY_BLOCKED\n${security.summary}\n\n${report}\n\nNEXT: Tap Improve and let the AI apply the smallest targeted security fix, then Run and Publish again.`);
+      }
+      if (runtime.status !== 'passed' || runtime.health !== true) throw new Error('Release blocked: run the app successfully before publishing. Tap Run first.');
+    } else {
+      // Upgrade assumes the imported/external-AI app is already working. Publish
+      // must not turn this release into Build/DARE/security/runtime repair.
+      runtime = { ...runtime, status: runtime.status || 'upgrade-baseline', health: true, source: 'upgrade-baseline' };
+      emit('validate', 'done', '✓ Upgrade-origin publish skips application scan, DARE, and auto-repair. Deployment package synchronization remains required.');
     }
-    if (runtime.status !== 'passed' || runtime.health !== true) throw new Error('Release blocked: run the app successfully before publishing. Tap Run first.');
 
     // Hard gate: never continue Publish without GitHub credentials
     const wantsPush = payload.push !== false && payload.verifyImage !== true;
@@ -741,7 +758,7 @@ export function registerPipeline(app) {
     // Check-image / re-check must not re-apply the same Dockerfile contract or the
     // user gets a repair loop while GitHub Actions is still building.
     let releaseDare = { ok: false, stopped: false, alreadyFixed: false };
-    if (!verifyOnlyEarly) {
+    if (!upgradeOrigin && !verifyOnlyEarly) {
       const releaseDareHistory = await projects.readMetadata(project, 'dare-history.json', []);
       const releaseDareCheckpoint = await snapshots.create(project, 'before-release-runtime-preflight').catch(() => null);
       releaseDare = await runDare({
@@ -770,17 +787,19 @@ export function registerPipeline(app) {
       }
     }
     const previewFresh = runtime.status === 'passed' && runtime.health === true;
-    if (tests.nodeResult?.status === 'failed' && !previewFresh) {
+    if (!upgradeOrigin && tests.nodeResult?.status === 'failed' && !previewFresh) {
       throw new Error('Release blocked: the latest saved verification still has a failed runtime test. Tap Run first so the live preview can refresh the test report.');
     }
-    if (tests.nodeResult?.status === 'failed' && previewFresh) {
+    if (!upgradeOrigin && tests.nodeResult?.status === 'failed' && previewFresh) {
       emit('validate', 'done', 'Live preview already passed. I am using that result instead of the older npm test report.');
       tests.nodeResult = { status: 'passed', runner: 'preview-health', reason: 'Superseded by a passing live preview.' };
       await projects.saveMetadata(project, 'test-plan.json', { ...tests, verifiedAt: new Date().toISOString() });
     }
 
-    await stampMadeBy(source, cfg);
-    const quality = await review(project);
+    if (!upgradeOrigin) await stampMadeBy(source, cfg);
+    const quality = upgradeOrigin
+      ? await projects.readMetadata(project, 'upgrade-quality.json', { mode: 'upgrade-origin', verdict: 'NOT_REVIEWED_BY_BUILD' })
+      : await review(project);
     let aiDescription = '';
     try {
       const desc = await ai.completeJson({ task: 'DESCRIPTION', system: SYSTEM, prompt: descriptionPrompt(project), projectId: project.id });
@@ -886,7 +905,7 @@ export function registerPipeline(app) {
 
         if (!wait.failed) break;
         const attempts = Number((pending?.autoRepairAttempts || autoRepair?.attempts || 0));
-        if (attempts >= 1 || cycle >= 1 || payload.verifyImage === true) break;
+        if (upgradeOrigin || attempts >= 1 || cycle >= 1 || payload.verifyImage === true) break;
         autoRepair = await repairGithubActionsFailure({ project, source, owner, repo, version: notes.version, githubUrl, workflowRun, diagnostics: workflowDiagnostics, emit, notes, projectPayload: payload });
         if (!autoRepair?.ok) break;
         if (!pending || typeof pending !== 'object') pending = {};
