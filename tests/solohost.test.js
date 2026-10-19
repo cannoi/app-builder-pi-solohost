@@ -61,10 +61,14 @@ test('project exporter creates source and SoloHost ZIPs without secrets', async 
 test('top-level Builder compose keeps SoloHost-compatible runtime environment', async () => {
   const fs = await import('node:fs/promises');
   const yml = await fs.readFile(new URL('../docker-compose.yml', import.meta.url), 'utf8');
-  assert.match(yml, /image:\s*ghcr\.io\/cannoi\/app-builder-pi-solohost:latest/);
+  const cfg = await fs.readFile(new URL('../config_options.yml', import.meta.url), 'utf8');
+  assert.match(yml, /image:\s*ghcr\.io\/cannoi\/app-builder-pi-solohost:1\.7\.0/);
   assert.match(yml, /127\.0\.0\.1:18781:8080/);
+  assert.match(yml, /builder_data:\/app\/data/);
   assert.doesNotMatch(yml, /PREVIEW_REQUIRE_INTERNET/);
   assert.doesNotMatch(yml, /PREVIEW_REQUIRE_BROWSER_TEST/);
+  assert.match(cfg, /visible_if:\s*\n\s*field:\s*AI_PROVIDER/);
+  assert.doesNotMatch(cfg, /PODMAN_API_URL/);
 });
 
 test('SoloHost install kit contains only the compose/config contract files', async () => {

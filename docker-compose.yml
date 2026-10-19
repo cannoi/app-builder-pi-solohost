@@ -1,6 +1,6 @@
 services:
   app-builder:
-    image: ghcr.io/cannoi/app-builder-pi-solohost:latest
+    image: ghcr.io/cannoi/app-builder-pi-solohost:1.7.0
     restart: unless-stopped
     labels:
       pi.ui.primary: "true"
@@ -12,8 +12,13 @@ services:
       DEEPSEEK_API_KEY: "${DEEPSEEK_API_KEY}"
       GITHUB_OWNER: "${GITHUB_OWNER}"
       GITHUB_TOKEN: "${GITHUB_TOKEN}"
-      PREVIEW_MODE: "auto"
+      PREVIEW_MODE: "${PREVIEW_MODE}"
       PREVIEW_ONLINE: "true"
+    volumes:
+      - builder_data:/app/data
     dns:
       - "8.8.8.8"
       - "1.1.1.1"
+
+volumes:
+  builder_data:

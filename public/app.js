@@ -53,16 +53,48 @@ function fallbackCopy(label, v) {
   try { document.execCommand('copy'); toast(`✓ Copied ${label}`); } catch { toast(`Could not copy ${label}`); }
   ta.remove();
 }
+
+function renderFieldChoiceCard(projectId) {
+  if (!projectId) return;
+  document.querySelectorAll('.msg.ai.fieldChoiceCard').forEach((el) => el.remove());
+  const box = document.createElement('div');
+  box.className = 'msg ai fieldChoiceCard';
+  box.innerHTML = '<div style="font-weight:700">Choose install fields</div>'
+    + '<div class="small">What should SoloHost ask when installing this app?</div>'
+    + '<div class="actionCard" style="display:flex;flex-wrap:wrap;gap:8px;margin-top:8px">'
+    + '<button type="button" class="primary" data-field-mode="full">Full form</button>'
+    + '<button type="button" data-field-mode="defaults">All defaults</button>'
+    + '<button type="button" data-field-mode="auth">Login only</button>'
+    + '<button type="button" data-field-mode="custom">Custom</button>'
+    + '</div>';
+  box.querySelectorAll('[data-field-mode]').forEach((btn) => {
+    btn.onclick = async () => {
+      try {
+        await api(`/api/projects/${projectId}/solohost/fields`, {
+          method: 'POST',
+          body: JSON.stringify({ mode: btn.dataset.fieldMode, fields: {}, fixedValues: {} }),
+        });
+        add('system', `Install fields: ${btn.dataset.fieldMode}. Tap Publish to continue.`);
+        box.remove();
+      } catch (e) {
+        add('system', e.message || 'Could not save field choice');
+      }
+    };
+  });
+  $('chat').appendChild(box);
+  if (chatNearBottom()) $('chat').scrollTop = $('chat').scrollHeight;
+}
+
 function renderSoloHostKitCard(kit) {
   const box = document.createElement('div');
   box.className = 'msg ai solohostKit';
   const title = document.createElement('div');
   title.className = 'solohostKitTitle';
-  title.textContent = '📦 SoloHost install kit';
+  title.textContent = '📦 SoloHost install kit';  // i18n: solohost.kit.title
   box.appendChild(title);
   const steps = document.createElement('div');
   steps.className = 'solohostKitSteps';
-  steps.textContent = (kit.guide?.vi || kit.guide?.en || '1) SoloHost → Add app  2) Paste the two files  3) Save → Start');
+  steps.textContent = (kit.guide?.en || kit.guide || '1) SoloHost → Add app  2) Copy each file  3) Save → Start');
   box.appendChild(steps);
 
   function section(filename, body) {
@@ -756,7 +788,7 @@ async function watch(jobId, { preserveEvents = false, resetFailures = true } = {
         const stick = chatNearBottom();
         $('chat').appendChild(renderSoloHostKitCard({
           compose: sf.compose, config: sf.config,
-          guide: { en: '1) SoloHost → Add app  2) Copy each file  3) Save → Start', vi: '1) SoloHost → Thêm app  2) Copy từng file  3) Lưu → Start' },
+          guide: { en: '1) SoloHost → Add app  2) Copy each file  3) Save → Start' },
         }));
         if (stick) $('chat').scrollTop = $('chat').scrollHeight; else maybeJump();
       }
@@ -791,6 +823,10 @@ async function watch(jobId, { preserveEvents = false, resetFailures = true } = {
         else if (pending.length) add('ai', `Next: Builder stopped safely with ${pending.length} task(s) remaining. No identical repair was repeated.`);
       }
       if (result.session) renderUpgradeSession(result.session);
+      if (result.status === 'needs_field_choice') renderFieldChoiceCard(state.projectId);
+      if (result.status === 'needs_confirmation' && result.code === 'UNREACHABLE') {
+        add('system', 'SoloHost validator unreachable. Use Accept unverified on the next Publish, or retry later.');
+      }
       if (result.paused && result.resumable) {
         setBusy(false);
         renderUpgradeSession(result.session || result.execution || null);

@@ -186,6 +186,87 @@ export function registerRoutes(r, app) {
 
   // Robot panel chat — SAME AIGateway as main Builder (Gemini/DeepSeek/Hub).
   // Prefer this path so the panel never depends on a second Universal AI plane.
+
+  // SoloHost field policy + validation
+  r.get('/api/projects/:id/solohost/fields', async (req, res) => {
+    try {
+      const p = projects.get(req.params.id);
+      if (!p) return res.status(404).json({ error: 'Project not found' });
+      const { suggestPolicy, loadFieldPolicy, policyHash } = await import('../release/solohost-fields.js');
+      const { inventoryFromSource } = await import('../release/solohost.js');
+      const source = projects.sourceDir(p.slug);
+      const path = await import('node:path');
+      const inventory = await inventoryFromSource(source);
+      const metaDir = path.join(projects.projectDir(p), 'metadata');
+      const saved = await loadFieldPolicy(metaDir);
+      const suggestions = {
+        full: suggestPolicy(inventory, 'full'),
+        defaults: suggestPolicy(inventory, 'defaults'),
+        auth: suggestPolicy(inventory, 'auth'),
+        custom: suggestPolicy(inventory, 'custom'),
+      };
+      res.json({
+        inventory,
+        inventoryHash: policyHash(inventory),
+        policy: saved,
+        suggestions,
+      });
+    } catch (err) {
+      res.status(500).json({ error: err.message || 'fields failed' });
+    }
+  });
+
+  r.post('/api/projects/:id/solohost/fields', async (req, res) => {
+    try {
+      const p = projects.get(req.params.id);
+      if (!p) return res.status(404).json({ error: 'Project not found' });
+      const { saveFieldPolicy, policyHash } = await import('../release/solohost-fields.js');
+      const path = await import('node:path');
+      const metaDir = path.join(projects.projectDir(p), 'metadata');
+      const { validatePolicyBody } = await import('../release/solohost-fields.js');
+      const body = validatePolicyBody(req.body || {});
+      const policy = {
+        ...body,
+        inventoryHash: req.body?.inventoryHash || null,
+        updatedAt: new Date().toISOString(),
+      };
+      await saveFieldPolicy(metaDir, policy);
+      res.json({ ok: true, policy });
+    } catch (err) {
+      res.status(500).json({ error: err.message || 'save policy failed' });
+    }
+  });
+
+  r.post('/api/projects/:id/solohost/validate', async (req, res) => {
+    try {
+      const p = projects.get(req.params.id);
+      if (!p) return res.status(404).json({ error: 'Project not found' });
+      const source = projects.sourceDir(p.slug);
+      const result = await releases.validateSoloHost(source, {
+        acceptUnverified: req.body?.acceptUnverified === true,
+      });
+      res.json(result);
+    } catch (err) {
+      res.status(500).json({ error: err.message || 'validate failed' });
+    }
+  });
+
+  r.post('/api/projects/:id/solohost/preview-env', async (req, res) => {
+    try {
+      const p = projects.get(req.params.id);
+      if (!p) return res.status(404).json({ error: 'Project not found' });
+      const fs = await import('node:fs/promises');
+      const path = await import('node:path');
+      const source = projects.sourceDir(p.slug);
+      const configOptionsYaml = await fs.readFile(path.join(source, 'solohost', 'config_options.yml'), 'utf8');
+      const { previewEnv } = await import('../release/solohost-api.js');
+      const data = await previewEnv({ configOptionsYaml, values: req.body?.values || {} });
+      res.json(data);
+    } catch (err) {
+      res.status(502).json({ error: err.message || 'preview-env failed' });
+    }
+  });
+
   r.post('/api/panel/chat', async (req, res) => {
     try {
       const message = String(req.body?.message || '').trim();

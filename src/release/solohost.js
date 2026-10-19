@@ -1,6 +1,8 @@
 import { writeSafeFile, ensureDir } from '../utils/fsx.js';
 import path from 'node:path';
 import fs from 'node:fs/promises';
+import { applyPolicyToVars, inventoryFields, suggestPolicy } from './solohost-fields.js';
+import { lintPackage } from './solohost-lint.js';
 
 const COMPOSE_CANDIDATES = [
   'docker-compose.yml',
@@ -17,28 +19,49 @@ const CONFIG_CANDIDATES = [
 
 export async function writeSoloHostPackage({
   project, sourceDir, image, hostPort = 18080, containerPort = null, description = '',
+  fieldPolicy = null,
 }) {
   const out = path.join(sourceDir, 'solohost');
   const contract = await discoverRuntimeContract(sourceDir, image, containerPort);
   const detectedPort = contract.containerPort || 8080;
   await ensureDir(out);
 
-  const compose = buildSoloHostCompose({
+  // Field policy: keep | fixed | omit (default full = keep all non-internal)
+  const policy = fieldPolicy && fieldPolicy.mode ? fieldPolicy : { mode: 'full', fields: {}, fixedValues: {} };
+  const applied = applyPolicyToVars(contract.envVars, policy);
+  // compose must declare every ${VAR}: keep + fixed (omit removed)
+  const envForCompose = [...new Set([...applied.keep, ...applied.fixed])];
+
+  let compose = buildSoloHostCompose({
     sourceCompose: contract.composeText,
     image: contract.image,
     hostPort,
     containerPort: detectedPort,
-    envVars: contract.envVars,
+    envVars: envForCompose,
   });
 
+  // Ensure named volume when omitting anything
+  if (applied.omit.length && !/^volumes\s*:/m.test(compose)) {
+    compose = compose.trimEnd() + '\n\nvolumes:\n  app_data:\n';
+  }
+
   const existingConfig = await readFirst(sourceDir, CONFIG_CANDIDATES);
-  const existingNamesBefore = new Set(extractConfigFieldNames(existingConfig?.text || ''));
-  const missingVars = contract.envVars.filter((v) => !existingNamesBefore.has(v) && v !== 'PORT');
-  const config = reconcileConfigOptions({
+  // Form fields = keep only (never internal)
+  let config = reconcileConfigOptions({
     existing: existingConfig?.text || '',
     project,
-    usedVars: contract.envVars,
+    usedVars: applied.keep,
   });
+  // Merge fixed_values: fixed treatment + any existing non-conflicting
+  config = mergeFixedValues(config, applied.fixedValues, applied.fixed);
+
+  // Empty form fallback: hidden SOLOHOST_PROFILE
+  if (!applied.keep.length) {
+    if (!envForCompose.includes('SOLOHOST_PROFILE')) {
+      compose = ensureEnvInCompose(compose, 'SOLOHOST_PROFILE');
+    }
+    config = ensureHiddenProfileField(config);
+  }
 
   const blurb = normalizeDescription(description) || professionalBlurb(project);
   const appInfo = `# ${project.name}\n\nSuggested app name: ${project.name}\nSuggested description: ${blurb}\n\nDocker image:\n${contract.image}\n\nDo not install until this image address exists on GHCR.\n`;
@@ -55,24 +78,30 @@ export async function writeSoloHostPackage({
   await writeSafeFile(sourceDir, 'docker-compose.yml', compose);
   await writeSafeFile(sourceDir, 'config_options.yml', config);
 
+  const lint = lintPackage({ composeText: compose, configText: config, policy });
+  const ok = !lint.errors.length;
   return {
+    ok,
     directory: out,
     files: ['docker-compose.yml', 'config_options.yml', 'APP_INFO.md', 'LOGO_PROMPT.txt', 'INSTALL.md', 'README.md'],
     image: contract.image,
     hostPort,
     containerPort: detectedPort,
     description: blurb,
+    fieldPolicy: policy,
+    lint,
     synchronization: {
       sourceCompose: contract.sourceCompose,
-      envVars: contract.envVars,
+      envVars: envForCompose,
+      omittedVars: applied.omit,
       configFields: extractConfigFieldNames(config),
-      unusedExistingFields: extractConfigFieldNames(existingConfig?.text || '').filter((name) => !contract.envVars.includes(name)),
+      unusedExistingFields: extractConfigFieldNames(existingConfig?.text || '').filter((name) => !envForCompose.includes(name)),
       synchronized: true,
     },
   };
 }
 
-async function discoverRuntimeContract(sourceDir, image, containerPort = null) {
+export async function discoverRuntimeContract(sourceDir, image, containerPort = null) {
   const composeFile = await readFirst(sourceDir, COMPOSE_CANDIDATES);
   const composeText = composeFile?.text || '';
   const envVars = new Set();
@@ -287,15 +316,15 @@ function extractConfigFieldNames(text) {
 function fieldYaml(name) {
   const upper = name.toUpperCase();
   if (/KEY|TOKEN|PASSWORD|SECRET|CREDENTIAL|PRIVATE/i.test(upper)) {
-    return `  - name: ${name}\n    label: ${humanize(name)}\n    type: password\n    preserve_if_blank: true\n    help: "Required by the application."`;
+    return `  - name: ${name}\n    label: ${humanize(name)}\n    type: password\n    preserve_if_blank: true\n    help: "Required to run this app. Keep it private."`;
   }
   if (/^(ENABLE|DISABLE)_/i.test(upper)) {
-    return `  - name: ${name}\n    label: ${humanize(name)}\n    type: select\n    default: "false"\n    options:\n      - value: "true"\n        label: "Enabled"\n      - value: "false"\n        label: "Disabled"\n    help: "Application setting."`;
+    return `  - name: ${name}\n    label: ${humanize(name)}\n    type: select\n    default: "false"\n    options:\n      - value: "true"\n        label: "Enabled"\n      - value: "false"\n        label: "Disabled"\n    help: "Optional setting. Leave blank to use the app default."`;
   }
   if (upper.endsWith('_PORT') || upper === 'PORT' || /_TIMEOUT$/.test(upper)) {
-    return `  - name: ${name}\n    label: ${humanize(name)}\n    type: number\n    help: "Application runtime setting."`;
+    return `  - name: ${name}\n    label: ${humanize(name)}\n    type: number\n    help: "Runtime value. Leave blank to use the app default."`;
   }
-  return `  - name: ${name}\n    label: ${humanize(name)}\n    type: text\n    preserve_if_blank: true\n    help: "Application setting."`;
+  return `  - name: ${name}\n    label: ${humanize(name)}\n    type: text\n    preserve_if_blank: true\n    help: "Optional setting. Leave blank to use the app default."`;
 }
 
 function humanize(name) {
@@ -340,4 +369,72 @@ export async function detectContainerPort(sourceDir) {
   const compose = blob.match(/127\.0\.0\.1:\d{2,5}:(\d{2,5})/);
   if (compose) return Number(compose[1]);
   return null;
+}
+
+
+/** Shared inventory for generator + routes. */
+export async function inventoryFromSource(sourceDir) {
+  const contract = await discoverRuntimeContract(sourceDir, 'placeholder:image');
+  const defaults = {};
+  const descriptions = {};
+  // Defaults from ${VAR:-x} in source compose text
+  for (const m of String(contract.composeText || '').matchAll(/\$\{([A-Za-z_][A-Za-z0-9_]*):-([^}]*)\}/g)) {
+    defaults[m[1]] = m[2];
+  }
+  // .env.example
+  try {
+    const envEx = await fs.readFile(path.join(sourceDir, '.env.example'), 'utf8');
+    for (const line of envEx.split(/\r?\n/)) {
+      const m = line.match(/^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/);
+      if (m && defaults[m[1]] == null) defaults[m[1]] = m[2].replace(/^["']|["']$/g, '');
+      const cm = line.match(/^#\s*([A-Za-z_][A-Za-z0-9_]*)\s*[-:]\s*(.+)$/);
+      if (cm) descriptions[cm[1]] = cm[2].trim();
+    }
+  } catch { /* optional */ }
+  return inventoryFields(contract.envVars, { defaults, descriptions });
+}
+
+
+function mergeFixedValues(configText, fixedMap = {}, fixedNames = []) {
+  const lines = String(configText || '').split(/\r?\n/);
+  const existing = new Set();
+  for (const m of String(configText).matchAll(/name:\s*([A-Za-z_][A-Za-z0-9_]*)/g)) existing.add(m[1]);
+  const entries = [];
+  for (const name of fixedNames) {
+    if (existing.has(name)) continue;
+    const val = fixedMap[name];
+    if (val == null || /PASSWORD|SECRET|TOKEN|API_KEY|PRIVATE/i.test(name)) continue;
+    entries.push(`  - name: ${name}\n    value: ${JSON.stringify(String(val))}`);
+  }
+  for (const [name, val] of Object.entries(fixedMap)) {
+    if (existing.has(name) || fixedNames.includes(name)) continue;
+    if (val == null || /PASSWORD|SECRET|TOKEN|API_KEY|PRIVATE/i.test(name)) continue;
+    entries.push(`  - name: ${name}\n    value: ${JSON.stringify(String(val))}`);
+  }
+  if (!entries.length) return configText;
+  if (/^fixed_values\s*:/m.test(configText)) {
+    return configText.trimEnd() + '\n' + entries.join('\n') + '\n';
+  }
+  return configText.trimEnd() + '\nfixed_values:\n' + entries.join('\n') + '\n';
+}
+
+function ensureEnvInCompose(composeText, varName) {
+  if (composeText.includes('${' + varName + '}')) return composeText;
+  // inject under first environment: block or create one after image
+  if (/^\s{4}environment:\s*$/m.test(composeText)) {
+    return composeText.replace(/^(\s{4}environment:\s*)$/m, `$1\n      ${varName}: \${${varName}}`);
+  }
+  return composeText.replace(/^(\s{4}image:\s*.+)$/m, `$1\n    environment:\n      ${varName}: \${${varName}}`);
+}
+
+function ensureHiddenProfileField(configText) {
+  if (/name:\s*SOLOHOST_PROFILE/.test(configText)) return configText;
+  const field = `  - name: SOLOHOST_PROFILE\n    type: hidden\n    default: "defaults"\n    help: "Install profile selected in App Builder."\n`;
+  if (/^fields:\s*$/m.test(configText) || /^fields:\s*\[\]/m.test(configText)) {
+    return configText.replace(/^fields:\s*(\[\])?$/m, 'fields:\n' + field);
+  }
+  if (/^fields:\s*$/m.test(configText) === false && /fields:/.test(configText)) {
+    return configText.replace(/(fields:\s*\n)/, `$1${field}`);
+  }
+  return configText.trimEnd() + '\nfields:\n' + field;
 }

@@ -957,8 +957,70 @@ export function registerPipeline(app) {
     // IMPORTANT: do not create or offer the SoloHost install kit before the exact
     // GHCR image tag has been verified. This removes the previous race condition.
     emit('package', 'running', 'GHCR image verified. Creating the SoloHost install kit…');
-    const packageInfo = await releases.prepareSoloHost(project, source, registryImage, aiDescription);
-    const validation = await releases.validateSoloHost(source);
+    // Field policy: never auto-choose for the user
+    const pathMod = path;
+    const metaDir = pathMod.join(projects.projectDir(project), 'metadata');
+    let fieldPolicy = null;
+    try {
+      const { loadFieldPolicy } = await import('../release/solohost-fields.js');
+      fieldPolicy = await loadFieldPolicy(metaDir);
+    } catch {}
+    if (!fieldPolicy && !input?.fieldMode && !input?.fieldPolicy) {
+      emit('package', 'done', 'Choose which install fields SoloHost should ask for.');
+      return {
+        status: 'needs_field_choice',
+        release: null,
+        quality,
+        githubUrl,
+        image: registryImage,
+        guide: {
+          step: 5,
+          title: 'Choose install fields',
+          action: 'solohost_fields',
+          label: 'Choose fields',
+          payload: { projectId: project.id },
+          detail: 'Pick Full form, All defaults, Login only, or Custom before the SoloHost kit is built.',
+        },
+        next: 'Choose install fields, then publish continues.',
+        brief: 'RESULT: Not ready.\nWHY: SoloHost install fields not chosen yet.\nNEXT: Choose Full / Defaults / Login only / Custom.',
+      };
+    }
+    if (!fieldPolicy && (input?.fieldPolicy || input?.fieldMode)) {
+      fieldPolicy = input.fieldPolicy || { mode: input.fieldMode, fields: input.fields || {}, fixedValues: input.fixedValues || {} };
+    }
+    const packageInfo = await releases.prepareSoloHost(project, source, registryImage, aiDescription, { fieldPolicy, hostPort: input?.hostPort });
+    if (packageInfo?.ok === false && packageInfo?.lint?.errors?.length) {
+      const errText = formatSoloHostErrors(packageInfo.lint.errors.map((e) => e.rule + ': ' + (e.params?.var || e.path)));
+      emit('package', 'failed', `SoloHost package lint failed: ${errText}`);
+      throw new Error(`SoloHost package lint failed: ${errText}`);
+    }
+    emit('package', 'running', 'Validating SoloHost package…');
+    const validation = await releases.validateSoloHost(source, {
+      acceptUnverified: input?.acceptUnverified === true,
+      policy: fieldPolicy,
+    });
+    if (validation?.code === 'UNREACHABLE' || validation?.mode === 'unreachable') {
+      emit('package', 'done', 'SoloHost validator unreachable. Confirm to accept unverified kit.');
+      return {
+        status: 'needs_confirmation',
+        code: 'UNREACHABLE',
+        release: null,
+        quality,
+        githubUrl,
+        image: registryImage,
+        packageInfo,
+        guide: {
+          step: 5,
+          title: 'Accept unverified SoloHost kit?',
+          action: 'publish',
+          label: 'Accept unverified',
+          payload: { approved: true, confirm: true, push: true, verifyImage: true, acceptUnverified: true, fieldPolicy },
+          detail: 'Remote SoloHost validation is unreachable. Local lint passed. Accept to continue with an unverified kit.',
+        },
+        next: 'Tap Accept unverified, or retry later.',
+        brief: 'RESULT: Needs confirmation.\nWHY: SoloHost validator unreachable.\nNEXT: Accept unverified or retry.',
+      };
+    }
     if (validation?.ok === false) {
       const errText = formatSoloHostErrors(validation.errors);
       emit('package', 'failed', `SoloHost package validation failed: ${errText}`);

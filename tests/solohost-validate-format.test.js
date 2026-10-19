@@ -29,7 +29,7 @@ test('local SoloHost validation accepts generated package', async () => {
   const releases = new ReleaseManager({ cfg: {}, db: { run() {}, get() { return {}; }, all() { return []; } }, log: { warn() {} } });
   // Force offline path by pointing validator to dead URL via env
   process.env.SOLOHOST_VALIDATE_URL = 'http://127.0.0.1:1/validate';
-  const v = await releases.validateSoloHost(root);
+  const v = await releases.validateSoloHost(root, { acceptUnverified: true });
   delete process.env.SOLOHOST_VALIDATE_URL;
   assert.equal(v.ok, true, formatSoloHostErrors(v.errors));
   assert.ok(['local', 'local-offline', 'local-fallback', 'remote'].includes(v.mode) || v.ok);

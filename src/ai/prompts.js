@@ -3,7 +3,7 @@ import { BUILDER_KNOWLEDGE } from './knowledge.js';
 export const SOLOHOST_CONTRACT = `SoloHost current developer contract (Pi Desktop 0.6.3, contract v0):
 - A published package contains docker-compose.yml and config_options.yml; the app source is inside a pre-built public Docker image.
 - SoloHost pulls the image and runs docker compose up -d; it does not build the image.
-- The UI service should have label pi.ui.primary: "true" and exactly one published UI port using 127.0.0.1:HOST:CONTAINER.
+- The UI service should have label pi.ui.primary (exactly one). Password fields need preserve_if_blank. Env vars: keep|fixed|omit. No secrets in fixed_values. No build:/privileged/bind mounts.: "true" and exactly one published UI port using 127.0.0.1:HOST:CONTAINER.
 - Avoid privileged, cap_add, security_opt, host networking, host namespaces, devices, unsafe bind mounts, and host-driver networks in the publish package.
 - Use named volumes for persistent app data; operator settings come from config_options.yml into .env.
 - Use immutable/versioned image tags when possible.
