@@ -698,25 +698,6 @@ export function registerRoutes(r, app) {
     res.status(202).json({ jobId: job.id, message: 'Project diagnosis started.' });
   });
 
-  r.post('/api/projects/:id/advisor', (req, res) => {
-    const p = projects.get(req.params.id);
-    if (!p) return res.status(404).json({ error: 'Project not found' });
-    if (!ensureFree(p.id, res)) return;
-    const job = jobs.enqueue({ type: 'builder_advisor', projectId: p.id, payload: { projectId: p.id, scope: req.body?.scope || '30d' } });
-    setImmediate(() => jobs.kick(job));
-    res.status(202).json({ jobId: job.id, message: 'Builder Advisor started.' });
-  });
-
-  r.post('/api/advisor/analyze', (req, res) => {
-    if (!ensureFree(req.body?.projectId || null, res)) return;
-    const job = jobs.enqueue({
-      type: 'builder_advisor',
-      projectId: req.body?.projectId || null,
-      payload: { projectId: req.body?.projectId || null, scope: req.body?.scope || '30d' },
-    });
-    setImmediate(() => jobs.kick(job));
-    res.status(202).json({ jobId: job.id, message: 'Advisor analysis started. No files will be changed.' });
-  });
 
   r.get('/api/projects/:id/diagnosis', async (req, res) => {
     const p = projects.get(req.params.id);
@@ -776,7 +757,6 @@ export function registerRoutes(r, app) {
       session: await projects.readMetadata(p, 'upgrade-session.json', null),
       ruleExecution: await projects.readMetadata(p, 'upgrade-rule-execution.json', null),
       diagnosis: await projects.readMetadata(p, 'project-diagnosis.json', null),
-      advisor: await projects.readMetadata(p, 'builder-advisor.json', null),
     });
   });
 
@@ -1071,7 +1051,30 @@ export function registerRoutes(r, app) {
   });
 
   r.get('/api/jobs', (req, res) => {
-    res.json(jobs.list({ projectId: req.query.projectId }));
+    const limit = Math.max(1, Math.min(Number(req.query?.limit || 30), 200));
+    res.json(jobs.list({ projectId: req.query.projectId, limit }));
+  });
+
+  // Read-only unified diagnostic feed: task lifecycle, every recorded job stage, and failures.
+  r.get('/api/activity/unified', (req, res) => {
+    const limit = Math.max(1, Math.min(Number(req.query?.limit || 80), 200));
+    try {
+      const summaries = jobs.list({ projectId: req.query.projectId, limit });
+      const entries = [];
+      for (const summary of summaries) {
+        const job = jobs.get(summary.id);
+        if (!job) continue;
+        entries.push({ ts: job.created_at || summary.created_at || '', level: 'task', msg: `${job.type || 'task'} · ${job.status || 'unknown'} · ${job.stage || ''}` });
+        if (job.error) entries.push({ ts: job.updated_at || summary.updated_at || '', level: 'error', msg: `${job.type || 'task'} failed: ${String(job.error).slice(0, 1200)}` });
+        for (const event of (job.events || [])) {
+          entries.push({ ts: event.created_at || '', level: /fail|error|blocked/i.test(`${event.status || ''} ${event.message || ''}`) ? 'error' : 'task', msg: `${job.type || 'task'} · ${event.stage || ''} · ${event.status || ''} · ${String(event.message || '').slice(0, 1200)}` });
+        }
+      }
+      entries.sort((a, b) => String(a.ts).localeCompare(String(b.ts)));
+      res.json({ entries: entries.slice(-500) });
+    } catch (err) {
+      res.status(500).json({ error: String(err.message || err) });
+    }
   });
 
   r.get('/api/projects/:id/logs', (req, res) => {

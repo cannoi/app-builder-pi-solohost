@@ -168,19 +168,25 @@ aiInput?.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDe
 async function loadLogs() {
   const view = document.getElementById('logsView');
   if (!view) return;
+  view.textContent = 'Loading unified Builder log…';
   try {
-    const r = await fetch('/api/logs');
-    const j = await r.json();
-    view.textContent = (j.logs || []).map(l => (l.ts || '') + ' [' + l.level + '] ' + l.msg).join('\n') || '(no logs)';
+    const [logResponse, jobResponse] = await Promise.all([
+      fetch('/api/logs'),
+      fetch('/api/activity/unified?limit=80')
+    ]);
+    if (!logResponse.ok || !jobResponse.ok) throw new Error('Could not load all Builder logs.');
+    const [logData, jobData] = await Promise.all([logResponse.json(), jobResponse.json()]);
+    const rows = [];
+    for (const entry of (jobData.entries || [])) rows.push({ ts: entry.ts || '', level: entry.level || 'task', msg: entry.msg || '' });
+    for (const entry of (logData.logs || [])) rows.push({ ts: entry.ts || '', level: entry.level || 'info', msg: entry.msg || '' });
+    rows.sort((a, b) => String(a.ts).localeCompare(String(b.ts)));
+    view.textContent = rows.slice(-200).map(row => `${row.ts} [${String(row.level).toUpperCase()}] ${row.msg}`).join('\n') || '(no Builder activity yet)';
+    view.scrollTop = view.scrollHeight;
   } catch (e) {
-    view.textContent = e.message;
+    view.textContent = `Log unavailable: ${e.message || e}`;
   }
 }
 document.getElementById('logsRefresh')?.addEventListener('click', loadLogs);
-document.getElementById('logsClear')?.addEventListener('click', async () => {
-  await fetch('/api/logs', { method: 'DELETE' });
-  loadLogs();
-});
 
 const fb = window.UniversalFeedback.create({
   onUnread: setUnread,

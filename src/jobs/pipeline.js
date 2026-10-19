@@ -25,7 +25,7 @@ import { shouldBlockRepeatedAction, nextRepeatState, repairFingerprint } from '.
 import { mergeVerificationState } from './verification.js';
 import { maskSecrets } from '../utils/mask.js';
 import { inspectUpgrade, diagnoseUpgradeRequest, applyUpgrade, runRuleUpgrade, beginUpgradeSession, resumeUpgrade, isUpgradePauseError, resolveEmptyUpgradePlan, planHasFileChanges } from '../upgrade/engine.js';
-import { diagnoseProject, buildAdvisorReport } from '../diagnose/project.js';
+import { diagnoseProject } from '../diagnose/project.js';
 import { refreshProjectBrain, rememberFailedRepair, wasRepairTried } from '../diagnose/brain.js';
 
 // Safety net only — does not change what inspectUpgrade does on the happy path.
@@ -58,14 +58,6 @@ export function registerPipeline(app) {
     return { projectId: project.id, diagnosis: report, status: 'DIAGNOSED', brief: formatProjectDiagnosis(report) };
   });
 
-  jobs.on('builder_advisor', async (job, { emit }) => {
-    const project = job.payload.projectId ? projects.get(job.payload.projectId) : (projects.list()[0] || null);
-    emit('advisor', 'running', '🧭 Reviewing session history. No files will be changed.');
-    const report = await buildAdvisorReport({ project, projects, db: app.db, scope: job.payload.scope || '30d' });
-    if (project) await refreshProjectBrain({ project, projects, db: app.db });
-    emit('advisor', 'done', formatAdvisor(report));
-    return { projectId: project?.id || null, advisor: report, status: 'ADVISOR_READY', brief: formatAdvisor(report) };
-  });
 
   jobs.on('upgrade_github_import', async (job, { emit }) => {
     const parsed = parseGithubRepoUrl(job.payload.url);
@@ -2587,19 +2579,6 @@ function formatProjectDiagnosis(report) {
   return lines.join('\n');
 }
 
-function formatAdvisor(report) {
-  const o = report.overview || {};
-  const lines = [
-    '🧭 AI ADVISOR',
-    `Apps analyzed: ${o.appsAnalyzed || 0}`,
-    `Failed jobs: ${o.failedJobs || 0}`,
-    'Advisor does not edit apps or Builder.',
-  ];
-  for (const row of (report.patterns || []).slice(0, 4)) lines.push('', `Pattern: ${row.what}`, `Why: ${row.why || ''}`, `Recommendation: ${row.recommendation}`);
-  for (const row of (report.appImprovements || []).slice(0, 4)) lines.push('', `App: ${row.app}`, `What: ${row.what}`, `Recommendation: ${row.recommendation}`);
-  if (!report.patterns?.length && !report.appImprovements?.length) lines.push('', 'No recurring problems in the selected scope.');
-  return lines.join('\n');
-}
 
 function formatUserDiagnosis(report) {
   return [

@@ -6,7 +6,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>App Builder — Pi SoloHost</title>
   <meta name="theme-color" content="#0e1116">
-  <link rel="stylesheet" href="/styles.css?v=1.7.1">
+  <link rel="stylesheet" href="/styles.css?v=1.7.2">
 <style>.paf-made-by{position:fixed;right:8px;bottom:8px;width:min(72px,12vw);max-width:12vw;height:auto;object-fit:contain;opacity:.5;background:transparent;padding:0;border:0;box-shadow:none;filter:none;pointer-events:none;z-index:30}</style>
   <link rel="stylesheet" href="/ai-panel.css">
 </head><body>
@@ -350,37 +350,6 @@
 
   <button id="saveSettings" class="primary wide">Save</button>
 
-  <div class="settingsSection" id="settingsLogs">
-    <h3>📋 Activity log</h3>
-    <p class="muted">Recent Builder jobs and project activity — useful when asking AI to fix an error.</p>
-    <div class="settingsGrid compactModels">
-      <label>Scope
-        <select id="logScope">
-          <option value="global" selected>All recent jobs</option>
-          <option value="project">Current project</option>
-        </select>
-      </label>
-      <label>Refresh
-        <button id="logRefresh" class="wide" type="button">↻ Reload log</button>
-      </label>
-    </div>
-    <pre id="logOut" class="advisorOut muted">Open Settings to load activity…</pre>
-  </div>
-
-  <div class="advisorBox">
-    <h3>🧭 AI Advisor</h3>
-    <p class="muted">Reviews history only. It never edits your app or Builder.</p>
-    <label>Scope
-      <select id="advisorScope">
-        <option value="7d">7 days</option>
-        <option value="30d" selected>30 days</option>
-        <option value="all">All history</option>
-      </select>
-    </label>
-    <button id="advisorRun" class="wide" type="button">Analyze now</button>
-    <pre id="advisorOut" class="advisorOut muted">No analysis yet.</pre>
-  </div>
-
   <p id="settingsState" class="muted"></p>
 
 </div>
@@ -448,7 +417,6 @@
         <div class="panel-body logs-body">
           <div class="logs-toolbar">
             <button type="button" class="ws-btn" id="logsRefresh">Refresh</button>
-            <button type="button" class="ws-btn" id="logsClear">Clear</button>
           </div>
           <pre id="logsView" class="logs-view">Loading…</pre>
         </div>
@@ -458,7 +426,7 @@
 
   
 
-<!-- shfh-client removed: universal feedback panel --><script src="/app.js?v=1.7.1"></script><img
+<!-- shfh-client removed: universal feedback panel --><script src="/app.js?v=1.7.2"></script><img
 class="paf-made-by"
 src="/made-by.png"
 alt="Made with App Builder — Pi SoloHost">
@@ -468,6 +436,6 @@ alt="Made with App Builder — Pi SoloHost">
 <script src="/ai-hub-sdk.js"></script>
 <script src="/ai-module/ai-module.js?v=1.4.77"></script>
 <script src="/feedback-module/feedback-module.js?v=1.4.77"></script>
-<script src="/ai-panel.js?v=1.4.78"></script>
+<script src="/ai-panel.js?v=1.7.2"></script>
 </body>
                                              </html>

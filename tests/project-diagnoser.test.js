@@ -43,10 +43,3 @@ test('declared native package plus node-gyp log invalidates NODE_MODULE_MISSING'
   await fs.rm(root, { recursive: true, force: true });
 });
 
-test('advisor report never claims it will mutate Builder or apps', async () => {
-  const { buildAdvisorReport } = await import('../src/diagnose/project.js');
-  const projects = { list: () => [], readMetadata: async () => [], saveMetadata: async () => {} };
-  const report = await buildAdvisorReport({ projects, scope: '30d' });
-  assert.equal(report.mutatesCode, false);
-  assert.equal(report.overview.appsAnalyzed, 0);
-});

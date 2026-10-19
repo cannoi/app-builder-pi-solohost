@@ -365,7 +365,7 @@ function maybeJump() {
   $('jumpDown').hidden = chatNearBottom() || el.scrollHeight <= el.clientHeight + 20;
 }
 function project() { return state.projects.find((p) => p.id === state.projectId) || null; }
-function actionText(action) { return ({ build:'Build the app', run:'Run the app', improve:'Improve the app', edit:'Edit the app', analyze:'Check the app', diagnose:'Diagnose the app', advisor:'Review Builder advice', upgrade:'Inspect & upgrade', publish:'Prepare the release', sandbox:'Test the sandbox' })[action] || action; }
+function actionText(action) { return ({ build:'Build the app', run:'Run the app', improve:'Improve the app', edit:'Edit the app', analyze:'Check the app', diagnose:'Diagnose the app', upgrade:'Inspect & upgrade', publish:'Prepare the release', sandbox:'Test the sandbox' })[action] || action; }
 
 async function loadStatus() {
   try {
@@ -434,29 +434,6 @@ function renderModelSelectors(hub) {
     if (all.some((x) => x.value === current)) input.value = current;
   }
 }
-async function loadActivityLog() {
-  const out = $('logOut');
-  if (!out) return;
-  out.textContent = 'Loading…';
-  try {
-    const scope = $('logScope')?.value || 'global';
-    const q = scope === 'project' && state.projectId
-      ? `?projectId=${encodeURIComponent(state.projectId)}&limit=80`
-      : '?limit=80';
-    const data = await api('/api/activity/global' + q);
-    const lines = [];
-    for (const j of (data.jobs || []).slice(0, 40)) {
-      lines.push(`${j.created_at || ''} · ${j.type || 'job'} · ${j.status || ''} · ${j.stage || ''} ${j.error ? '· ' + String(j.error).slice(0, 160) : ''}`.trim());
-    }
-    for (const a of (data.activity || []).slice(-40)) {
-      lines.push(`${a.t || ''} · ${a.action || ''} · ${a.status || ''} · ${String(a.detail || '').slice(0, 200)}`.trim());
-    }
-    out.textContent = lines.length ? lines.join('\n') : 'No activity yet.';
-  } catch (e) {
-    out.textContent = e?.message || 'Could not load activity.';
-  }
-}
-
 async function loadHub() {
   try {
     const hub = await api('/api/ai/hub');
@@ -701,13 +678,6 @@ async function startDiagnose() {
   try { const r = await api(`/api/projects/${state.projectId}/diagnose`, { method: 'POST', body: '{}' }); add('ai', '🩺 I will inspect the project, evidence, runtime configuration, and recent repair history before suggesting any change.'); watch(r.jobId); }
   catch (e) { handleJobActionError(e); }
 }
-async function startAdvisor() {
-  if (!state.projectId) { add('ai', '🧭 Open or create an app first.'); return; }
-  setBusy(true, 'Reviewing Builder history…');
-  try { const r = await api(`/api/projects/${state.projectId}/advisor`, { method: 'POST', body: '{}' }); watch(r.jobId); }
-  catch (e) { handleJobActionError(e); }
-}
-
 async function startSandboxDemo() {
   setBusy(true, 'Testing sandbox…');
   try {
@@ -931,9 +901,6 @@ async function watch(jobId, { preserveEvents = false, resetFailures = true } = {
       }
       if (result.status === 'github_actions_failed' && result.diagnosis) {
         renderRepairAction(result.diagnosis);
-      }
-      if (job.type === 'builder_advisor' && $('advisorOut')) {
-        $('advisorOut').textContent = result.brief || 'Advisor finished.';
       }
       if (result.brief) add('ai', result.brief);
       else if (result.reply) add('ai', result.reply);
@@ -1289,20 +1256,7 @@ if ($('liveBtn')) $('liveBtn').onclick = () => stopLive();
 $('attachBtn').onclick = () => $('fileInput').click();
 $('fileInput').onchange = () => { state.files.push(...Array.from($('fileInput').files || [])); renderFiles(); $('fileInput').value = ''; };
 $('attachments').onclick = (e) => { const b = e.target.closest('[data-remove]'); if (b) { state.files.splice(Number(b.dataset.remove),1); renderFiles(); } };
-$('settingsBtn').onclick = () => { loadSettings(); $('settings').hidden = false; loadActivityLog(); };
-$('advisorRun') && ($('advisorRun').onclick = runAdvisorFromSettings);
-async function runAdvisorFromSettings() {
-  const out = $('advisorOut');
-  if (out) out.textContent = 'Analyzing history…';
-  try {
-    const body = JSON.stringify({ scope: $('advisorScope')?.value || '30d', projectId: state.projectId || null });
-    const r = await api('/api/advisor/analyze', { method: 'POST', body });
-    if (r.jobId) watch(r.jobId);
-    else if (out) out.textContent = r.brief || JSON.stringify(r, null, 2);
-  } catch (e) {
-    if (out) out.textContent = e.message || 'Advisor could not run.';
-  }
-}
+$('settingsBtn').onclick = () => { loadSettings(); $('settings').hidden = false; };
 $('closeSettings').onclick = () => $('settings').hidden = true;
 $('saveSettings').onclick = saveSettings;
 if ($('hubAdd')) $('hubAdd').onclick = addHubProvider;
@@ -1345,8 +1299,6 @@ if ($('hubLoadModels')) $('hubLoadModels').onclick = async () => {
 };
 if ($('hubRefresh')) $('hubRefresh').onclick = async () => { const rows = await api('/api/ai/hub'); for (const c of (rows.connections || [])) await refreshHub(c.id); };
 $('hubList').addEventListener('click', (e) => { const r=e.target.closest('[data-hub-refresh]'); const x=e.target.closest('[data-hub-remove]'); if(r) refreshHub(r.dataset.hubRefresh); if(x) removeHub(x.dataset.hubRemove); });
-if ($('logRefresh')) $('logRefresh').onclick = () => loadActivityLog();
-if ($('logScope')) $('logScope').onchange = () => loadActivityLog();
 if ($('hubProvider')) $('hubProvider').onchange = () => {
   if ($('hubBaseWrap')) $('hubBaseWrap').hidden = $('hubProvider').value !== 'custom';
 };

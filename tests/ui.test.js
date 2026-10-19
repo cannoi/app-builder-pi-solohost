@@ -169,12 +169,16 @@ test('preview return preserves the active project history', () => {
   assert.match(js, /rememberProject\(id\)/);
 });
 
-test('Diagnose is internal and Advisor lives in Settings', () => {
+test('AI Advisor and duplicate Settings activity log are removed; unified logs remain in AI Panel', () => {
   const html = fs.readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
-  assert.doesNotMatch(html, /data-action="diagnose"/);
-  assert.doesNotMatch(html, /data-action="advisor"/);
-  assert.match(html, /AI Advisor/);
-  assert.match(html, /advisorRun/);
+  const app = fs.readFileSync(new URL('../public/app.js', import.meta.url), 'utf8');
+  const panel = fs.readFileSync(new URL('../public/ai-panel.js', import.meta.url), 'utf8');
+  assert.doesNotMatch(html, /AI Advisor|advisorRun|advisorScope|settingsLogs|Activity log/);
+  assert.doesNotMatch(app, /advisorRun|advisorScope|runAdvisorFromSettings|loadActivityLog/);
+  assert.match(html, /id=\"logsView\"/);
+  assert.match(panel, /api\/activity\/unified\?limit=80/);
+  assert.match(panel, /api\/logs/);
+  assert.doesNotMatch(html, /id=\"logsClear\"/);
 });
 
 test('settings sheet remains scrollable so fields are not clipped', () => {

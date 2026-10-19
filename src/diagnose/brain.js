@@ -1,4 +1,4 @@
-import { diagnoseProject, buildAdvisorReport } from './project.js';
+import { diagnoseProject } from './project.js';
 
 export async function refreshProjectBrain({ project, projects, db = null, extra = {} } = {}) {
   const sourceDir = projects.sourceDir(project.slug);
@@ -49,4 +49,4 @@ export async function wasRepairTried(projects, project, fingerprint) {
   return (Array.isArray(rows) ? rows : []).some((r) => r.fingerprint === fingerprint);
 }
 
-export { diagnoseProject, buildAdvisorReport };
+export { diagnoseProject };
