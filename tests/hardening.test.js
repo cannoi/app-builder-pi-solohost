@@ -8,7 +8,8 @@ const ROOT = path.resolve(new URL('..', import.meta.url).pathname);
 
 test('SoloHost compose has no undeclared interpolation and no forbidden security_opt', () => {
   const y = fs.readFileSync(new URL('../docker-compose.yml', import.meta.url), 'utf8');
-  assert.doesNotMatch(y, /\$\{PREVIEW_MODE\}|\$\{PODMAN_API_URL\}/);
+  assert.doesNotMatch(y, /\$\{PODMAN_API_URL\}/);
+  assert.match(y, /\$\{PREVIEW_MODE\}/); // declared via fixed_values
   assert.doesNotMatch(y, /security_opt\s*:/);
 });
 
@@ -120,7 +121,7 @@ test('SoloHost config schema keeps fields and fixed_values as arrays', () => {
   const text = fs.readFileSync(new URL('../config_options.yml', import.meta.url), 'utf8');
   assert.match(text, /fields:\n\s+- name:/);
   assert.match(text, /fixed_values:\n\s+- name: PREVIEW_MODE/);
-  assert.match(text, /- name: PODMAN_API_URL/);
+  assert.doesNotMatch(text, /PODMAN_API_URL/); // intentionally removed
 });
 
 

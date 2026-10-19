@@ -61,21 +61,105 @@ function renderFieldChoiceCard(projectId) {
   box.className = 'msg ai fieldChoiceCard';
   box.innerHTML = '<div style="font-weight:700">Choose install fields</div>'
     + '<div class="small">What should SoloHost ask when installing this app?</div>'
-    + '<div class="actionCard" style="display:flex;flex-wrap:wrap;gap:8px;margin-top:8px">'
+    + '<div class="actionCard fieldModeRow" style="display:flex;flex-wrap:wrap;gap:8px;margin-top:8px">'
     + '<button type="button" class="primary" data-field-mode="full">Full form</button>'
     + '<button type="button" data-field-mode="defaults">All defaults</button>'
     + '<button type="button" data-field-mode="auth">Login only</button>'
-    + '<button type="button" data-field-mode="custom">Custom</button>'
-    + '</div>';
+    + '<button type="button" data-field-mode="custom">Custom…</button>'
+    + '</div>'
+    + '<div class="customFieldEditor" hidden style="margin-top:10px"></div>'
+    + '<div class="small fieldSummary" style="margin-top:6px;opacity:.8"></div>';
+  const editor = box.querySelector('.customFieldEditor');
+  const summary = box.querySelector('.fieldSummary');
+  const customState = { fields: {} };
+
+  async function saveMode(mode, fields, fixedValues) {
+    await api(`/api/projects/${projectId}/solohost/fields`, {
+      method: 'POST',
+      body: JSON.stringify({ mode, fields: fields || {}, fixedValues: fixedValues || {} }),
+    });
+    add('system', `Install fields: ${mode}. Tap Publish to continue.`);
+    box.remove();
+  }
+
+  function updateSummary(inv) {
+    const n = Object.values(customState.fields).filter((v) => v === 'keep').length;
+    summary.textContent = `The install form will have ${n} questions`;
+  }
+
+  async function openCustomEditor() {
+    editor.hidden = false;
+    editor.textContent = 'Loading inventory…';
+    try {
+      const data = await api(`/api/projects/${projectId}/solohost/fields`);
+      const inv = (data.inventory || []).filter((i) => i.class !== 'internal');
+      const groups = { auth: 'Login', credential: 'API keys', feature: 'Features', tuning: 'Tuning' };
+      const by = {};
+      for (const item of inv) {
+        const g = groups[item.class] || 'Other';
+        (by[g] = by[g] || []).push(item);
+        customState.fields[item.name] = data.suggestions?.custom?.fields?.[item.name]
+          || (item.class === 'tuning' ? 'omit' : 'keep');
+      }
+      editor.innerHTML = '';
+      for (const [g, items] of Object.entries(by)) {
+        const h = document.createElement('div');
+        h.style.fontWeight = '600';
+        h.style.marginTop = '8px';
+        h.textContent = g;
+        editor.appendChild(h);
+        for (const item of items) {
+          const row = document.createElement('div');
+          row.style.display = 'flex';
+          row.style.flexWrap = 'wrap';
+          row.style.gap = '6px';
+          row.style.alignItems = 'center';
+          row.style.margin = '4px 0';
+          const lab = document.createElement('span');
+          lab.className = 'small';
+          lab.style.minWidth = '120px';
+          lab.textContent = item.name + (item.defaultValue != null ? ` (=${item.defaultValue})` : '');
+          row.appendChild(lab);
+          for (const opt of ['keep', 'fixed', 'omit']) {
+            if (opt === 'fixed' && item.secret) continue;
+            const b = document.createElement('button');
+            b.type = 'button';
+            b.textContent = opt === 'keep' ? 'Keep' : opt === 'fixed' ? 'Fixed' : 'Omit';
+            b.dataset.treatment = opt;
+            if (customState.fields[item.name] === opt) b.className = 'primary';
+            b.onclick = () => {
+              customState.fields[item.name] = opt;
+              row.querySelectorAll('button').forEach((x) => { x.className = ''; });
+              b.className = 'primary';
+              updateSummary(inv);
+            };
+            row.appendChild(b);
+          }
+          editor.appendChild(row);
+        }
+      }
+      const save = document.createElement('button');
+      save.type = 'button';
+      save.className = 'primary';
+      save.style.marginTop = '10px';
+      save.textContent = 'Save custom fields';
+      save.onclick = () => saveMode('custom', customState.fields, {});
+      editor.appendChild(save);
+      updateSummary(inv);
+    } catch (e) {
+      editor.textContent = e.message || 'Could not load fields';
+    }
+  }
+
   box.querySelectorAll('[data-field-mode]').forEach((btn) => {
     btn.onclick = async () => {
+      const mode = btn.dataset.fieldMode;
+      if (mode === 'custom') {
+        openCustomEditor();
+        return;
+      }
       try {
-        await api(`/api/projects/${projectId}/solohost/fields`, {
-          method: 'POST',
-          body: JSON.stringify({ mode: btn.dataset.fieldMode, fields: {}, fixedValues: {} }),
-        });
-        add('system', `Install fields: ${btn.dataset.fieldMode}. Tap Publish to continue.`);
-        box.remove();
+        await saveMode(mode, {}, {});
       } catch (e) {
         add('system', e.message || 'Could not save field choice');
       }
@@ -84,6 +168,7 @@ function renderFieldChoiceCard(projectId) {
   $('chat').appendChild(box);
   if (chatNearBottom()) $('chat').scrollTop = $('chat').scrollHeight;
 }
+
 
 function renderSoloHostKitCard(kit) {
   const box = document.createElement('div');

@@ -9,8 +9,9 @@ test('settings modal can be hidden and all setup buttons exist', () => {
   assert.match(css, /\.modal\[hidden\]\{display:none!important\}/);
   assert.match(html, /id="settings"[^>]*hidden/);
   assert.match(html, /id="saveSettings"/);
-  assert.match(html, /app\.js\?v=feedback-1\.4\.61/);
-  assert.match(html, /styles\.css\?v=1\.4\.35/);
+  const pkg = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
+  assert.match(html, new RegExp('app\\.js\\?v=' + pkg.version.replace(/\\./g, '\\.')));
+  assert.match(html, new RegExp('styles\\.css\\?v=' + pkg.version.replace(/\\./g, '\\.')));
   assert.match(html, /No docker\.sock/);
   assert.match(html, /GitHub token/);
   assert.match(html, /App Builder/);

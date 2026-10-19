@@ -816,6 +816,36 @@ export function registerPipeline(app) {
     let workflowDiagnostics = null;
     let autoRepair = null;
 
+    // Field choice BEFORE GitHub push for brand-new projects (not upgrade, no existing package)
+    {
+      const { resolveFieldPolicy, hasExistingSoloHostPackage } = await import('../release/field-gate.js');
+      const earlyExisting = await hasExistingSoloHostPackage(source);
+      const earlyGate = await resolveFieldPolicy({
+        projectDir: projects.projectDir(project),
+        payload,
+        existingPackage: earlyExisting,
+        upgradeOrigin,
+      });
+      if (earlyGate.needsChoice && payload.verifyImage !== true && payload.recheck !== true) {
+        emit('package', 'done', 'Choose install fields before publishing to GitHub.');
+        return {
+          status: 'needs_field_choice',
+          release: null,
+          quality: null,
+          guide: {
+            step: 2,
+            title: 'Choose install fields',
+            action: 'solohost_fields',
+            label: 'Choose fields',
+            payload: { projectId: project.id },
+            detail: 'Pick Full form, All defaults, Login only, or Custom before GitHub publish.',
+          },
+          next: 'Choose install fields, then Publish again.',
+          brief: 'RESULT: Not ready.\nWHY: SoloHost install fields not chosen yet.\nNEXT: Choose Full / Defaults / Login only / Custom.',
+        };
+      }
+    }
+
     const pending = await projects.readMetadata(project, 'release-pending.json', null);
     const verifyOnly = Boolean(pending?.githubUrl)
       && payload.existingAction !== 'overwrite'
@@ -957,15 +987,26 @@ export function registerPipeline(app) {
     // IMPORTANT: do not create or offer the SoloHost install kit before the exact
     // GHCR image tag has been verified. This removes the previous race condition.
     emit('package', 'running', 'GHCR image verified. Creating the SoloHost install kit…');
-    // Field policy: never auto-choose for the user
-    const pathMod = path;
-    const metaDir = pathMod.join(projects.projectDir(project), 'metadata');
-    let fieldPolicy = null;
-    try {
-      const { loadFieldPolicy } = await import('../release/solohost-fields.js');
-      fieldPolicy = await loadFieldPolicy(metaDir);
-    } catch {}
-    if (!fieldPolicy && !input?.fieldMode && !input?.fieldPolicy) {
+    const projectDir = projects.projectDir(project);
+    const metaDir = path.join(projectDir, 'metadata');
+    const { resolveFieldPolicy, hasExistingSoloHostPackage } = await import('../release/field-gate.js');
+    const existingPackage = await hasExistingSoloHostPackage(source);
+    const gate = await resolveFieldPolicy({
+      projectDir,
+      payload,
+      existingPackage,
+      upgradeOrigin,
+    });
+    if (gate.needsChoice) {
+      await fs.mkdir(metaDir, { recursive: true }).catch(() => {});
+      await fs.writeFile(path.join(metaDir, 'release-pending.json'), JSON.stringify({
+        status: 'package_pending',
+        reason: 'needs_field_choice',
+        image: registryImage,
+        githubUrl,
+        version: notes?.version,
+        updatedAt: new Date().toISOString(),
+      }, null, 2)).catch(() => {});
       emit('package', 'done', 'Choose which install fields SoloHost should ask for.');
       return {
         status: 'needs_field_choice',
@@ -985,21 +1026,39 @@ export function registerPipeline(app) {
         brief: 'RESULT: Not ready.\nWHY: SoloHost install fields not chosen yet.\nNEXT: Choose Full / Defaults / Login only / Custom.',
       };
     }
-    if (!fieldPolicy && (input?.fieldPolicy || input?.fieldMode)) {
-      fieldPolicy = input.fieldPolicy || { mode: input.fieldMode, fields: input.fields || {}, fixedValues: input.fixedValues || {} };
-    }
-    const packageInfo = await releases.prepareSoloHost(project, source, registryImage, aiDescription, { fieldPolicy, hostPort: input?.hostPort });
+    const fieldPolicy = gate.policy;
+    const packageInfo = await releases.prepareSoloHost(project, source, registryImage, aiDescription, {
+      fieldPolicy,
+      hostPort: gate.hostPort,
+      metaDir,
+    });
     if (packageInfo?.ok === false && packageInfo?.lint?.errors?.length) {
+      await fs.writeFile(path.join(metaDir, 'release-pending.json'), JSON.stringify({
+        status: 'package_pending',
+        reason: 'lint_failed',
+        image: registryImage,
+        githubUrl,
+        version: notes?.version,
+        updatedAt: new Date().toISOString(),
+      }, null, 2)).catch(() => {});
       const errText = formatSoloHostErrors(packageInfo.lint.errors.map((e) => e.rule + ': ' + (e.params?.var || e.path)));
       emit('package', 'failed', `SoloHost package lint failed: ${errText}`);
       throw new Error(`SoloHost package lint failed: ${errText}`);
     }
     emit('package', 'running', 'Validating SoloHost package…');
     const validation = await releases.validateSoloHost(source, {
-      acceptUnverified: input?.acceptUnverified === true,
+      acceptUnverified: gate.acceptUnverified,
       policy: fieldPolicy,
     });
     if (validation?.code === 'UNREACHABLE' || validation?.mode === 'unreachable') {
+      await fs.writeFile(path.join(metaDir, 'release-pending.json'), JSON.stringify({
+        status: 'package_pending',
+        reason: 'unreachable',
+        image: registryImage,
+        githubUrl,
+        version: notes?.version,
+        updatedAt: new Date().toISOString(),
+      }, null, 2)).catch(() => {});
       emit('package', 'done', 'SoloHost validator unreachable. Confirm to accept unverified kit.');
       return {
         status: 'needs_confirmation',
