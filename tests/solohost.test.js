@@ -153,3 +153,31 @@ test('SoloHost package synchronization is idempotent for unchanged source', asyn
   assert.equal(await fs.readFile(path.join(root, 'solohost/config_options.yml'), 'utf8'), firstConfig);
   await fs.rm(root, { recursive: true, force: true });
 });
+
+test('SoloHost package generator recovers malformed source Compose and config YAML with a valid fallback', async () => {
+  const fs = await import('node:fs/promises');
+  const os = await import('node:os');
+  const path = await import('node:path');
+  const { writeSoloHostPackage } = await import('../src/release/solohost.js');
+  const { lintPackage } = await import('../src/release/solohost-lint.js');
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'paf-yaml-fallback-'));
+  await fs.writeFile(path.join(dir, 'docker-compose.yml'), 'services:\n  app:\n    image: [broken\n    ports:\n      - "bad\n');
+  await fs.writeFile(path.join(dir, 'config_options.yml'), 'title: [broken\nfields:\n  - name: BROKEN\n    type: [text\n');
+  await fs.writeFile(path.join(dir, 'server.js'), 'const key = process.env.DEMO_API_KEY; const PORT = process.env.PORT || 8080;');
+  const result = await writeSoloHostPackage({
+    project: { name: 'Fallback Demo', idea: 'Malformed YAML recovery', slug: 'fallback-demo' },
+    sourceDir: dir,
+    image: 'ghcr.io/demo/fallback-demo:1.0.0',
+    hostPort: 18292,
+  });
+  const compose = await fs.readFile(path.join(dir, 'solohost', 'docker-compose.yml'), 'utf8');
+  const config = await fs.readFile(path.join(dir, 'solohost', 'config_options.yml'), 'utf8');
+  assert.equal(result.fallbackUsed, true);
+  assert.equal(result.ok, true, JSON.stringify(result.lint.errors));
+  assert.deepEqual(lintPackage({ composeText: compose, configText: config }).errors, []);
+  assert.match(compose, /ghcr\.io\/demo\/fallback-demo:1\.0\.0/);
+  assert.match(config, /name: DEMO_API_KEY/);
+  assert.equal(await fs.readFile(path.join(dir, 'docker-compose.yml'), 'utf8'), compose);
+  assert.equal(await fs.readFile(path.join(dir, 'config_options.yml'), 'utf8'), config);
+  await fs.rm(dir, { recursive: true, force: true });
+});

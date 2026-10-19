@@ -78,7 +78,21 @@ export async function writeSoloHostPackage({
   await writeSafeFile(sourceDir, 'docker-compose.yml', compose);
   await writeSafeFile(sourceDir, 'config_options.yml', config);
 
-  const lint = lintPackage({ composeText: compose, configText: config, policy });
+  let lint = lintPackage({ composeText: compose, configText: config, policy });
+  let fallbackUsed = false;
+  // Recovery path: line-oriented preservation is best-effort only. If it produces
+  // invalid YAML (or retained invalid config YAML), rebuild both deployment files
+  // from a deterministic SoloHost-safe contract instead of stopping the release.
+  if (lint.errors.some((item) => item.rule === 'E-YAML-INVALID')) {
+    fallbackUsed = true;
+    compose = canonicalCompose({ image: String(contract.image || image || '').trim(), hostPort, containerPort: detectedPort, envVars: envForCompose });
+    config = buildFallbackConfig({ project, usedVars: applied.keep, fixedValues: applied.fixedValues, fixedVars: applied.fixed });
+    await writeSafeFile(out, 'docker-compose.yml', compose);
+    await writeSafeFile(out, 'config_options.yml', config);
+    await writeSafeFile(sourceDir, 'docker-compose.yml', compose);
+    await writeSafeFile(sourceDir, 'config_options.yml', config);
+    lint = lintPackage({ composeText: compose, configText: config, policy });
+  }
   const ok = !lint.errors.length;
   return {
     ok,
@@ -90,6 +104,7 @@ export async function writeSoloHostPackage({
     description: blurb,
     fieldPolicy: policy,
     lint,
+    fallbackUsed,
     synchronization: {
       sourceCompose: contract.sourceCompose,
       envVars: envForCompose,
@@ -263,7 +278,7 @@ function canonicalCompose({ image, hostPort, containerPort, envVars }) {
     : `      PORT: ${containerPort}`;
   return `services:
   app:
-    image: ${image}
+    image: ${JSON.stringify(String(image || '').trim())}
     restart: unless-stopped
     labels:
       pi.ui.primary: "true"
@@ -307,6 +322,36 @@ fields:
     base = `${base.trimEnd()}\n${additions.join('\n')}\n`;
   }
   return base.endsWith('\n') ? base : `${base}\n`;
+}
+
+function buildFallbackConfig({ project, usedVars = [], fixedValues = {}, fixedVars = [] } = {}) {
+  const title = yamlSafe(project?.name || 'SoloHost App');
+  const description = yamlSafe(project?.idea || 'SoloHost application');
+  const lines = [
+    `title: ${title}`,
+    'eyebrow: SoloHost App',
+    `description: ${description}`,
+    'footer_hint: Ready to run on Pi Desktop SoloHost.',
+    'output_file: .env',
+    'after_save: Saved. Start the app from SoloHost.',
+  ];
+  const unique = [...new Set(usedVars)].filter((name) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(name)).sort();
+  lines.push(unique.length ? 'fields:' : 'fields: []');
+  for (const name of unique) {
+    if ((fixedVars || []).includes(name)) continue;
+    lines.push(...fieldYaml(name).split('\n'));
+  }
+  const values = [];
+  for (const name of [...new Set(fixedVars || [])]) {
+    const value = fixedValues?.[name];
+    if (value == null || /PASSWORD|SECRET|TOKEN|API_KEY|PRIVATE|CREDENTIAL/i.test(name)) continue;
+    values.push({ name, value: String(value) });
+  }
+  if (values.length) {
+    lines.push('fixed_values:');
+    for (const item of values) lines.push(`  - name: ${item.name}`, `    value: ${JSON.stringify(item.value)}`);
+  }
+  return `${lines.join('\n')}\n`;
 }
 
 function extractConfigFieldNames(text) {
