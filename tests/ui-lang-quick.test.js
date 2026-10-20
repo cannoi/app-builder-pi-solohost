@@ -64,7 +64,8 @@ test('i18n toggles EN/VI and applies qa labels', () => {
 });
 
 test('remote URL can use SoloHost PUBLIC_IP + HOST_PORT', async () => {
-  const { resolvePublicUrl } = await import('../src/remote/info.js');
+  const { resolvePublicUrl, _resetAdvertisedPortForTests } = await import('../src/remote/info.js');
+  _resetAdvertisedPortForTests();
   const prev = { ...process.env };
   process.env.PUBLIC_IP = '203.0.113.9';
   process.env.HOST_PORT = '18781';
@@ -123,7 +124,8 @@ test('i18n more-menu apply does not double-prefix icons', () => {
 });
 
 test('resolvePublicUrl auto-builds from detected IP + HOST_PORT', async () => {
-  const { resolvePublicUrl, detectHostPort } = await import('../src/remote/info.js');
+  const { resolvePublicUrl, detectHostPort, _resetAdvertisedPortForTests } = await import('../src/remote/info.js');
+  _resetAdvertisedPortForTests();
   const prev = { ...process.env };
   process.env.PUBLIC_IP = '198.51.100.20';
   process.env.HOST_PORT = '18144';
@@ -144,7 +146,8 @@ test('resolvePublicUrl auto-builds from detected IP + HOST_PORT', async () => {
 });
 
 test('detectHostPort rejects container port 8080 and builds one public link', async () => {
-  const { detectHostPort, resolvePublicUrl } = await import('../src/remote/info.js');
+  const { detectHostPort, resolvePublicUrl, _resetAdvertisedPortForTests } = await import('../src/remote/info.js');
+  _resetAdvertisedPortForTests();
   const prev = { ...process.env };
   delete process.env.HOST_PORT;
   delete process.env.SOLOHOST_HOST_PORT;
@@ -165,5 +168,42 @@ test('detectHostPort rejects container port 8080 and builds one public link', as
       if (!(k in prev)) delete process.env[k];
     }
     Object.assign(process.env, prev);
+  }
+});
+
+
+test('Snake-style: advertised port from Host header builds public URL', async () => {
+  const { resolvePublicUrl, rememberPublicPort, _resetAdvertisedPortForTests } = await import('../src/remote/info.js');
+  _resetAdvertisedPortForTests();
+  const prev = { ...process.env };
+  delete process.env.PUBLIC_URL;
+  delete process.env.HOST_PORT;
+  delete process.env.SOLOHOST_HOST_PORT;
+  process.env.PUBLIC_IP = '203.0.113.77';
+  try {
+    rememberPublicPort({ headers: { host: '192.168.1.50:31877' } });
+    const r = await resolvePublicUrl({
+      cfg: {},
+      req: { headers: { host: '192.168.1.50:31877' } },
+      dataDir: '/tmp',
+    });
+    assert.equal(r.hostPort, 31877);
+    assert.equal(r.publicUrl, 'http://192.168.1.50:31877');
+    // localhost Host still teaches the mapped public port for IP+port link
+    _resetAdvertisedPortForTests();
+    rememberPublicPort({ headers: { host: 'localhost:44444' } });
+    const r2 = await resolvePublicUrl({
+      cfg: {},
+      req: { headers: { host: '127.0.0.1:8080' } },
+      dataDir: '/tmp',
+    });
+    assert.equal(r2.hostPort, 44444);
+    assert.equal(r2.publicUrl, 'http://203.0.113.77:44444');
+  } finally {
+    for (const k of ['PUBLIC_URL', 'HOST_PORT', 'SOLOHOST_HOST_PORT', 'PUBLIC_IP']) {
+      if (prev[k] == null) delete process.env[k];
+      else process.env[k] = prev[k];
+    }
+    _resetAdvertisedPortForTests();
   }
 });

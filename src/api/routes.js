@@ -47,7 +47,8 @@ export function registerRoutes(r, app) {
 
     r.get('/api/remote/info', async (req, res) => {
     try {
-      const { resolvePublicUrl, isLoopbackRequest, detectPublicIp, detectHostPort } = await import('../remote/info.js');
+      const { resolvePublicUrl, isLoopbackRequest, rememberPublicPort } = await import('../remote/info.js');
+      rememberPublicPort(req);
       const dataDir = cfg.dataDir || cfg.paths?.data || path.join(process.cwd(), 'data');
       const refresh = String(req.query?.refresh || '') === '1' || String(req.query?.refresh || '') === 'true';
       if (refresh) {
