@@ -4,23 +4,25 @@ import http from 'node:http';
 import https from 'node:https';
 
 /**
- * Public URL for remote QR (phones outside the LAN).
+ * One public link for remote QR:
+ *   http://PUBLIC_IP:HOST_PORT
  *
- * Priority:
- *  1) PUBLIC_URL env / cfg
- *  2) data/remote.json (user override)
- *  3) Non-loopback Host / X-Forwarded-*
- *  4) Auto: public IP (env or discovery) + SoloHost host port
+ * IP  — same proven path as v1.8.13 (env → cache → ipify/ifconfig/icanhazip)
+ * Port — SoloHost HOST_PORT (external publish), NOT container PORT/8080
+ *        (TV app declares HOST_PORT in config_options for SoloHost to inject)
  */
 
-const IP_CACHE_TTL_MS = 6 * 60 * 60 * 1000; // 6h
-const IP_FETCH_TIMEOUT_MS = 3500;
+const IP_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
+const IP_FETCH_TIMEOUT_MS = 4000;
 
 const PUBLIC_IP_ENDPOINTS = [
   { url: 'https://api.ipify.org', parse: (t) => t.trim() },
   { url: 'https://ifconfig.me/ip', parse: (t) => t.trim() },
   { url: 'https://icanhazip.com', parse: (t) => t.trim() },
 ];
+
+/** In-container ports — never use as the public SoloHost host port. */
+const INTERNAL_PORTS = new Set([8080, 80, 443, 3000, 5000, 8000, 5173, 4173]);
 
 function stripSlash(u) {
   return String(u || '').trim().replace(/\/$/, '');
@@ -36,10 +38,14 @@ function isPrivateIp(ip) {
   return /^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[0-1])\.|127\.|0\.|::1|fc|fd)/i.test(s);
 }
 
+function isValidExternalPort(n) {
+  return Number.isFinite(n) && n > 0 && n < 65536 && !INTERNAL_PORTS.has(n);
+}
+
 function fetchText(url, timeoutMs = IP_FETCH_TIMEOUT_MS) {
   return new Promise((resolve, reject) => {
     const lib = url.startsWith('https') ? https : http;
-    const req = lib.get(url, { timeout: timeoutMs, headers: { Accept: 'text/plain' } }, (res) => {
+    const req = lib.get(url, { timeout: timeoutMs, headers: { Accept: 'text/plain', 'User-Agent': 'AppBuilder-SoloHost/1' } }, (res) => {
       if (res.statusCode && res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
         res.resume();
         fetchText(res.headers.location, timeoutMs).then(resolve, reject);
@@ -75,9 +81,7 @@ async function writeIpCache(dataDir, ip) {
   } catch { /* ignore */ }
 }
 
-/**
- * Discover the public IPv4 of the SoloHost machine.
- */
+/** v1.8.13-style public IP discovery */
 export async function detectPublicIp({ dataDir = '', cfg = {} } = {}) {
   const fromEnv =
     process.env.PUBLIC_IP ||
@@ -100,25 +104,14 @@ export async function detectPublicIp({ dataDir = '', cfg = {} } = {}) {
         if (dataDir) await writeIpCache(dataDir, ip);
         return { ip, source: 'discover' };
       }
-    } catch { /* try next */ }
+    } catch { /* next */ }
   }
   return { ip: '', source: 'none' };
 }
 
 /**
- * SoloHost-assigned host port for this app (the port on the public IP).
- * Container may listen on 8080 while SoloHost maps e.g. 18144 → 8080.
- */
-/** Container-only ports — never use these as the public SoloHost host port. */
-const INTERNAL_PORTS = new Set([8080, 80, 443, 3000, 5000, 8000, 5173, 4173]);
-
-function isValidExternalPort(n) {
-  return Number.isFinite(n) && n > 0 && n < 65536 && !INTERNAL_PORTS.has(n);
-}
-
-/**
- * SoloHost-assigned host port (outside the container).
- * Never returns 8080/PORT inside the container.
+ * SoloHost external host port (TV declares HOST_PORT in config_options.yml).
+ * Never returns container PORT / 8080.
  */
 export function detectHostPort({ req, cfg = {} } = {}) {
   const candidates = [
@@ -126,7 +119,6 @@ export function detectHostPort({ req, cfg = {} } = {}) {
     process.env.SOLOHOST_HOST_PORT,
     process.env.PUBLIC_PORT,
     process.env.PI_HOST_PORT,
-    process.env.SOLOHOST_PORT,
     process.env.APP_HOST_PORT,
     cfg?.hostPort,
     cfg?.publicPort,
@@ -136,10 +128,19 @@ export function detectHostPort({ req, cfg = {} } = {}) {
     if (isValidExternalPort(n)) return { port: n, source: 'env' };
   }
 
+  // Port embedded in SOLOHOST_PUBLIC_URL / PUBLIC_URL
+  for (const key of ['SOLOHOST_PUBLIC_URL', 'PUBLIC_URL', 'APP_PUBLIC_URL']) {
+    const u = process.env[key] || '';
+    const m = String(u).match(/:(\d+)(?:\/|$)/);
+    if (m) {
+      const n = Number(m[1]);
+      if (isValidExternalPort(n)) return { port: n, source: 'url' };
+    }
+  }
+
   const xfPort = String(req?.headers?.['x-forwarded-port'] || '').split(',')[0].trim();
   if (/^\d+$/.test(xfPort)) {
     const n = Number(xfPort);
-    // SoloHost reverse-proxy may forward the external port
     if (isValidExternalPort(n)) return { port: n, source: 'forwarded' };
   }
 
@@ -150,12 +151,17 @@ export function detectHostPort({ req, cfg = {} } = {}) {
     if (isValidExternalPort(n)) return { port: n, source: 'request' };
   }
 
-  // Do NOT fall back to process.env.PORT / 8080 — that is the in-container port.
   return { port: 0, source: 'none' };
 }
 
 export async function resolvePublicUrl({ cfg, req, dataDir }) {
-  const fromEnv = process.env.PUBLIC_URL || cfg?.publicUrl || '';
+  // 1) Explicit full URL (TV: SOLOHOST_PUBLIC_URL / PUBLIC_URL)
+  const fromEnv =
+    process.env.SOLOHOST_PUBLIC_URL ||
+    process.env.PUBLIC_URL ||
+    process.env.APP_PUBLIC_URL ||
+    cfg?.publicUrl ||
+    '';
   if (fromEnv) {
     return {
       publicUrl: stripSlash(fromEnv),
@@ -165,6 +171,7 @@ export async function resolvePublicUrl({ cfg, req, dataDir }) {
     };
   }
 
+  // 2) User-saved override
   try {
     const remote = JSON.parse(await fs.readFile(path.join(dataDir, 'remote.json'), 'utf8'));
     if (remote?.publicUrl) {
@@ -177,22 +184,25 @@ export async function resolvePublicUrl({ cfg, req, dataDir }) {
     }
   } catch { /* none */ }
 
-  const host = req?.headers?.['x-forwarded-host'] || req?.headers?.host || '';
+  // 3) Non-loopback Host / X-Forwarded (SoloHost reverse proxy) — TV style
+  const xfHost = String(req?.headers?.['x-forwarded-host'] || req?.headers?.host || '')
+    .split(',')[0]
+    .trim();
   const xfProto = String(req?.headers?.['x-forwarded-proto'] || 'http').split(',')[0].trim() || 'http';
-  if (host && !isLoopbackHost(host)) {
+  if (xfHost && !isLoopbackHost(xfHost)) {
     return {
-      publicUrl: stripSlash(`${xfProto}://${host}`),
+      publicUrl: stripSlash(`${xfProto}://${xfHost}`),
       source: 'request',
-      publicIp: String(host).split(':')[0],
-      hostPort: Number(String(host).match(/:(\d+)$/)?.[1] || 0) || 0,
+      publicIp: xfHost.split(':')[0],
+      hostPort: Number(xfHost.match(/:(\d+)$/)?.[1] || 0) || 0,
     };
   }
 
+  // 4) Auto: public IP (v1.8.13) + SoloHost HOST_PORT
   const { ip, source: ipSource } = await detectPublicIp({ dataDir, cfg });
   const { port, source: portSource } = detectHostPort({ req, cfg });
 
-  // Single canonical link only: public IP + SoloHost external host port (never container 8080)
-  if (ip && port && !INTERNAL_PORTS.has(port)) {
+  if (ip && port) {
     return {
       publicUrl: `http://${ip}:${port}`,
       source: 'solohost-auto',
@@ -207,12 +217,10 @@ export async function resolvePublicUrl({ cfg, req, dataDir }) {
     publicUrl: '',
     source: 'none',
     publicIp: ip || '',
-    hostPort: (port && !INTERNAL_PORTS.has(port)) ? port : 0,
+    hostPort: port || 0,
     ipSource,
     portSource,
-    hint: !ip
-      ? 'public_ip_missing'
-      : (!port || INTERNAL_PORTS.has(port) ? 'host_port_missing' : 'unknown'),
+    hint: !ip ? 'public_ip_missing' : 'host_port_missing',
   };
 }
 
