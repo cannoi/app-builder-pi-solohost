@@ -25,7 +25,15 @@ const htmlPath = path.join(root, 'public/index.html');
 let html = fs.readFileSync(htmlPath, 'utf8');
 html = html.replace(/app\.js\?v=[^"']+/g, `app.js?v=${next}`);
 html = html.replace(/styles\.css\?v=[^"']+/g, `styles.css?v=${next}`);
+html = html.replace(/i18n\.js\?v=[^"']+/g, `i18n.js?v=${next}`);
+html = html.replace(/ai-panel\.js\?v=[^"']+/g, `ai-panel.js?v=${next}`);
 fs.writeFileSync(htmlPath, html);
+const wf = path.join(root, '.github/workflows/docker.yml');
+if (fs.existsSync(wf)) {
+  let y = fs.readFileSync(wf, 'utf8');
+  y = y.replace(/tag_version=\$\{REPO\}:\d+\.\d+\.\d+/g, `tag_version=\${REPO}:${next}`);
+  fs.writeFileSync(wf, y);
+}
 const cl = path.join(root, 'CHANGELOG.md');
 let changelog = fs.existsSync(cl) ? fs.readFileSync(cl, 'utf8') : '# Changelog\n';
 if (!changelog.includes(`## ${next}`)) {

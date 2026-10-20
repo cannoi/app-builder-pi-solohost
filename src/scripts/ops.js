@@ -96,9 +96,9 @@ export function formatLayerDiagnosis({ layer, message = '', crash = null, next =
 export function inferAction(message = '', context = {}) {
   const m = String(message || '').trim();
   if (!m) return null;
-  const layer = context.layer || {};
+  const layer = context.layer || classifyFailureLayer(m);
 
-  // A1: questions first — never treat as build/publish/export/run
+  // Questions first — never treat as build/publish/export/run
   if (isQuestion(m)) return 'reply';
 
   const has = (re) => re.test(m);
@@ -107,10 +107,13 @@ export function inferAction(message = '', context = {}) {
   const changeVerb = /(?:(?<![\p{L}\p{N}])(?:thêm|đổi|bớt|xoá|xóa|sửa|làm\s*cho|chỉnh\s*sửa|sửa\s*đổi|thay\s*đổi)(?![\p{L}\p{N}])|(?<![\p{L}\p{N}])(?:add|change|remove|make|update|modify|edit)(?![\p{L}\p{N}]))/iu;
   const featureNoun = /(?:(?<![\p{L}\p{N}])(?:nút|form|trang|màu|nền|đăng\s*nhập|đăng\s*ký|đăng\s*xuất|tính\s*năng|chức\s*năng)(?![\p{L}\p{N}])|(?<![\p{L}\p{N}])(?:button|toggle|page|color|login|signup|sign[\s-]?up|csv|dark\s*mode)(?![\p{L}\p{N}])|tải\s*file|export\s*csv|download\s*file)/iu;
   if (changeVerb.test(m) && featureNoun.test(m)) return 'improve';
-  if (changeVerb.test(m)) return 'improve';
+  if (changeVerb.test(m) && !has(/(?:lỗi|error|failed|broken|problem)/iu)) return 'improve';
+
+  // Explicit recovery from blocked release / failed runtime → run
+  if (has(/release\s*blocked|latest\s*saved\s*verification|failed\s*runtime\s*test/iu)) return 'run';
 
   // GHCR image + SoloHost install keywords → export
-  if (/ghcr\.io\/[\w.\/\-]+/i.test(m) && /(?:solohost|cài\s*đặt|install\s*kit|docker-compose|config_options|tạo\s*file)/iu.test(m)) {
+  if (/ghcr\.io\/[\w.\/\-]+/i.test(m) && /(?:solohost|cài\s*đặt|install\s*kit|docker-compose|config_options|tạo\s*file|file\s*cài\s*đặt)/iu.test(m)) {
     return 'export';
   }
 
@@ -122,23 +125,37 @@ export function inferAction(message = '', context = {}) {
     if (has(/(?:đẩy|push)/iu) && has(/(?:github|ghcr)/iu)) return 'publish';
   }
 
-  // Export — needs noun object
-  if (has(/(?:tải|download|export)\s+(?:zip|file\s*zip|bộ\s*cài|install\s*kit|mã\s*nguồn|source)|(?:zip|bộ\s*cài|install\s*kit)\s*(?:tải|download)|xuất\s*file/iu)) {
+  // Export — needs noun object (ZIP / install kit / SoloHost files)
+  if (has(/(?:tải|download|export)\s+(?:zip|file\s*zip|bộ\s*cài|install\s*kit|file\s*cài\s*đặt|mã\s*nguồn|source)|(?:zip|bộ\s*cài|install\s*kit|file\s*cài\s*đặt)\s*(?:tải|download)|xuất\s*file|(?:zip)\s*download|download\s*of\s*this\s*app|file\s*cài\s*đặt|cho\s*tôi\s*(?:file\s*)?cài\s*đặt|give\s*me\s*a\s*zip/iu)) {
     return 'export';
   }
 
-  // Run / preview
-  if (has(/(?:chạy\s*thử|mở\s*app|run\s*(?:the\s*)?app|preview|test\s*link|open\s*(?:the\s*)?(?:app|preview))/iu)) {
+  // Pure run / preview commands (not "error" focused)
+  if (has(/(?:chạy\s*thử|chạy\s*app|mở\s*app|cho\s*tôi\s*link|run\s*(?:the\s*)?app|preview|test\s*link|open\s*(?:the\s*)?(?:app|preview))/iu)
+      && !has(/(?:lỗi|error|failed|broken|sửa)/iu)) {
     return 'run';
   }
 
-  // Explicit app bug fix
-  if (has(/(?:sửa\s*lỗi|hãy\s*sửa|fix\s+(?:it|the|lỗi)|không\s*lưu\s*được|không\s*chạy\s*được|không\s*hoạt\s*động|bị\s*lỗi|broken|not\s*working|doesn't\s*work|does\s*not\s*work|crash)/iu)) {
+  // Specific app symptom → improve
+  if (has(/(?:không\s*lưu\s*được|không\s*chạy\s*được|sửa\s*lỗi\s+[\p{L}\p{N}])/iu)) return 'improve';
+
+  // Generic "app is broken / does not work" without specific symptom → analyze
+  if (has(/(?:app\s*bị\s*lỗi|hãy\s*sửa|the\s*app\s*has\s*a\s*problem|does\s*not\s*work|doesn't\s*work)/iu)
+      && !has(/(?:không\s*lưu|điểm|score|button|nút|form)/iu)) {
+    return 'analyze';
+  }
+
+  // Explicit app bug fix with symptom language
+  if (has(/(?:sửa\s*lỗi|fix\s+(?:it|the|lỗi)|không\s*hoạt\s*động|bị\s*lỗi|broken|not\s*working|crash)/iu)) {
     return 'improve';
   }
 
-  if (['HOST', 'GITHUB', 'PREVIEW', 'DOCKER', 'NETWORK'].includes(layer.layer)) return 'analyze';
-  if (layer.layer === 'GENERATED_APP') return 'improve';
+  // Infrastructure layers → analyze unless clear feature change
+  const layerName = typeof layer === 'string' ? layer : (layer?.layer || '');
+  if (['HOST', 'SOLOHOST', 'GITHUB', 'PREVIEW', 'DOCKER', 'NETWORK'].includes(layerName)) {
+    if (!(changeVerb.test(m) && featureNoun.test(m))) return 'analyze';
+  }
+  if (layerName === 'GENERATED_APP') return 'improve';
 
   if (has(/(?:tổng\s*hợp|liệt\s*kê|summary|summarize|list)[\s\S]{0,40}(?:lỗi|error|issue)|(?:diagnose|diagnosis|kiểm\s*tra\s*toàn\s*bộ|check\s*all)/iu)) {
     return 'analyze';
@@ -148,8 +165,8 @@ export function inferAction(message = '', context = {}) {
     return has(/(?:fix|sửa|repair|remove|khắc\s*phục)/iu) ? 'improve' : 'analyze';
   }
 
-  // Build / create — "tạo app tải video" is CREATE not export
-  if (has(/(?:tạo\s*app|build\s*(?:the\s*)?app|scaffold|viết\s*code|build\s*lại)/iu)) {
+  // Build / create new app
+  if (has(/(?:tạo\s*app\s*mới|tao\s*app\s*moi|create\s*a\s*new\s*app|build\s*a\s*new\s*app|tạo\s*app|build\s*(?:the\s*)?app|scaffold|viết\s*code|build\s*lại)/iu)) {
     return 'build';
   }
 

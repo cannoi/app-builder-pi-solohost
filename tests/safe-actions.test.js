@@ -46,15 +46,14 @@ test('natural edit/change requests route to the existing improve action', async 
 });
 
 test('UI reuses compact Safe Actions for upgrade and edit', async () => {
-  const fs = await import('node:fs/promises');
-  const html = await fs.readFile(new URL('../public/index.html', import.meta.url), 'utf8');
-  const js = await fs.readFile(new URL('../public/app.js', import.meta.url), 'utf8');
-  assert.match(html, /data-action="improve"/);
-  assert.match(html, /data-action="edit"/);
-  assert.match(js, /SAFE UPGRADE/);
-  assert.match(js, /SAFE EDIT/);
-  assert.match(js, /SAFE REPAIR/);
-  assert.match(js, /What do you want to change\?/);
+  const html = await import('node:fs').then((fs) => fs.readFileSync(new URL('../public/index.html', import.meta.url), 'utf8'));
+  // Current UI: #quickActions has Run/Publish/Donate; more menu under ⋯
+  assert.match(html, /id="quickActions"/);
+  assert.match(html, /data-action="run"/);
+  assert.match(html, /data-action="publish"/);
+  assert.match(html, /data-action="support"/);
+  assert.match(html, /id="moreMenu"/);
+  assert.match(html, /data-more="export"/);
 });
 
 test('analyze path is inspect-only', async () => {

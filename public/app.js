@@ -223,17 +223,24 @@ function renderSoloHostKitCard(kit) {
   return box;
 }
 
-function shouldSkipNotice(text) {
+function shouldSkipNotice(text, meta = {}) {
+  // User-driven feedback always shows (buttons / chat). Job noise may dedupe within 3s.
+  if (meta.force || meta.fromUser) {
+    state.lastNotice = '';
+    return false;
+  }
   const key = compactNotice(text).slice(0, 180);
   if (!key) return true;
-  if (state.lastNotice === key) return true;
+  const now = Date.now();
+  if (state.lastNotice === key && (now - (state.lastNoticeAt || 0)) < 3000) return true;
   state.lastNotice = key;
+  state.lastNoticeAt = now;
   return false;
 }
 function add(role, text, meta = {}) {
   if (!text) return;
   const textOut = role === 'user' ? text : compactNotice(text);
-  if (role !== 'user' && shouldSkipNotice(textOut)) return;
+  if (role !== 'user' && shouldSkipNotice(textOut, meta)) return;
   const stick = chatNearBottom();
   const el = document.createElement('div'); el.className = `msg ${role}`; el.textContent = role === 'user' ? text : compactNotice(text);
   if (meta.small) { const s = document.createElement('span'); s.className = 'small'; s.textContent = meta.small; el.appendChild(s); }
@@ -704,10 +711,16 @@ async function startSandboxDemo() {
   } catch (e) { handleJobActionError(e); }
 }
 async function quick(action, extraPayload = {}) {
-  if (state.busy) return;
+  // Donate / undo always available (F4)
   if (action === 'support') return openSupport();
-  if (action === 'feedback') return openFeedback();
   if (action === 'rollback' || action === 'undo') return rollbackLast();
+  if (state.busy) {
+    if (action === 'run' || action === 'publish' || action === 'release') {
+      add('system', uiT('msg.busy', 'Wait for the current step to finish…'), { force: true });
+    }
+    return;
+  }
+  state.lastNotice = '';
   if (action === 'script-run') return downloadScript('run');
   if (action === 'script-github') return downloadScript('github');
   if (action === 'docker') return inspectDocker();
@@ -718,13 +731,13 @@ async function quick(action, extraPayload = {}) {
     try {
       const probe = await api('/api/sandbox-status');
       if (!probe?.ok) {
-        add('ai', 'Tip: tap 🧪 Sandbox first. If that preview fails, the problem is Builder/preview — not your app. If it works, then ▶ Run tests the product.');
+        add('ai', uiT('msg.runTip', 'Tip: open ⋯ and choose Sandbox if preview fails — that separates Builder/preview issues from your app.'), { force: true });
       }
     } catch {}
   }
   if (action === 'export') {
-    if (!state.projectId) { add('ai', 'Create an app first, then tap Zip.'); return; }
-    add('ai', 'Preparing a ZIP of your app…');
+    if (!state.projectId) { add('ai', uiT('msg.zipNeedApp', 'Create an app first, then download ZIP.'), { force: true }); return; }
+    add('ai', uiT('msg.zipPrep', 'Preparing a ZIP of your app…'), { force: true });
     try { await downloadZip(state.projectId, extraPayload.kind || 'project'); }
     catch (e) { add('ai', e.message); }
     return;
@@ -746,20 +759,15 @@ async function quick(action, extraPayload = {}) {
       }) });
     }
     else if (action === 'improve' || action === 'edit') {
-      const kind = action === 'edit' ? 'SAFE EDIT' : 'SAFE UPGRADE';
-      add('ai', 'Gõ yêu cầu vào ô chat / Type your request in the chat box.');
+      add('ai', uiT('msg.typeRequest', 'Type your request in the chat box.'), { force: true });
       return;
-      if (!request) { setBusy(false); return; }
-      const form = new FormData();
-      form.append('feedback', `${kind}\nUSER REQUEST: ${request.text}`);
-      for (const f of request.files || []) form.append('files', f);
-      const response = await fetch(`/api/projects/${state.projectId}/improve`, { method: 'POST', body: form });
-      const data = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(data.error || 'AI improvement could not start.');
-      r = data;
     }
     else r = await api(`/api/projects/${state.projectId}/${action}`, { method: 'POST', body: '{}' });
-    if (r.needsConfirmation) { setBusy(false); add('ai', `I need your approval before ${actionText(action).toLowerCase()}.`); return; }
+    if (r.needsConfirmation || r.repoExists || r.requiresOverwrite) {
+      setBusy(false);
+      renderOverwriteConfirm(r);
+      return;
+    }
     watch(r.jobId);
   } catch (e) { handleJobActionError(e); }
 }
@@ -1272,18 +1280,17 @@ function renderWelcome() {
       <button type="button" data-welcome="settings">${setLabel}</button>
     </div>`;
   chat.appendChild(box);
-  box.querySelector('[data-welcome="idea"]').onclick = () => {
-    $('message').value = uiT('welcome.ideaText', 'Create a simple sales app for a small shop');
-    $('message').focus();
-  };
-  box.querySelector('[data-welcome="github"]').onclick = () => {
-    $('message').value = 'https://github.com/';
-    $('message').focus();
-  };
-  box.querySelector('[data-welcome="settings"]').onclick = () => {
+  const bindWelcome = (sel, fn) => { const b = box.querySelector(sel); if (b) b.onclick = fn; };
+  bindWelcome('[data-welcome="idea"]', () => {
+    if ($('message')) { $('message').value = uiT('welcome.ideaText', 'Create a simple sales app for a small shop'); $('message').focus(); }
+  });
+  bindWelcome('[data-welcome="github"]', () => {
+    if ($('message')) { $('message').value = 'https://github.com/'; $('message').focus(); }
+  });
+  bindWelcome('[data-welcome="settings"]', () => {
     if (typeof openSettings === 'function') openSettings();
     else $('settings')?.removeAttribute('hidden');
-  };
+  });
   const chip = $('contextChip');
   if (chip) {
     chip.hidden = false;
@@ -1446,9 +1453,40 @@ $('chat').addEventListener('scroll', maybeJump);
 setBusy(false, 'Ready');
 $('chat').addEventListener('click', (e) => { const b = e.target.closest('[data-container]'); if (b) inspectNamedContainer(b.dataset.container); });
 
+
+function renderOverwriteConfirm(result = {}) {
+  const chat = $('chat');
+  if (!chat) return;
+  const box = document.createElement('div');
+  box.className = 'msg ai';
+  const msg = result.message || result.error || uiT('msg.repoExists', 'This GitHub repository already has content. Overwrite or cancel?');
+  box.textContent = String(msg);
+  const row = document.createElement('div');
+  row.className = 'actionCard';
+  const over = document.createElement('button');
+  over.textContent = uiT('msg.overwrite', 'Overwrite');
+  over.onclick = () => {
+    box.remove();
+    quick('publish', { approved: true, confirm: true, push: true, existingAction: 'overwrite', forcePublish: true });
+  };
+  const cancel = document.createElement('button');
+  cancel.textContent = uiT('msg.cancel', 'Cancel');
+  cancel.onclick = () => box.remove();
+  row.appendChild(over);
+  row.appendChild(cancel);
+  box.appendChild(row);
+  chat.appendChild(box);
+  $('chat').scrollTop = $('chat').scrollHeight;
+}
+
 function openSupport() {
-  $('supportModal').hidden = false;
-  add('ai', 'Thank you for supporting App Builder — Pi SoloHost. Choose Pi Wallet or MB Bank, copy the details, and send what you can.');
+  const modal = $('supportModal');
+  if (modal) modal.hidden = false;
+  const title = modal?.querySelector('h2');
+  if (title) title.textContent = uiT('support.title', '💛 Support this project');
+  const info = modal?.querySelector('.info');
+  if (info) info.textContent = uiT('support.body', 'Thank you for supporting App Builder — Pi SoloHost. Choose Pi Wallet or MB Bank, copy the details, and send what you can.');
+  add('ai', uiT('support.body', 'Thank you for supporting App Builder — Pi SoloHost. Choose Pi Wallet or MB Bank, copy the details, and send what you can.'), { force: true });
 }
 function bindSupport() {
   const modal = $('supportModal');
@@ -1468,23 +1506,7 @@ function bindSupport() {
     };
   });
 }
-bindSupport();
-Promise.all([loadStatus(), loadProjects(), loadSettings(), loadFeedbackConfig()]).then(async () => {
-  await initFeedbackHub();
-  const id = savedProjectId();
-  // Default = New app + welcome guide. Only restore a project if user last had one selected.
-  if (id && state.projects.some((p) => p.id === id)) await openProject(id, false);
-  else {
-    state.projectId = null;
-    rememberProject(null);
-    if ($('projectSelect')) $('projectSelect').value = '';
-    renderWelcome();
-  }
-}).catch(() => renderWelcome());
-
-/* Language: #langToggle wired in public/i18n.js */
-
-/* Quick actions — same pattern as v1.7.4 data-action → quick() */
+/* Quick actions — data-action → quick() (must run even if later init fails) */
 (function wireQuickActions() {
   const root = document.getElementById('quickActions');
   if (!root) return;
@@ -1495,28 +1517,26 @@ Promise.all([loadStatus(), loadProjects(), loadSettings(), loadFeedbackConfig()]
     e.stopPropagation();
     const action = btn.getAttribute('data-action');
     if (!action) return;
-    // Allow Run/Publish even if a previous job left busy stuck after cancel
+    if (action === 'support') {
+      quick('support');
+      return;
+    }
     if (state.busy && (action === 'run' || action === 'publish')) {
-      // soft unlock if busy bar is hidden (desync)
       const bar = document.getElementById('busyBar');
       if (bar && bar.hidden) state.busy = false;
     }
     if (state.busy) {
-      add('system', uiT('msg.busy', 'Wait for the current step to finish…'));
+      add('system', uiT('msg.busy', 'Wait for the current step to finish…'), { force: true });
       return;
     }
     if (action === 'publish') {
-      if (!state.projectId) { add('ai', uiT('msg.needApp', 'Open or create an app first.')); return; }
+      if (!state.projectId) { add('ai', uiT('msg.needApp', 'Open or create an app first.'), { force: true }); return; }
       quick('publish', { approved: true, confirm: true, push: true });
       return;
     }
     if (action === 'run') {
-      if (!state.projectId) { add('ai', uiT('msg.needApp', 'Open or create an app first.')); return; }
+      if (!state.projectId) { add('ai', uiT('msg.needApp', 'Open or create an app first.'), { force: true }); return; }
       quick('run');
-      return;
-    }
-    if (action === 'support') {
-      quick('support');
       return;
     }
     quick(action);
@@ -1529,5 +1549,27 @@ window.addEventListener('paf-locale', () => {
     if (window.pafI18n && typeof window.pafI18n.apply === 'function') window.pafI18n.apply();
   } catch {}
 });
+
+bindSupport();
+async function init() {
+  try {
+    await Promise.all([loadStatus(), loadProjects(), loadSettings()]);
+    const id = savedProjectId();
+    if (id && state.projects.some((p) => p.id === id)) await openProject(id, false);
+    else {
+      state.projectId = null;
+      rememberProject(null);
+      if ($('projectSelect')) $('projectSelect').value = '';
+      renderWelcome();
+    }
+  } catch (err) {
+    console.error('init failed', err);
+    try { renderWelcome(); } catch (e2) { console.error(e2); }
+  }
+}
+init();
+
+/* Language: #langToggle wired in public/i18n.js */
+
 
 

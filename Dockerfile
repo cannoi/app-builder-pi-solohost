@@ -21,6 +21,8 @@ RUN npm install --omit=dev --ignore-scripts --no-audit --no-fund --no-package-lo
   && node --input-type=module -e "import('node:sqlite').then(()=>console.log('sqlite ok')).catch(e=>{console.error(e);process.exit(1)})"
 
 COPY src ./src
+COPY scripts/check-imports.mjs ./scripts/check-imports.mjs
+RUN node scripts/check-imports.mjs
 COPY public ./public
 COPY templates ./templates
 COPY docs ./docs

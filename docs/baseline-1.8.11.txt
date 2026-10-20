@@ -1,0 +1,1 @@
+Baseline 1.8.11 during 1.8.12 fix: Feedback Hub dead refs caused module halt; full suite may timeout in sandbox.

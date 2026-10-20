@@ -31,23 +31,13 @@ export const APP_FACTS = {
 };
 
 /** Core panel knowledge always sent (<700 chars). */
-export function coreKnowledge(locale = 'en') {
-  const v = APP_FACTS.version;
-  if (locale === 'vi') {
-    return (
-      `App Builder — Pi SoloHost v${v}. Tạo app SoloHost cho Pi Network: Ý tưởng → Build → Run → Improve → Publish.\n` +
-      `Không phải Personal AI Hub hay app khác. Không xin seed ví / khóa. Feedback Hub đã gắn sẵn — người dùng không nhập hub.\n` +
-      `Publish: chọn install fields (full/defaults/auth/custom). Validator: OK|FAIL|UNREACHABLE (có thể accept unverified).\n` +
-      `Trả lời bằng ngôn ngữ người dùng. Preview banner sau 20s.`
-    ).slice(0, 700);
+export function coreKnowledge(lang = 'en') {
+  if (lang === 'vi') {
+    return 'App Builder — Pi SoloHost: một ô chat tạo/sửa/chạy/xuất bản app SoloHost. Nút ▶ Chạy thử, 🚀 Xuất bản, 💛 Ủng hộ. Menu ⋯: ZIP, nhập ZIP, Sandbox, hoàn tác. Mặc định New app + hướng dẫn. AI trả lời theo ngôn ngữ tin nhắn. Publish cần GitHub token; AI cần key trong Settings.';
   }
-  return (
-    `App Builder — Pi SoloHost v${v}. Help users build SoloHost apps: Idea → Build → Run → Improve → Publish.\n` +
-    `You are App Builder, not Personal AI Hub or another product. Never ask for wallet seeds or reveal API/GitHub/feedback tokens.\n` +
-    `Publish uses install-field modes full|defaults|auth|custom. Validation: OK|FAIL|UNREACHABLE (accept unverified possible).\n` +
-    `Questions never publish. Optional Change Engine V2 (CHANGE_ENGINE_V2) uses search/replace for MODIFY. Medium-risk edits apply with checkpoint; high risk needs one confirm. Remote access QR in AI panel. Main UI: Run/Publish/Donate above the chat box. Language toggle EN/VI is on the top bar after Settings. Image start uses docker-entrypoint preflight (yaml/sqlite). GitHub publish smoke accepts any HTTP response on /health|/ready|/; image tag resolved by SHA. Remote QR uses the same BUILDER_ACCESS_PASSWORD as app login; public URL is PUBLIC_IP:SoloHost host port. Always reply in the user's language. One chat box routes CREATE/MODIFY/PUBLISH/UPGRADE. Remote QR in AI panel. Preview notice after 20s.`
-  ).slice(0, 700);
+  return 'App Builder — Pi SoloHost: one chat to create, fix, run, and publish SoloHost apps. Buttons: ▶ Run, 🚀 Publish, 💛 Donate. Menu ⋯: ZIP, import, Sandbox, undo. Default New app + welcome. AI replies in the user message language. Publish needs a GitHub token; AI needs a provider key in Settings.';
 }
+
 
 const MODULES = {
   publish: 'Publish: GitHub → GHCR image → SoloHost kit (docker-compose.yml + config_options.yml). needs_field_choice before kit for new apps; upgrade-origin defaults to full. Resume via release-pending package_pending without second push.',
