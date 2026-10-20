@@ -116,77 +116,33 @@ jobs:
       - name: Smoke test image
         shell: bash
         run: |
-          set -uo pipefail
+          set -euo pipefail
           SHA="\${{ github.sha }}"
-          SHORT_SHA="$(echo "$SHA" | cut -c1-12)"
-          REPO="\${{ steps.image.outputs.repo }}"
           IMAGE="\${{ steps.image.outputs.tag_sha }}"
-
-          resolve_image() {
-            local candidate
-            for candidate in \\
-              "$IMAGE" \\
-              "\${REPO}:\${SHA}" \\
-              "\${REPO}:\${SHORT_SHA}" \\
-              "\${REPO}:latest"
-            do
-              [[ -n "$candidate" ]] || continue
-              if docker image inspect "$candidate" >/dev/null 2>&1; then
-                echo "$candidate"
-                return 0
-              fi
-            done
-            candidate="$(docker images --format '{{.Repository}}:{{.Tag}}' | grep -iF "$SHA" | head -n1 || true)"
-            if [[ -n "$candidate" ]] && docker image inspect "$candidate" >/dev/null 2>&1; then
-              echo "$candidate"
-              return 0
-            fi
-            candidate="$(docker images --format '{{.Repository}}:{{.Tag}}' | grep -iF "$SHORT_SHA" | head -n1 || true)"
-            if [[ -n "$candidate" ]] && docker image inspect "$candidate" >/dev/null 2>&1; then
-              echo "$candidate"
-              return 0
-            fi
-            if [[ -n "$REPO" ]]; then
-              candidate="$(docker images --format '{{.Repository}}:{{.Tag}}' | grep -iF "$REPO" | head -n1 || true)"
-              if [[ -n "$candidate" ]] && docker image inspect "$candidate" >/dev/null 2>&1; then
-                echo "$candidate"
-                return 0
-              fi
-            fi
-            return 1
-          }
-
-          if ! IMAGE="$(resolve_image)"; then
+          if ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
+            IMAGE="$(docker images --format '{{.Repository}}:{{.Tag}}' | grep -F "$SHA" | head -n1 || true)"
+          fi
+          if [[ -z "$IMAGE" ]] || ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
             echo "Expected immutable release image tag was not found locally for sha=$SHA"
-            docker images || true
+            docker images
             exit 1
           fi
-          FULL_TAG="\${REPO}:\${SHA}"
-          if [[ -n "$REPO" ]] && [[ "$IMAGE" != "$FULL_TAG" ]]; then
-            docker tag "$IMAGE" "$FULL_TAG" 2>/dev/null || true
-            if docker image inspect "$FULL_TAG" >/dev/null 2>&1; then
-              IMAGE="$FULL_TAG"
-            fi
-          fi
           echo "Smoke-testing the exact release image: $IMAGE"
-          IMAGE_ID="$(docker image inspect --format '{{.Id}}' "$IMAGE")"
 
           mapfile -t EXPOSED < <(docker image inspect "$IMAGE" --format '{{range $p, $_ := .Config.ExposedPorts}}{{println $p}}{{end}}' 2>/dev/null | sed -E 's#/.*$##' | sed '/^$/d' | sort -u)
-          IMG_PORT="$(docker image inspect "$IMAGE" --format '{{range .Config.Env}}{{println .}}{{end}}' 2>/dev/null | sed -n 's/^PORT=//p' | head -n1 || true)"
-          COMMON=(${preferred} 8080 3000 3001 4000 4173 5000 5173 6080 8000 8081 8501 80)
+          COMMON=(${preferred} 8080 3000 3001 4173 5000 5173 6080 8000 8081 8501)
           PORTS=()
           add_port() {
             local p="$1"
             [[ "$p" =~ ^[0-9]+$ ]] || return 0
             local existing
-            for existing in "\${PORTS[@]:-}"; do [[ "$existing" == "$p" ]] && return 0; done
+            for existing in "\${PORTS[@]}"; do [[ "$existing" == "$p" ]] && return 0; done
             PORTS+=("$p")
           }
-          [[ -n "\${IMG_PORT:-}" ]] && add_port "$IMG_PORT"
-          for p in "\${EXPOSED[@]:-}"; do add_port "$p"; done
+          for p in "\${EXPOSED[@]}"; do add_port "$p"; done
           for p in "\${COMMON[@]}"; do add_port "$p"; done
           if [[ "\${#PORTS[@]}" -eq 0 ]]; then PORTS=(8080); fi
-          if [[ "\${#PORTS[@]}" -gt 12 ]]; then PORTS=("\${PORTS[@]:0:12}"); fi
+          if [[ "\${#PORTS[@]}" -gt 10 ]]; then PORTS=("\${PORTS[@]:0:10}"); fi
 
           RUN_ARGS=()
           i=0
@@ -195,34 +151,24 @@ jobs:
             i=$((i+1))
           done
           APP_PORT="\${PORTS[0]}"
-          echo "Smoke-testing with PORT=$APP_PORT (candidates: \${PORTS[*]})"
-          docker rm -f paf-smoke >/dev/null 2>&1 || true
-          docker run -d --name paf-smoke \\
+          echo "Smoke-testing with PORT=$APP_PORT"
+          docker run -d --rm --name paf-smoke \\
             -e NODE_ENV=production \\
             -e PORT="$APP_PORT" \\
             -e BIND=0.0.0.0 \\
-            -e FACTORY_BIND=0.0.0.0 \\
             -e HOST=0.0.0.0 \\
             "\${RUN_ARGS[@]}" \\
-            "$IMAGE_ID"
-          trap 'docker logs paf-smoke 2>/dev/null || true; docker rm -f paf-smoke >/dev/null 2>&1 || true' EXIT
-
-          http_up() {
-            local url="$1"
-            local code
-            code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 3 "$url" || echo 000)"
-            [[ "$code" =~ ^[1-5][0-9][0-9]$ ]]
-          }
+            "$IMAGE" >/dev/null
+          trap 'docker logs paf-smoke 2>/dev/null || true; docker stop paf-smoke >/dev/null 2>&1 || true' EXIT
 
           for i in $(seq 1 60); do
             j=0
             for p in "\${PORTS[@]}"; do
               host_port=$((18080+j))
-              if http_up "http://127.0.0.1:\${host_port}/health" \\
-                || http_up "http://127.0.0.1:\${host_port}/ready" \\
-                || http_up "http://127.0.0.1:\${host_port}/" \\
-                || http_up "http://127.0.0.1:\${host_port}/api/health"; then
-                echo "Smoke test passed on container port \${p} (host \${host_port})."
+              if curl -fsS --max-time 3 "http://127.0.0.1:\${host_port}/health" >/dev/null 2>&1 \\
+                || curl -fsS --max-time 3 "http://127.0.0.1:\${host_port}/ready" >/dev/null 2>&1 \\
+                || curl -fsS --max-time 3 "http://127.0.0.1:\${host_port}/" >/dev/null 2>&1; then
+                echo "Smoke test passed on container port \${p}."
                 exit 0
               fi
               j=$((j+1))

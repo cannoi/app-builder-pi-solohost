@@ -34,7 +34,7 @@ jobs:
           echo "repo=${REPO}" >> "$GITHUB_OUTPUT"
           echo "tag_sha=${REPO}:${{ github.sha }}" >> "$GITHUB_OUTPUT"
           echo "tag_latest=${REPO}:latest" >> "$GITHUB_OUTPUT"
-          echo "tag_version=${REPO}:0.1.0" >> "$GITHUB_OUTPUT"
+          echo "tag_version=${REPO}:1.8.0" >> "$GITHUB_OUTPUT"
 
       - name: Build image
         uses: docker/build-push-action@v6
@@ -63,7 +63,7 @@ jobs:
           echo "Smoke-testing the exact release image: $IMAGE"
 
           mapfile -t EXPOSED < <(docker image inspect "$IMAGE" --format '{{range $p, $_ := .Config.ExposedPorts}}{{println $p}}{{end}}' 2>/dev/null | sed -E 's#/.*$##' | sed '/^$/d' | sort -u)
-          COMMON=(8080 8080 3000 3001 4173 5000 5173 6080 8000 8081 8501)
+          COMMON=(8080 3000 3001 4173 5000 5173 6080 8000 8081 8501)
           PORTS=()
           add_port() {
             local p="$1"
@@ -89,6 +89,7 @@ jobs:
             -e NODE_ENV=production \
             -e PORT="$APP_PORT" \
             -e BIND=0.0.0.0 \
+            -e FACTORY_BIND=0.0.0.0 \
             -e HOST=0.0.0.0 \
             "${RUN_ARGS[@]}" \
             "$IMAGE" >/dev/null
