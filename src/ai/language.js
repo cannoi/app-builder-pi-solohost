@@ -133,4 +133,10 @@ export function languageInstruction(text = '', opts = {}) {
   return `LANGUAGE RULE: Reply in the same language as the user's message. Detected language: ${language}. Always reply in the user's language. Do not translate the user's request into English unless they ask. All dynamic explanations, questions, results, and error guidance must use that language. Fixed UI labels may remain English.`;
 }
 
-export default { detectUserLanguage, languageInstruction };
+
+export function languageInstructionFor(language = 'English') {
+  const lang = String(language || 'English').trim() || 'English';
+  return `LANGUAGE RULE: Reply in ${lang}. Always reply in that language. Do not translate the user's request into English unless they ask. All dynamic explanations, questions, results, and error guidance must use that language. Fixed UI labels may remain English.`;
+}
+
+export default { detectUserLanguage, languageInstruction, languageInstructionFor };
