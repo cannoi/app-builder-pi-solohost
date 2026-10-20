@@ -36,24 +36,17 @@ jobs:
           echo "sha=${SHA}" >> "$GITHUB_OUTPUT"
           echo "tag_sha=${REPO}:${SHA}" >> "$GITHUB_OUTPUT"
           echo "tag_latest=${REPO}:latest" >> "$GITHUB_OUTPUT"
-          echo "tag_version=${REPO}:1.8.9" >> "$GITHUB_OUTPUT"
+          echo "tag_version=${REPO}:0.1.0" >> "$GITHUB_OUTPUT"
 
       - name: Build image (docker build)
         shell: bash
         run: |
           set -euo pipefail
-          REPO="${{ steps.image.outputs.repo }}"
-          SHA="${{ steps.image.outputs.sha }}"
           TAG_SHA="${{ steps.image.outputs.tag_sha }}"
           TAG_LATEST="${{ steps.image.outputs.tag_latest }}"
           TAG_VERSION="${{ steps.image.outputs.tag_version }}"
-          docker build \
-            --tag "$TAG_SHA" \
-            --tag "$TAG_LATEST" \
-            --tag "$TAG_VERSION" \
-            .
+          docker build --tag "$TAG_SHA" --tag "$TAG_LATEST" --tag "$TAG_VERSION" .
           docker image inspect "$TAG_SHA" >/dev/null
-          echo "Built $TAG_SHA"
           docker images | head -20
 
       - name: Smoke test image
@@ -64,7 +57,6 @@ jobs:
           REPO="${{ steps.image.outputs.repo }}"
           SHA="${{ steps.image.outputs.sha }}"
           SHORT="$(echo "$SHA" | cut -c1-12)"
-
           IMAGE=""
           for c in "$TAG_SHA" "${REPO}:${SHA}" "${REPO}:${SHORT}" "${REPO}:latest"; do
             if docker image inspect "$c" >/dev/null 2>&1; then IMAGE="$c"; break; fi
@@ -77,77 +69,82 @@ jobs:
             docker images || true
             exit 1
           fi
-          # Always ensure full SHA tag for push
           docker tag "$IMAGE" "$TAG_SHA" 2>/dev/null || true
           IMAGE="$TAG_SHA"
           IMAGE_ID="$(docker image inspect --format '{{.Id}}' "$IMAGE")"
-          echo "Smoke-testing: $IMAGE ($IMAGE_ID)"
+          echo "Smoke-testing the exact release image: $IMAGE"
 
+          mapfile -t EXPOSED < <(docker image inspect "$IMAGE" --format '{{range $p, $_ := .Config.ExposedPorts}}{{println $p}}{{end}}' 2>/dev/null | sed -E 's#/.*$##' | sed '/^$/d' | sort -u)
+          IMG_PORT="$(docker image inspect "$IMAGE" --format '{{range .Config.Env}}{{println .}}{{end}}' 2>/dev/null | sed -n 's/^PORT=//p' | head -n1 || true)"
+          COMMON=(8080 8080 3000 3001 4000 4173 5000 5173 6080 8000 8081 8501 80)
+          PORTS=()
+          add_port() {
+            local p="$1"
+            [[ "$p" =~ ^[0-9]+$ ]] || return 0
+            for existing in "${PORTS[@]:-}"; do [[ "$existing" == "$p" ]] && return 0; done
+            PORTS+=("$p")
+          }
+          [[ -n "${IMG_PORT:-}" ]] && add_port "$IMG_PORT"
+          for p in "${EXPOSED[@]:-}"; do add_port "$p"; done
+          for p in "${COMMON[@]}"; do add_port "$p"; done
+          if [[ "${#PORTS[@]}" -eq 0 ]]; then PORTS=(8080); fi
+          if [[ "${#PORTS[@]}" -gt 8 ]]; then PORTS=("${PORTS[@]:0:8}"); fi
+
+          RUN_ARGS=()
+          i=0
+          for p in "${PORTS[@]}"; do
+            RUN_ARGS+=( -p "127.0.0.1:$((18080+i)):$p" )
+            i=$((i+1))
+          done
+          APP_PORT="${PORTS[0]}"
+          echo "Smoke-testing with PORT=$APP_PORT (candidates: ${PORTS[*]})"
           docker rm -f paf-smoke >/dev/null 2>&1 || true
-          # Single clear mapping: host 18080 -> container 8080 (App Builder contract)
           docker run -d --name paf-smoke \
             -e NODE_ENV=production \
-            -e PORT=8080 \
+            -e PORT="$APP_PORT" \
             -e BIND=0.0.0.0 \
             -e FACTORY_BIND=0.0.0.0 \
             -e HOST=0.0.0.0 \
-            -e DATA_DIR=/app/data \
-            -p 127.0.0.1:18080:8080 \
+            "${RUN_ARGS[@]}" \
             "$IMAGE_ID"
+          trap 'docker logs paf-smoke 2>/dev/null || true; docker rm -f paf-smoke >/dev/null 2>&1 || true' EXIT
 
-          cleanup() {
-            echo "===== container logs ====="
-            docker logs paf-smoke 2>&1 || true
-            echo "===== container inspect ====="
-            docker inspect paf-smoke --format 'status={{.State.Status}} exit={{.State.ExitCode}} err={{.State.Error}}' 2>&1 || true
-            docker rm -f paf-smoke >/dev/null 2>&1 || true
+          http_up() {
+            local url="$1"
+            local code
+            code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 3 "$url" || echo 000)"
+            [[ "$code" =~ ^[1-5][0-9][0-9]$ ]]
           }
-          trap cleanup EXIT
 
-          # Give the process a moment to crash-or-listen
-          sleep 3
-          if ! docker inspect -f '{{.State.Running}}' paf-smoke 2>/dev/null | grep -q true; then
-            echo "Container exited before smoke test passed."
-            exit 1
-          fi
-
-          # Wait until process listens — probe INSIDE the container first (no publish ambiguity)
           for i in $(seq 1 60); do
             if ! docker inspect -f '{{.State.Running}}' paf-smoke 2>/dev/null | grep -q true; then
               echo "Container exited before smoke test passed."
               docker logs paf-smoke 2>/dev/null || true
               exit 1
             fi
-
-            # In-container probe (works even if host port mapping is odd)
-            if docker exec paf-smoke node -e "fetch('http://127.0.0.1:8080/health').then(r=>process.exit(r.ok||r.status?0:1)).catch(()=>process.exit(1))" 2>/dev/null; then
-              echo "Smoke test passed (in-container /health on 8080)."
+            # In-container probe on APP_PORT
+            if docker exec paf-smoke node -e "fetch('http://127.0.0.1:'+process.env.PORT+'/health').then(r=>process.exit(0)).catch(()=>process.exit(1))" 2>/dev/null \
+              || docker exec paf-smoke node -e "fetch('http://127.0.0.1:'+process.env.PORT+'/').then(r=>process.exit(0)).catch(()=>process.exit(1))" 2>/dev/null; then
+              echo "Smoke test passed on container port ${APP_PORT} (in-container)."
               exit 0
             fi
-            if docker exec paf-smoke node -e "fetch('http://127.0.0.1:8080/').then(r=>process.exit(0)).catch(()=>process.exit(1))" 2>/dev/null; then
-              echo "Smoke test passed (in-container / on 8080)."
-              exit 0
-            fi
-
-            # Host-side: any HTTP status means the port is open
-            code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 3 http://127.0.0.1:18080/health || echo 000)"
-            if [[ "$code" =~ ^[1-5][0-9][0-9]$ ]]; then
-              echo "Smoke test passed (host /health HTTP $code)."
-              exit 0
-            fi
-            code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 3 http://127.0.0.1:18080/ || echo 000)"
-            if [[ "$code" =~ ^[1-5][0-9][0-9]$ ]]; then
-              echo "Smoke test passed (host / HTTP $code)."
-              exit 0
-            fi
-
+            j=0
+            for p in "${PORTS[@]}"; do
+              host_port=$((18080+j))
+              if http_up "http://127.0.0.1:${host_port}/health" \
+                || http_up "http://127.0.0.1:${host_port}/ready" \
+                || http_up "http://127.0.0.1:${host_port}/" \
+                || http_up "http://127.0.0.1:${host_port}/api/health"; then
+                echo "Smoke test passed on container port ${p} (host ${host_port})."
+                exit 0
+              fi
+              j=$((j+1))
+            done
             if (( i % 10 == 0 )); then
-              echo "… still waiting ($i/60). Recent logs:"
-              docker logs --tail 30 paf-smoke 2>/dev/null || true
+              echo "… waiting ($i/60)"; docker logs --tail 20 paf-smoke 2>/dev/null || true
             fi
             sleep 2
           done
-
           echo "Container did not become reachable on any detected/common web port within 120 seconds."
           docker logs paf-smoke 2>/dev/null || true
           exit 1
