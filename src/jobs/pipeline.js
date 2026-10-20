@@ -15,6 +15,7 @@ import { writeSoloHostPackage } from '../release/solohost.js';
 import { formatSoloHostErrors } from '../release/manager.js';
 import { inferAction, extractGhcrImage, guessSoloHostPorts, classifyLogs, classifyFailureLayer, formatLayerDiagnosis, describeFailure, diagnoseSource, nextStep, guideCard, isHostDockerCommand, isNpmOnEmptyRisk, splitUserSteps, parseGithubRepoUrl } from '../scripts/ops.js';
 import { stampMadeBy } from '../projects/badge.js';
+import { isChangeEngineV2Enabled, runModifyEngine, verifyModifyResult } from '../engine/modify-engine.js';
 import { createProjectZip } from '../projects/exporter.js';
 import { gcDocker } from '../docker/cleanup.js';
 import { detectUserLanguage, languageInstruction, languageInstructionFor } from '../ai/language.js';
@@ -596,6 +597,23 @@ export function registerPipeline(app) {
     return { ...runtime, downloads: [], ui_url: publicUiUrl, next: 'Open the test link, improve if needed, then Publish.' };
   });
 
+  jobs.on('export_zip', async (job, { emit }) => {
+    const project = mustProject(job.payload.projectId);
+    const kind = job.payload.kind === 'solohost' ? 'solohost' : 'project';
+    emit('export', 'running', kind === 'solohost' ? 'Packing SoloHost install kit…' : 'Packing project ZIP…');
+    const artifact = await createProjectZip({
+      sourceDir: projects.sourceDir(project.slug),
+      outputDir: path.join(projects.projectDir(project), 'artifacts'),
+      slug: project.slug,
+      kind,
+    });
+    emit('export', 'done', `ZIP ready: ${artifact.filename}`);
+    return {
+      downloads: [{ kind, filename: artifact.filename, url: `/api/projects/${project.id}/download?kind=${kind}` }],
+      next: 'Download the ZIP from the link below.',
+    };
+  });
+
   jobs.on('stop', async (job, { emit }) => {
     const project = mustProject(job.payload.projectId);
     emit('stop', 'running', 'Stopping the preview…');
@@ -630,7 +648,7 @@ export function registerPipeline(app) {
     await projects.updateWorkPlan(project, { stepId: plan.steps[0].id, step: { status: 'running' } });
     emit('ai', 'running', 'AI is turning your feedback into a change…');
     try {
-      const result = await improveProject(project, feedback, emit);
+      const result = await improveProject(project, feedback, emit, { intent: job.payload.intent, risk: job.payload.risk });
       if (result.tested) {
         const previousTests = await projects.readMetadata(project, 'test-plan.json', {});
         await projects.saveMetadata(project, 'test-plan.json', mergeVerificationState(previousTests, result.tested));
@@ -2129,7 +2147,7 @@ export function registerPipeline(app) {
     return { staticResult, nodeResult, scan, diagnosis, inspectOnly: true };
   }
 
-  async function improveProject(project, feedback, emit) {
+  async function improveProject(project, feedback, emit, options = {}) {
     const source = projects.sourceDir(project.slug);
 
     const networkRequest = /\b(internet|offline|online|network|dns|proxy|gateway|browse|browsing|fetch|connection|kết nối|mạng|internet|truy cập web)\b/i.test(String(feedback || ''));
@@ -2210,6 +2228,98 @@ export function registerPipeline(app) {
     const recentContext = `\nRECENT ACTIVITY (use as evidence; do not repeat a failed identical action):\n${JSON.stringify(Array.isArray(activity) ? activity.slice(-40) : [])}\nRECENT JOBS: ${JSON.stringify(recentJobs)}\n`;
     const networkContext = networkPreflight ? `\nBUILDER NETWORK PREFLIGHT:\n${JSON.stringify(networkPreflight)}\n` : '';
     const securityContext = security.findings?.length ? `\nSECURITY FINDINGS (treat as concrete repair requirements):\n${security.copy_for_ai}\n` : '';
+
+    // —— Change Engine V2 (flagged; MODIFY only) ——
+    const useCE = isChangeEngineV2Enabled() && (String(options.intent || '').toUpperCase() === 'MODIFY' || String(options.forceChangeEngine || '') === '1');
+    if (useCE) {
+      emit('ai', 'running', 'Change Engine V2 — search/replace edits…');
+      const ceCheckpoint = await snapshots.create(project, 'before-change-engine-v2').catch(() => null);
+      try {
+        const mod = await runModifyEngine({
+          sourceDir: source,
+          project,
+          feedback,
+          ai,
+          emit,
+          language: detectUserLanguage(feedback),
+          context: relevant + recentContext + networkContext + securityContext,
+          runStaticTests,
+          runNodeTests,
+          scanProject,
+        });
+        if (!mod.ok) {
+          if (ceCheckpoint?.id || ceCheckpoint?.snapshot?.id) {
+            const id = ceCheckpoint.id || ceCheckpoint.snapshot?.id;
+            await snapshots.restore(project, id).catch(() => {});
+          }
+          throw Object.assign(new Error(mod.error || 'Change Engine failed'), { code: 'CHANGE_ENGINE_FAILED', recoverable: true });
+        }
+        if (mod.noChange) {
+          emit('repair', 'done', mod.explanation || 'No code change needed.');
+          return { feedback, rootCause: '', explanation: mod.explanation, files: [], tested: { staticResult: baselineStatic, nodeResult: baselineNode, scan: security }, runtime: null, noChange: true, engine: 'v2' };
+        }
+        if (String(mod.risk || '').toLowerCase() === 'high' && !/\bconfirm\s+high\s*risk\b/i.test(String(feedback || ''))) {
+          if (ceCheckpoint?.id || ceCheckpoint?.snapshot?.id) {
+            const id = ceCheckpoint.id || ceCheckpoint.snapshot?.id;
+            await snapshots.restore(project, id).catch(() => {});
+          }
+          throw Object.assign(
+            new Error('NEEDS_USER_ACTION: This change is marked high risk. Reply "confirm high risk" once to apply with checkpoint.'),
+            { code: 'HIGH_RISK_CONFIRM', risk: 'high', recoverable: true },
+          );
+        }
+        const verified = await verifyModifyResult({
+          sourceDir: source,
+          baseline: { staticResult: baselineStatic, nodeResult: baselineNode, scan: security },
+          runStaticTests,
+          runNodeTests,
+          scanProject,
+          checklist: mod.checklist,
+          fileContents: mod.fileContents,
+          emit,
+        });
+        if (!verified.ok) {
+          if (ceCheckpoint?.id || ceCheckpoint?.snapshot?.id) {
+            const id = ceCheckpoint.id || ceCheckpoint.snapshot?.id;
+            await snapshots.restore(project, id).catch(() => {});
+          }
+          emit('rollback', 'done', 'Change Engine V2 rolled back after verification regression.');
+          return {
+            feedback,
+            rootCause: '',
+            explanation: 'Change Engine V2 rolled back: ' + (verified.report || 'verification failed'),
+            files: [],
+            tested: verified.tested,
+            runtime: null,
+            engine: 'v2',
+            rolledBack: true,
+          };
+        }
+        await stampMadeBy(source, cfg);
+        let runtime = null;
+        if (verified.tested.staticResult.status === 'passed' && verified.tested.nodeResult.status !== 'failed' && verified.tested.scan.critical === 0) {
+          runtime = await runProject(projects.get(project.id), emit);
+        }
+        return {
+          feedback,
+          rootCause: '',
+          explanation: mod.explanation,
+          files: mod.files,
+          tested: verified.tested,
+          runtime,
+          engine: 'v2',
+          checklist: verified.checklistResults,
+        };
+      } catch (err) {
+        if (ceCheckpoint?.id || ceCheckpoint?.snapshot?.id) {
+          const id = ceCheckpoint.id || ceCheckpoint.snapshot?.id;
+          await snapshots.restore(project, id).catch(() => {});
+        }
+        throw err;
+      }
+    }
+    // —— end Change Engine V2 ——
+
     const r = await ai.completeJson({ task: 'DEBUGGING', system: SYSTEM, prompt: patchPrompt(project, '', relevant + recentContext + networkContext + securityContext + `\nATTACHMENTS (canonical project storage):\n${attachContext}\nATTACHMENT INDEX:\n${JSON.stringify(attachList)}`, feedback), projectId: project.id, images: await imageInputsFromAttachments(projects.projectDir(project)) });
     if (!r.json?.files?.length) {
       const evidenceFail = (baselineScore > 0) || (security?.critical > 0) || (baselineStatic?.status === 'failed') || (baselineNode?.status === 'failed');
@@ -2220,7 +2330,12 @@ export function registerPipeline(app) {
       throw Object.assign(new Error('AI did not propose a code change while evidence still shows failures. Provide new runtime evidence or try another provider.'), { code: 'AI_NO_CHANGE', recoverable: true });
     }
     const declaredRisk = String(r.json.risk || 'medium').toLowerCase();
-    if (declaredRisk !== 'low') throw new Error('NEEDS_USER_ACTION: AI marked this change as medium/high risk. No files were changed; review and confirm the requested change before applying it.');
+    if (declaredRisk === 'high' && !/\bconfirm\s+high\s*risk\b/i.test(String(feedback || ''))) {
+      throw Object.assign(
+        new Error('NEEDS_USER_ACTION: This change is marked high risk (data, auth, wallet, or architecture). Reply "confirm high risk" once to apply with checkpoint.'),
+        { code: 'HIGH_RISK_CONFIRM', risk: 'high', recoverable: true },
+      );
+    }
     const patchCheckpoint = await applySafeAiPatch({ sourceDir: source, files: r.json.files, project, snapshots, reason: 'ai-improve' });
     await stampMadeBy(source, cfg);
     // First verify the proposed patch WITHOUT another mutating auto-fix. A later

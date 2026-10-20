@@ -14,6 +14,8 @@ import { powerWarning } from '../docker/modes.js';
 import { preflightPrompt } from '../ai/prompts.js';
 import { normalizeDeepSeekModel } from '../ai/providers/deepseek.js';
 import { inferAction, parseGithubRepoUrl } from '../scripts/ops.js';
+import { routeIntent, isFastPath, isMultiStep } from '../router/intent.js';
+import { detectUserLanguage } from '../ai/language.js';
 import { createProjectZip } from '../projects/exporter.js';
 import { gcDocker } from '../docker/cleanup.js';
 
@@ -42,8 +44,63 @@ export function registerRoutes(r, app) {
       engine: cfg.runtime?.podman?.apiUrl ? 'podman-sandbox' : 'native-preview',
       preview: { mode: cfg.runtime?.mode || 'auto', containerSandbox: Boolean(cfg.runtime?.podman?.apiUrl), dockerSocket: false },
     });
+
+  r.get('/api/remote/info', async (req, res) => {
+    try {
+      const { resolvePublicUrl, isLoopbackRequest } = await import('../remote/info.js');
+      const dataDir = cfg.dataDir || cfg.paths?.data || path.join(process.cwd(), 'data');
+      const { publicUrl, source } = await resolvePublicUrl({ cfg, req, dataDir });
+      const passwordEnabled = Boolean(cfg.accessPassword);
+      res.json({
+        publicUrl,
+        source,
+        passwordEnabled,
+        isLoopbackRequest: isLoopbackRequest(req),
+      });
+    } catch (err) {
+      res.status(500).json({ error: String(err.message || err) });
+    }
+  });
+  r.post('/api/remote/url', async (req, res) => {
+    try {
+      const url = String(req.body?.publicUrl || req.body?.url || '').trim();
+      if (!url || !/^https?:\/\//i.test(url)) return res.status(400).json({ error: 'Invalid URL' });
+      const dataDir = cfg.dataDir || cfg.paths?.data || path.join(process.cwd(), 'data');
+      await fs.mkdir(dataDir, { recursive: true });
+      await fs.writeFile(path.join(dataDir, 'remote.json'), JSON.stringify({ publicUrl: url.replace(/\/$/, ''), updatedAt: new Date().toISOString() }, null, 2));
+      res.json({ ok: true, publicUrl: url.replace(/\/$/, '') });
+    } catch (err) {
+      res.status(500).json({ error: String(err.message || err) });
+    }
   });
 
+  });
+
+
+  r.post('/api/access/generate', async (req, res) => {
+    try {
+      const { isLoopbackRequest } = await import('../remote/info.js');
+      const authorized = isLoopbackRequest(req) || (req.headers.cookie || '').includes('builder_access=');
+      if (!authorized && cfg.accessPassword) return res.status(403).json({ error: 'Forbidden' });
+      if (cfg.accessPassword && !isLoopbackRequest(req)) return res.status(400).json({ error: 'Password already set' });
+      const crypto = await import('node:crypto');
+      const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789';
+      let password = '';
+      const bytes = crypto.randomBytes(12);
+      for (let i = 0; i < 12; i++) password += alphabet[bytes[i] % alphabet.length];
+      const dataDir = cfg.dataDir || cfg.paths?.data || path.join(process.cwd(), 'data');
+      await fs.mkdir(dataDir, { recursive: true });
+      await fs.writeFile(path.join(dataDir, 'access.json'), JSON.stringify({ password, updatedAt: new Date().toISOString() }, null, 2), { mode: 0o600 });
+      cfg.accessPassword = password;
+      const { tokenFor, accessCookieHeader } = await import('../http-access-auth.js').catch(() => ({}));
+      const { verifyAccessPassword, accessCookieHeader: ach } = await import('../http-access-auth.js');
+      const v = verifyAccessPassword(password, cfg);
+      if (v.token) res.setHeader('Set-Cookie', ach(v.token));
+      res.json({ ok: true, password, once: true });
+    } catch (err) {
+      res.status(500).json({ error: String(err.message || err) });
+    }
+  });
   r.get('/ready', (_req, res) => {
     res.json({ ready: true });
   });
@@ -566,28 +623,65 @@ export function registerRoutes(r, app) {
     const message = String(req.body?.message || req.body?.idea || '').trim();
     if (!message) return res.status(400).json({ error: 'Tell me what you want to build or ask.' });
     if (!ensureFree(null, res)) return;
-    const githubRepo = parseGithubRepoUrl(message);
-    if (githubRepo) {
-      const job = jobs.enqueue({ type: 'upgrade_github_import', payload: { url: githubRepo.url } });
-      setImmediate(() => jobs.kick(job));
-      return res.status(202).json({ jobId: job.id, message: 'GitHub Upgrade Workshop started.', route: 'upgrade' });
-    }
     const files = Array.isArray(req.body?.files) ? req.body.files : [];
-    try {
-      const routed = await ai.completeJson({ task: 'USER_CHAT', system: 'You route first messages. Return only JSON. Do not build unless the user clearly asks to build.', prompt: preflightPrompt(message), images: [] });
-      if (String(routed.json?.route || '').toLowerCase() !== 'build') {
-        return res.json({ reply: String(routed.json?.reply || '').trim() || 'I can answer questions here. Tell me when you want me to build an app.', route: 'answer' });
-      }
-    } catch (err) {
-      const inferred = inferAction(message);
-      if (inferred !== 'build') {
-        return res.json({ reply: `I could not analyze that request because the AI provider is unavailable. ${String(err.message || '').slice(0, 220)}`, route: 'answer' });
+    const lang = detectUserLanguage(message);
+    const decision = routeIntent({ message, files, hasProject: false });
+    const githubRepo = parseGithubRepoUrl(message);
+
+    // Allowed without an open project: CREATE, UPGRADE_IMPORT, IMPORT, ASK, SETTINGS
+    if (githubRepo || decision.intent === 'UPGRADE_IMPORT') {
+      const job = jobs.enqueue({ type: 'upgrade_github_import', payload: { url: githubRepo?.url || message } });
+      setImmediate(() => jobs.kick(job));
+      return res.status(202).json({ jobId: job.id, message: 'GitHub Upgrade Workshop started.', route: 'upgrade', intent: 'UPGRADE_IMPORT', reply_language: lang });
+    }
+    if (decision.intent === 'IMPORT' || files.some((f) => /\.zip$/i.test(f?.name || f?.originalname || ''))) {
+      const job = jobs.enqueue({ type: 'import_app', payload: { source: 'chat' } });
+      job._files = files;
+      setImmediate(() => jobs.kick(job));
+      return res.status(202).json({ jobId: job.id, message: 'Importing ZIP…', route: 'import', intent: 'IMPORT', reply_language: lang });
+    }
+    if (decision.intent === 'SETTINGS') {
+      return res.json({
+        reply: lang === 'Vietnamese' ? 'Mở ⚙ Settings để thêm khóa AI hoặc GitHub.' : 'Open ⚙ Settings to add an AI or GitHub key.',
+        route: 'answer', intent: 'SETTINGS', reply_language: lang,
+      });
+    }
+    if (decision.intent === 'ASK' || decision.source === 'infer' && decision.intent === 'ASK') {
+      try {
+        const routed = await ai.completeJson({
+          task: 'USER_CHAT',
+          system: 'Answer briefly in the user language. Return JSON {route,reply}. route is answer unless user clearly wants a new app built.',
+          prompt: preflightPrompt(message),
+          images: [],
+        });
+        return res.json({
+          reply: String(routed.json?.reply || '').trim() || (lang === 'Vietnamese' ? 'Bạn muốn tạo app gì?' : 'What app should I build?'),
+          route: 'answer', intent: 'ASK', reply_language: lang,
+        });
+      } catch (err) {
+        return res.json({
+          reply: lang === 'Vietnamese'
+            ? `AI tạm không trả lời được. Mô tả app bạn muốn tạo, hoặc dán link GitHub.`
+            : `AI is unavailable. Describe the app to build, or paste a GitHub link.`,
+          route: 'answer', intent: 'ASK', reply_language: lang,
+        });
       }
     }
-    const job = jobs.enqueue({ type: 'create_app', payload: { idea: message, autoBuild: true } });
+    // No project yet: RUN/PUBLISH/EXPORT/MODIFY(partial)/REPAIR/UNDO → guide only
+    const blocked = new Set(['RUN', 'PUBLISH', 'EXPORT', 'REPAIR', 'UNDO']);
+    if (blocked.has(decision.intent) || (decision.intent === 'MODIFY' && !/(?:tạo\s*app|build\s+(?:an?\s+)?app|make\s+(?:an?\s+)?app)/iu.test(message))) {
+      return res.json({
+        reply: lang === 'Vietnamese'
+          ? 'Chưa có app. Hãy mô tả ý tưởng hoặc dán link GitHub.'
+          : 'No app yet. Describe an idea or paste a GitHub link.',
+        route: 'answer', intent: decision.intent, reply_language: lang,
+      });
+    }
+    // CREATE (or MODIFY that describes a full app)
+    const job = jobs.enqueue({ type: 'create_app', payload: { idea: message, autoBuild: true, intent: 'CREATE', reply_language: lang } });
     job._files = files;
     setImmediate(() => jobs.kick(job));
-    res.status(202).json({ jobId: job.id, message: 'Builder started.', route: 'build' });
+    res.status(202).json({ jobId: job.id, message: 'Builder started.', route: 'build', intent: 'CREATE', reply_language: lang });
   });
 
   r.post('/api/projects', (req, res) => {
@@ -760,27 +854,93 @@ export function registerRoutes(r, app) {
     });
   });
 
-  r.post('/api/projects/:id/chat', (req, res) => {
+  r.post('/api/projects/:id/chat', async (req, res) => {
     const p = projects.get(req.params.id);
     if (!p) return res.status(404).json({ error: 'Project not found' });
     if (!ensureFree(p.id, res)) return;
     const message = String(req.body?.message || '').trim();
     if (!message) return res.status(400).json({ error: 'Write a message first.' });
+    const files = Array.isArray(req.body?.files) ? req.body.files : [];
+    const lang = detectUserLanguage(message);
+    const decision = routeIntent({ message, files, hasProject: true });
     const githubRepo = parseGithubRepoUrl(message);
-    if (githubRepo && String(p.status || '').startsWith('UPGRADE')) {
-      const job = jobs.enqueue({ type: 'upgrade_github_import', payload: { url: githubRepo.url } });
+
+    if (githubRepo || decision.intent === 'UPGRADE_IMPORT') {
+      const job = jobs.enqueue({ type: 'upgrade_github_import', payload: { url: githubRepo?.url || message } });
       setImmediate(() => jobs.kick(job));
-      return res.status(202).json({ jobId: job.id, message: 'GitHub Upgrade Workshop started.', route: 'upgrade' });
+      return res.status(202).json({ jobId: job.id, message: 'GitHub Upgrade Workshop started.', route: 'upgrade', intent: 'UPGRADE_IMPORT', reply_language: lang });
     }
-    if (String(p.status || '').startsWith('UPGRADE')) {
+    if (decision.intent === 'UNDO') {
+      const list = typeof snapshots?.list === 'function' ? snapshots.list(p.id) : [];
+      if (!list?.length) {
+        return res.json({
+          reply: lang === 'Vietnamese' ? 'Chưa có điểm khôi phục để hoàn tác.' : 'No checkpoint to undo.',
+          route: 'answer', intent: 'UNDO', reply_language: lang,
+        });
+      }
+      // Same path as POST /api/projects/:id/rollback
+      const target = list[0];
+      await snapshots.restore(p, target.id);
+      return res.json({
+        ok: true,
+        reply: lang === 'Vietnamese' ? `Đã hoàn tác về điểm ${target.id}.` : `Rolled back to checkpoint ${target.id}.`,
+        route: 'rollback', intent: 'UNDO', reply_language: lang, snapshotId: target.id,
+      });
+    }
+
+    // Fast path only for short, high-confidence RUN / EXPORT (zip)
+    const fast = isFastPath(decision, message);
+    if (fast && decision.intent === 'RUN') {
+      const job = jobs.enqueue({ type: 'run', projectId: p.id, payload: { projectId: p.id } });
+      setImmediate(() => jobs.kick(job));
+      return res.status(202).json({ jobId: job.id, message: 'Starting preview…', route: 'run', intent: 'RUN', reply_language: lang });
+    }
+    if (fast && decision.intent === 'EXPORT') {
+      const job = jobs.enqueue({ type: 'export_zip', projectId: p.id, payload: { projectId: p.id, kind: 'project' } });
+      setImmediate(() => jobs.kick(job));
+      return res.status(202).json({ jobId: job.id, message: 'Preparing ZIP…', route: 'export', intent: 'EXPORT', reply_language: lang });
+    }
+
+    // PUBLISH, multi-step, MODIFY, REPAIR, low confidence → builder_chat (AI + gates)
+    if (decision.intent === 'MODIFY' || decision.intent === 'REPAIR') {
+      const job = jobs.enqueue({
+        type: 'improve',
+        projectId: p.id,
+        payload: {
+          projectId: p.id,
+          feedback: message,
+          intent: decision.intent,
+          risk: decision.risk,
+          reply_language: lang,
+        },
+      });
+      job._files = files;
+      setImmediate(() => jobs.kick(job));
+      return res.status(202).json({ jobId: job.id, message: 'Applying change…', route: 'improve', intent: decision.intent, reply_language: lang });
+    }
+
+    if (String(p.status || '').startsWith('UPGRADE') && decision.intent !== 'ASK' && decision.intent !== 'PUBLISH') {
       const job = jobs.enqueue({ type: 'upgrade_request', projectId: p.id, payload: { projectId: p.id, request: message } });
       setImmediate(() => jobs.kick(job));
-      return res.status(202).json({ jobId: job.id, message: 'Upgrade diagnosis started.', route: 'upgrade' });
+      return res.status(202).json({ jobId: job.id, message: 'Upgrade diagnosis started.', route: 'upgrade', intent: decision.intent, reply_language: lang });
     }
-    const job = jobs.enqueue({ type: 'builder_chat', projectId: p.id, payload: { projectId: p.id, message } });
-    job._files = Array.isArray(req.body?.files) ? req.body.files : [];
+
+    // Default: builder_chat handles PUBLISH confirmation, multi-step, questions, etc.
+    const job = jobs.enqueue({
+      type: 'builder_chat',
+      projectId: p.id,
+      payload: {
+        projectId: p.id,
+        message,
+        intent: decision.intent,
+        risk: decision.risk,
+        reply_language: lang,
+        multiStep: decision.multiStep || isMultiStep(message),
+      },
+    });
+    job._files = files;
     setImmediate(() => jobs.kick(job));
-    res.status(202).json({ jobId: job.id, message: 'Builder is working.' });
+    res.status(202).json({ jobId: job.id, message: 'Builder is working.', intent: decision.intent, reply_language: lang, via: 'builder_chat' });
   });
 
   r.post('/api/projects/:id/attachments', async (req, res) => {

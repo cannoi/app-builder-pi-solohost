@@ -42,3 +42,23 @@
 .quickGroups .group{align-items:stretch}
 .quickGroups .group button{min-height:36px;display:inline-flex;align-items:center;justify-content:center}
 @media(max-width:640px){.settingsGrid{grid-template-columns:1fr}.logs-view{max-height:48vh}.logs-toolbar button{flex:1}}
+
+/* UI_SIMPLE v1.8 */
+.contextChipRow{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 8px}
+.contextChip{border:1px solid #3a4558;background:#1a2230;color:#e8eef6;border-radius:999px;padding:8px 14px;font-size:13px}
+.moreBtn{border:0;background:#1a2230;color:#e8eef6;border-radius:12px;padding:10px 12px;font-size:18px;cursor:pointer}
+.moreMenu{position:absolute;right:12px;bottom:72px;z-index:40;background:#141b26;border:1px solid #2c3648;border-radius:14px;padding:8px;display:flex;flex-direction:column;gap:4px;min-width:220px;box-shadow:0 12px 40px rgba(0,0,0,.45)}
+.moreMenu[hidden]{display:none!important}
+.moreMenu button{text-align:left;background:transparent;border:0;color:#e8eef6;padding:10px 12px;border-radius:10px;cursor:pointer}
+.moreMenu button:hover{background:#243044}
+.composer{position:relative}
+.welcomeCard{background:#141b26;border:1px solid #2c3648;border-radius:16px;padding:16px;margin:12px 0}
+.welcomeCard h2{margin:0 0 8px;font-size:18px}
+.welcomeCard p{margin:6px 0;opacity:.9;line-height:1.45}
+.welcomeCard .welcomeActions{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}
+
+.quickActions{display:flex;gap:8px;flex-wrap:wrap;padding:0 2px 8px;align-items:center}
+.quickActions .qaBtn{background:#252d38;color:var(--text);border:1px solid var(--line);border-radius:12px;padding:9px 12px;font-size:.85rem;font-weight:600}
+.quickActions .qaBtn.primary{background:var(--accent);color:#fff;border-color:transparent}
+.langToggle{min-width:40px;font-weight:700;letter-spacing:.02em}
+.topRight{display:flex;align-items:center;gap:8px;flex-wrap:wrap}

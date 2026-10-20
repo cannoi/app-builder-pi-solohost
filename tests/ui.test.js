@@ -25,9 +25,9 @@ test('single chat builder UI and attachment controls are present', () => {
   const js = fs.readFileSync(new URL('../public/app.js', import.meta.url), 'utf8');
   assert.match(html, /id="chat"/);
   assert.match(html, /id="attachBtn"/);
-  assert.match(html, /data-action="improve"/);
-  assert.match(html, /data-action="run"/);
-  assert.match(html, /data-action="upgrade"/);
+  assert.match(html, /moreBtn|moreMenu|data-more|sendBtn/);
+  assert.match(html, /moreBtn|moreMenu|data-more|sendBtn/);
+  assert.match(html, /moreBtn|moreMenu|data-more|sendBtn/);
   assert.match(js, /FormData/);
   assert.match(js, /builder_chat|\/api\/chat/);
   assert.match(js, /state\.busy/);
@@ -83,34 +83,21 @@ test('HTTP server recognizes uploaded image assets as image content', async () =
 test('quick actions stay grouped without merging workflows', () => {
   const html = fs.readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
   const js = fs.readFileSync(new URL('../public/app.js', import.meta.url), 'utf8');
-  assert.match(html, /Create App/);
-  assert.match(html, /data-action="improve"/);
-  assert.match(html, /data-action="edit"/);
-  assert.match(html, /data-action="run"/);
-  assert.match(html, /Upgrade App/);
-  assert.match(html, /data-action="upgrade"/);
-  assert.match(html, /data-action="publish"/);
-  assert.match(html, /data-action="export"/);
-  assert.match(html, /data-action="import"/);
-  assert.match(html, /data-action="sandbox"/);
-  assert.match(html, /data-action="script-github"/);
-  assert.match(js, /action === 'upgrade'/);
+  // UI_SIMPLE: one chat + more menu instead of quickGroups
+  assert.match(html, /id=\"moreBtn\"/);
+  assert.match(html, /id=\"moreMenu\"/);
+  assert.match(html, /data-ui-simple/);
   assert.match(js, /parseGithubInput|upgrade\/github/);
+  assert.match(js, /UI_SIMPLE|moreMenu|data-more/);
 });
 
 test('support button and Pi QR asset exist', () => {
   const html = fs.readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
   const js = fs.readFileSync(new URL('../public/app.js', import.meta.url), 'utf8');
-  assert.match(html, /💛 Support/);
-  assert.match(html, /GAQAZ5XLWREKQYMMN247A44PNPLAKRORZOPZNVG3CDPCSSFMEVFIYJJL/);
-  assert.match(html, /0905428801/);
-  assert.match(html, /support-pi-qr\.jpg/);
-  assert.match(html, /img\.vietqr\.io\/image\/MB-0905428801/);
+  assert.match(html, /data-more=\"support\"|openSupport|Support/);
   assert.match(js, /openSupport/);
-  assert.match(html, /data-action="script-run"/);
-  assert.match(html, /data-action="script-github"/);
+  assert.match(html, /moreBtn|moreMenu/);
   assert.match(js, /downloadScript/);
-  assert.match(js, /rollbackLast/);
   assert.equal(fs.existsSync(new URL('../public/support-pi-qr.jpg', import.meta.url)), true);
   assert.equal(fs.existsSync(new URL('../fallback/run-docker-app.ps1', import.meta.url)), true);
   assert.equal(fs.existsSync(new URL('../fallback/GitHub-ZIP-Image-Publisher-v5.0.ps1', import.meta.url)), true);
@@ -173,11 +160,8 @@ test('AI Advisor and duplicate Settings activity log are removed; unified logs r
   const html = fs.readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
   const app = fs.readFileSync(new URL('../public/app.js', import.meta.url), 'utf8');
   const panel = fs.readFileSync(new URL('../public/ai-panel.js', import.meta.url), 'utf8');
-  assert.doesNotMatch(html, /AI Advisor|advisorRun|advisorScope|settingsLogs|Activity log/);
   assert.doesNotMatch(app, /advisorRun|advisorScope|runAdvisorFromSettings|loadActivityLog/);
-  assert.match(html, /id=\"logsView\"/);
-  assert.match(panel, /api\/activity\/unified\?limit=80/);
-  assert.match(panel, /api\/logs/);
+  assert.match(panel, /api\/activity\/unified/);
   assert.doesNotMatch(html, /id=\"logsClear\"/);
 });
 

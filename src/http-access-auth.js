@@ -29,11 +29,23 @@ export function isAccessAuthorized(req, cfg) {
   if (!accessPasswordConfigured(cfg)) return true;
   const expected = tokenFor(cfg.accessPassword);
   const cookies = parseCookies(req.headers?.cookie);
-  if (cookies[COOKIE] && cookies[COOKIE] === expected) return true;
+  if (cookies[COOKIE]) {
+    try {
+      const a = Buffer.from(String(cookies[COOKIE]));
+      const b = Buffer.from(String(expected));
+      if (a.length === b.length && crypto.timingSafeEqual(a, b)) return true;
+    } catch { /* fall through */ }
+  }
   const auth = String(req.headers?.authorization || '');
   if (auth.toLowerCase().startsWith('bearer ') && auth.slice(7).trim() === expected) return true;
   const hdr = req.headers?.['x-builder-access'];
-  if (hdr && String(hdr) === expected) return true;
+  if (hdr) {
+    try {
+      const a = Buffer.from(String(hdr));
+      const b = Buffer.from(String(expected));
+      if (a.length === b.length && crypto.timingSafeEqual(a, b)) return true;
+    } catch { /* fall through */ }
+  }
   return false;
 }
 

@@ -1,0 +1,56 @@
+✔ access password disabled when env empty (0.985953ms)
+✔ access password required when configured (2.170279ms)
+✔ publish gate requires GitHub token in source (1.915518ms)
+✔ login page exists (0.315316ms)
+✔ unified activity log is only in the AI Panel (0.507747ms)
+node:internal/modules/package_json_reader:301
+  throw new ERR_MODULE_NOT_FOUND(packageName, fileURLToPath(base), null);
+        ^
+
+Error [ERR_MODULE_NOT_FOUND]: Cannot find package 'yaml' imported from /tmp/ab182/app-builder-pi-solohost-main/src/release/solohost-lint.js
+    at Object.getPackageJSONURL (node:internal/modules/package_json_reader:301:9)
+    at packageResolve (node:internal/modules/esm/resolve:764:81)
+    at moduleResolve (node:internal/modules/esm/resolve:855:18)
+    at defaultResolve (node:internal/modules/esm/resolve:988:11)
+    at #cachedDefaultResolve (node:internal/modules/esm/loader:697:20)
+    at #resolveAndMaybeBlockOnLoaderThread (node:internal/modules/esm/loader:714:38)
+    at ModuleLoader.resolveSync (node:internal/modules/esm/loader:746:52)
+    at #resolve (node:internal/modules/esm/loader:679:17)
+    at ModuleLoader.getOrCreateModuleJob (node:internal/modules/esm/loader:599:35)
+    at ModuleJob.syncLink (node:internal/modules/esm/module_job:162:33) {
+  code: 'ERR_MODULE_NOT_FOUND'
+}
+
+Node.js v24.15.0
+✖ tests/agent-v3-architecture.test.js (55.643375ms)
+✔ facts include current package version (0.906592ms)
+✔ core knowledge stays short (0.219606ms)
+✔ panel knowledge stays under budget (1.803563ms)
+✔ builder knowledge keeps contract phrases (0.272138ms)
+✔ default compose uses the public image and has no Docker socket mount (1.362801ms)
+✔ SoloHost compose uses the public image and has no Docker socket mount (0.327826ms)
+✔ native preview runner does not expose a host Docker socket (59.892552ms)
+✔ generated Dockerfile remains a SoloHost build contract (1.286188ms)
+✔ native preview command disables raw container control (0.601303ms)
+✔ container sandbox is selected when a Podman API endpoint is configured (0.50444ms)
+✔ Podman sandbox runner has no host Docker socket dependency (0.57426ms)
+✔ native preview serves index.html and /health without Docker (176.349258ms)
+✔ native preview still serves UI when package.json start script crashes (15056.089624ms)
+✔ native preview gives an accurate, actionable error for a Dockerfile-only app (no package.json, no index.html) instead of a misleading "Tap Build" message (4.916239ms)
+✔ native preview keeps the original "Tap Build" message for a project with neither UI files nor a Dockerfile (3.35734ms)
+✔ native preview also finds index.html in broader static-asset directory conventions (36.05514ms)
+✔ config loads without crashing when optional keys are missing (3.036402ms)
+✔ secrets are masked (0.591763ms)
+✔ slug and semver helpers (0.951807ms)
+✔ JSON extraction tolerates fences (0.506617ms)
+✔ command policy blocks dangerous actions (1.029325ms)
+✔ path safety (1.116027ms)
+✔ container runtime accepts a compose-only image app and detects web port (14.18459ms)
+✔ Podman endpoint aliases are accepted without changing native defaults (1.329083ms)
+✔ container-only Run does not fall into native package/index error (23.253903ms)
+✔ nested compose browser app is detected (6.597602ms)
+✔ compose runtime preserves basic environment and command without privileged access (4.873836ms)
+✔ Compose host:container mapping detects the container port, not the host port (64.354609ms)
+✔ Container Sandbox endpoint is auto-detected at Run time without Settings configuration (0.851514ms)
+✔ ordinary Node/static RUN stays native even when Container Sandbox is configured (110.25788ms)
+✔ Compose long port syntax uses target container port for Sandbox preview (12.564393ms)

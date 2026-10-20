@@ -323,13 +323,13 @@ function setBusy(on, text = 'Working…') {
   $('busyBar').hidden = !on;
   $('busyText').textContent = on ? text : 'Ready';
   if ($('workPill')) { $('workPill').textContent = on ? 'Working' : 'Ready'; $('workPill').className = on ? 'pill work' : 'pill ready'; }
-  document.querySelectorAll('.quickGroups button,#attachBtn,#message').forEach((x) => { x.disabled = on; });
+  document.querySelectorAll('#attachBtn,#message,#moreBtn').forEach((x) => { if (x) x.disabled = on && x.id !== 'sendBtn'; });
   if ($('projectSelect')) $('projectSelect').disabled = on;
   // Send button turns into a Stop button while a job is running, instead of being disabled.
   const sendBtn = $('sendBtn');
   if (sendBtn) {
     sendBtn.disabled = false;
-    sendBtn.textContent = on ? '■' : '➤';
+    sendBtn.textContent = on ? '⏹' : '➤';
     sendBtn.title = on ? 'Stop / cancel current action' : 'Send';
     sendBtn.classList.toggle('stopMode', on);
   }
@@ -617,7 +617,8 @@ function parseGithubInput(text) {
 }
 async function startUpgrade() {
   if (!state.projectId) {
-    const request = await askSafeAction('UPGRADE FROM GITHUB', 'Paste a public GitHub repository URL.');
+    const request = add('ai', 'Dán link GitHub vào ô chat / Paste a GitHub URL in the chat box.');
+    return;
     if (!request) return;
     const url = parseGithubInput(request.text) || request.text.trim();
     setBusy(true, 'Importing public GitHub source…');
@@ -633,7 +634,8 @@ async function startUpgrade() {
   } catch (e) { handleJobActionError(e); }
 }
 async function askUpgradeRequest() {
-  const request = await askSafeAction('UPGRADE WORKSHOP', 'Describe the upgrade, or attach a Rule file (.rule .yaml .json .md).');
+  add('ai', 'Mô tả nâng cấp trong ô chat, hoặc đính kèm Rule / Describe the upgrade in chat or attach a Rule file.');
+  return;
   if (!request) return;
   setBusy(true, 'Loading the Rule and inspecting the app…');
   try {
@@ -728,7 +730,8 @@ async function quick(action, extraPayload = {}) {
     }
     else if (action === 'improve' || action === 'edit') {
       const kind = action === 'edit' ? 'SAFE EDIT' : 'SAFE UPGRADE';
-      const request = await askSafeAction(kind);
+      add('ai', 'Gõ yêu cầu vào ô chat / Type your request in the chat box.');
+      return;
       if (!request) { setBusy(false); return; }
       const form = new FormData();
       form.append('feedback', `${kind}\nUSER REQUEST: ${request.text}`);
@@ -744,20 +747,7 @@ async function quick(action, extraPayload = {}) {
   } catch (e) { handleJobActionError(e); }
 }
 async function askSafeAction(kind, initial = '') {
-  return new Promise((resolve) => {
-    const wrap = document.createElement('div'); wrap.className = 'modal';
-    wrap.innerHTML = `<div class="sheet"><div class="sheetHead"><h2>${kind}</h2><button class="iconBtn" type="button">✕</button></div><p class="info">What do you want to change?</p><textarea rows="4" style="width:100%;box-sizing:border-box" placeholder="What do you want to change?"></textarea><div class="inputRow" style="margin-top:10px"><button type="button" class="attach modalAttach" title="Attach files">📎</button><input class="modalFiles" type="file" multiple hidden accept=".zip,.pdf,.txt,.md,.json,.yaml,.yml,.rule,.js,.ts,.jsx,.tsx,.html,.css,.py,.go,.rs,.java,.php,.sql,.csv,.png,.jpg,.jpeg,.gif,.webp"><span class="modalFileNames muted">No files</span></div><div class="actionCard"><button class="primary wide" type="button">Send</button></div></div>`;
-    document.body.appendChild(wrap); wrap.hidden = false;
-    const input = wrap.querySelector('textarea'); const fileInput = wrap.querySelector('.modalFiles'); const names = wrap.querySelector('.modalFileNames');
-    input.value = initial;
-    const close = () => { wrap.remove(); resolve(null); };
-    wrap.querySelector('.iconBtn').onclick = close;
-    wrap.querySelector('.modalAttach').onclick = () => fileInput.click();
-    fileInput.onchange = () => { const files = Array.from(fileInput.files || []); names.textContent = files.length ? files.map(f => `📎 ${f.name}`).join(' · ') : 'No files'; };
-    wrap.querySelector('.primary').onclick = () => { const textValue = input.value.trim(); const files = Array.from(fileInput.files || []); if (!textValue && !files.length) { input.focus(); return; } wrap.remove(); resolve({ text: textValue || 'Inspect the attached files and apply the requested safe change.', files }); };
-    input.addEventListener('keydown', (e) => { if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') wrap.querySelector('.primary').click(); });
-    input.focus();
-  });
+  return { text: initial || '', files: [] };
 }
 
 function stopJobWatch() {
@@ -968,7 +958,8 @@ function renderRepairAction(errorText) {
     if (state.busy) return;
     setBusy(true, isSecurity ? 'Fixing security…' : 'Diagnosing & fixing…');
     try {
-      const request = await askSafeAction('SAFE REPAIR', isSecurity ? 'Fix the reported security issue.' : 'Fix the reported problem.');
+      add('ai', isSecurity ? 'Gõ: sửa lỗi bảo mật / Type: fix the security issue' : 'Gõ mô tả lỗi vào ô chat / Describe the bug in chat');
+      return;
       if (!request) { setBusy(false); return; }
       const form = new FormData();
       form.append('feedback', `SAFE REPAIR\nUSER REQUEST: ${request.text}\n\nEVIDENCE REPORT:\n${errorText}`);
@@ -1245,11 +1236,88 @@ function renderGuide(guide) {
   $('chat').appendChild(box); maybeJump();
 }
 function renderWelcome() {
-  $('chat').innerHTML = '';
-  add('ai', 'I will take you to a published SoloHost app in three taps:\n1) Tell me the idea\n2) I Build + Run and give you a test link\n3) You tap Publish');
-  renderGuide({ step: 1, title: 'Send your idea', action: null, label: '', detail: 'Example: “Build a snake game that saves high scores.”' });
+  const chat = $('chat');
+  if (!chat) return;
+  chat.innerHTML = '';
+  const box = document.createElement('div');
+  box.className = 'msg ai welcomeCard';
+  box.innerHTML = `
+    <h2>App Builder — Pi SoloHost</h2>
+    <p><strong>EN:</strong> Type an idea, paste a GitHub link to upgrade, attach a ZIP/image, or ask to change a feature. One chat — I route the rest.</p>
+    <p><strong>VI:</strong> Gõ ý tưởng, dán link GitHub để nâng cấp, đính kèm ZIP/ảnh, hoặc nhờ đổi tính năng. Một ô chat — tôi tự phân loại và làm.</p>
+    <div class="welcomeActions">
+      <button type="button" class="primary" data-welcome="idea">💡 Ý tưởng mẫu / Sample idea</button>
+      <button type="button" data-welcome="github">🔗 Dán link GitHub</button>
+      <button type="button" data-welcome="settings">⚙ Kết nối AI / Connect AI</button>
+    </div>`;
+  chat.appendChild(box);
+  box.querySelector('[data-welcome="idea"]').onclick = () => {
+    $('message').value = 'Tạo app quản lý bán hàng đơn giản cho cửa hàng nhỏ';
+    $('message').focus();
+  };
+  box.querySelector('[data-welcome="github"]').onclick = () => {
+    $('message').value = 'https://github.com/';
+    $('message').focus();
+  };
+  box.querySelector('[data-welcome="settings"]').onclick = () => {
+    if (typeof openSettings === 'function') openSettings();
+    else $('settings')?.removeAttribute('hidden');
+  };
+  // Context chips for new users
+  const chip = $('contextChip');
+  if (chip) {
+    chip.hidden = false;
+    chip.textContent = '💡 Thử: app bán trà sữa';
+    chip.onclick = () => {
+      $('message').value = 'Tạo app bán trà sữa với menu và giỏ hàng';
+      $('message').focus();
+    };
+  }
 }
+
 $('sendBtn').onclick = () => { if (state.busy) return cancelCurrentJob(); return handleTextCommand($('message').value.trim()); };
+
+// UI_SIMPLE more menu
+$('moreBtn')?.addEventListener('click', (e) => {
+  e.stopPropagation();
+  const menu = $('moreMenu');
+  if (!menu) return;
+  menu.hidden = !menu.hidden;
+});
+document.addEventListener('click', () => { const m = $('moreMenu'); if (m) m.hidden = true; });
+$('moreMenu')?.addEventListener('click', (e) => e.stopPropagation());
+document.querySelectorAll('#moreMenu [data-more]').forEach((btn) => {
+  btn.addEventListener('click', async () => {
+    const act = btn.dataset.more;
+    $('moreMenu').hidden = true;
+    try {
+      if (act === 'export') {
+        if (!state.projectId) return add('ai', 'Open or create an app first / Hãy mở hoặc tạo app trước.');
+        await downloadZip(state.projectId, 'project');
+      } else if (act === 'import') {
+        $('importZipInput')?.click();
+      } else if (act === 'sandbox') {
+        if (typeof startSandboxDemo === 'function') startSandboxDemo();
+        else if (typeof quick === 'function') quick('sandbox');
+      } else if (act === 'script-run') {
+        if (typeof downloadScript === 'function') downloadScript('run');
+        else if (typeof quick === 'function') quick('script-run');
+      } else if (act === 'script-github') {
+        if (typeof downloadScript === 'function') downloadScript('github');
+        else if (typeof quick === 'function') quick('script-github');
+      } else if (act === 'rollback') {
+        if (typeof rollback === 'function') rollback();
+        else if (typeof quick === 'function') quick('rollback');
+      } else if (act === 'support') {
+        if (typeof openSupport === 'function') openSupport();
+        else if (typeof quick === 'function') quick('support');
+      }
+    } catch (err) {
+      add('ai', err.message || String(err));
+    }
+  });
+});
+
 $('message').addEventListener('keydown', (e) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); handleTextCommand($('message').value.trim()); } });
 document.querySelectorAll('[data-action]').forEach((b) => b.onclick = () => quick(b.dataset.action));
 if ($('liveBtn')) $('liveBtn').onclick = () => stopLive();
@@ -1389,3 +1457,24 @@ Promise.all([loadStatus(), loadProjects(), loadSettings(), loadFeedbackConfig()]
   else if (state.projects[0]?.id) await openProject(state.projects[0].id, false);
   else renderWelcome();
 }).catch(() => renderWelcome());
+
+/* Language: #langToggle wired in public/i18n.js */
+
+/* Quick actions restored */
+document.getElementById('btnRun')?.addEventListener('click', () => {
+  if (state.busy) return;
+  if (!state.projectId) { add('ai', 'Open or create an app first.'); return; }
+  quick('run');
+});
+document.getElementById('btnPublish')?.addEventListener('click', () => {
+  if (state.busy) return;
+  if (!state.projectId) { add('ai', 'Open or create an app first.'); return; }
+  quick('release', { approved: true, confirm: true, push: true });
+});
+document.getElementById('btnDonate')?.addEventListener('click', () => {
+  const fab = document.getElementById('aiFab');
+  fab?.click();
+  setTimeout(() => {
+    document.querySelector('[data-tab="feedback"]')?.click();
+  }, 200);
+});

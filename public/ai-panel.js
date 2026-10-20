@@ -1,3 +1,66 @@
+
+/** Remote access card (QR) — local QR only, no external network */
+async function renderRemoteAccessCard() {
+  const chat = document.getElementById('aiChat');
+  if (!chat) return;
+  let card = document.getElementById('remoteAccessCard');
+  if (!card) {
+    card = document.createElement('div');
+    card.id = 'remoteAccessCard';
+    card.className = 'remote-access-card';
+    card.innerHTML = '<div class="remote-head"><strong>📱 Remote access</strong> <button type="button" id="remoteToggle" class="small">Hide</button></div>'
+      + '<div id="remoteBody"></div>';
+    chat.prepend(card);
+    card.querySelector('#remoteToggle')?.addEventListener('click', () => {
+      const b = card.querySelector('#remoteBody');
+      if (!b) return;
+      const hide = b.style.display === 'none';
+      b.style.display = hide ? '' : 'none';
+      card.querySelector('#remoteToggle').textContent = hide ? 'Hide' : 'Show';
+    });
+  }
+  const body = card.querySelector('#remoteBody');
+  try {
+    const info = await fetch('/api/remote/info').then((r) => r.json());
+    if (!info.publicUrl) {
+      body.innerHTML = '<p class="small">Public URL = http://PUBLIC_IP:HOST_PORT (SoloHost port) so phones can open Builder.</p>'
+        + '<input id="remoteUrlInput" type="url" placeholder="https://example.com:8080" style="width:100%">'
+        + '<button type="button" id="remoteUrlSave" class="primary">Save URL</button>';
+      body.querySelector('#remoteUrlSave')?.addEventListener('click', async () => {
+        const url = body.querySelector('#remoteUrlInput')?.value?.trim();
+        if (!url) return;
+        await fetch('/api/remote/url', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ publicUrl: url }) });
+        renderRemoteAccessCard();
+      });
+      return;
+    }
+    const warn = info.passwordEnabled
+      ? '<p class="small">🔒 Same login password protects remote QR access.</p>'
+      : '<p class="small warn">⚠ No login password (BUILDER_ACCESS_PASSWORD)</p><button type="button" id="remoteGenPass">Tạo mật khẩu / Create password</button>';
+    body.innerHTML = warn
+      + '<canvas id="remoteQrCanvas" width="160" height="160" aria-label="QR"></canvas>'
+      + '<div class="small"><code id="remoteUrlText"></code></div>'
+      + '<button type="button" id="remoteCopy">Copy URL</button>';
+    const urlEl = body.querySelector('#remoteUrlText');
+    if (urlEl) urlEl.textContent = info.publicUrl;
+    const canvas = body.querySelector('#remoteQrCanvas');
+    if (canvas && window.PafQR) window.PafQR.renderToCanvas(info.publicUrl, canvas, 160);
+    body.querySelector('#remoteGenPass')?.addEventListener('click', async () => {
+      try {
+        const r = await fetch('/api/access/generate', { method: 'POST' });
+        const data = await r.json();
+        if (data.password) alert('Password (shown once): ' + data.password);
+        renderRemoteAccessCard();
+      } catch (e) { alert(e.message || e); }
+    });
+    body.querySelector('#remoteCopy')?.addEventListener('click', async () => {
+      try { await navigator.clipboard.writeText(info.publicUrl); } catch {}
+    });
+  } catch (e) {
+    body.textContent = 'Remote info unavailable: ' + (e.message || e);
+  }
+}
+
 'use strict';
 /**
  * Reference AI panel controller (from Snake Arcade).
@@ -96,7 +159,7 @@ const ai = window.UniversalAI.create({
   onOpen() {
     const ov = document.getElementById('aiOverlay');
     if (ov) ov.hidden = false;
-    setFabVisible(false);
+    setFabVisible(false); try { renderRemoteAccessCard(); } catch (e) { console.warn(e); };
     refreshStatus();
   },
   onActions: executeActions

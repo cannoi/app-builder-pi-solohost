@@ -16,9 +16,15 @@ export function parseGithubRepoUrl(input) {
 }
 
 export function isQuestion(message) {
-  const m = String(message || '').toLowerCase();
-  return /[?]|(làm sao|như thế nào|how (do|to|can|does)|what is|where (is|do)|why |token|hướng dẫn|cách (lấy|tạo|đăng|cài)|giải thích|explain|help me understand)/i.test(m)
-    && !/\b(build|sửa ngay|fix now|chạy ngay|publish now|xuất bản ngay)\b/i.test(m);
+  const m = String(message || '').trim();
+  if (!m) return false;
+  if (/(?:xuất\s*bản\s*ngay|publish\s+now|chạy\s*ngay|sửa\s*ngay|fix\s+now|build\s+now)/iu.test(m)) return false;
+  if (/[?？]/u.test(m)) return true;
+  if (/^(?:làm\s*sao|như\s*thế\s*nào|tại\s*sao|có\s*thể|được\s*không|how\b|why\b|what\b|can\s+i\b)/iu.test(m)) return true;
+  if (/(?:làm\s*sao|như\s*thế\s*nào|tại\s*sao|hướng\s*dẫn|giải\s*thích|how\s+(?:do|to|can|does)|what\s+(?:is|do)|explain)/iu.test(m)) return true;
+  // Vietnamese yes/no questions often end with không / chứ / ạ?
+  if (/(?:có\s*cần|có\s*phải|hay\s*không)\b/iu.test(m) || /\bkhông\s*$/iu.test(m)) return true;
+  return false;
 }
 
 export function splitUserSteps(message) {
@@ -87,28 +93,70 @@ export function formatLayerDiagnosis({ layer, message = '', crash = null, next =
   ].join('\n');
 }
 
-export function inferAction(message) {
-  const m = String(message || '').toLowerCase();
-  if (extractGhcrImage(m) && /(solohost|cài đặt|cai dat|install kit|docker-compose|config_options|file cài|tạo file|tao file|generate)/i.test(m)) return 'export';
-  if (/release blocked|latest saved verification|failed runtime test|tests failed\. tap improve/i.test(m)) return 'run';
-  // Explicit targeted change / create must not be trapped in diagnosis.
-  if (/\b(implement this|add this feature|modify this behavior|change the code|update the application|thêm tính năng|sửa hàm|đổi hành vi)\b/.test(m)
-      && !/\b(github actions|ghcr|solohost|preview|sandbox)\b/.test(m)) return 'improve';
-  if (/\b(tạo app mới|build a new app|create a new app)\b/.test(m)) return 'build';
-  const layer = classifyFailureLayer(m);
-  if (['SOLOHOST', 'GITHUB', 'PREVIEW', 'DOCKER', 'NETWORK'].includes(layer.layer)) return 'analyze';
-  if (layer.layer === 'GENERATED_APP') return 'improve';
-  if (layer.layer === 'UNKNOWN' && layer.codeChange === false && !/\b(bảo mật|security)\b/.test(m)) return 'analyze';
-  if (/(tổng hợp|liệt kê|summary|summarize|list)[\s\S]*(lỗi|error|issue|problem|failure|warning|security)|(lỗi|error|issue|problem|failure)[\s\S]*(tổng hợp|liệt kê|summary|summarize|list)|(diagnose|diagnosis|kiểm tra toàn bộ|check all)/i.test(m)) return 'analyze';
+export function inferAction(message = '', context = {}) {
+  const m = String(message || '').trim();
+  if (!m) return null;
+  const layer = context.layer || {};
+
+  // A1: questions first — never treat as build/publish/export/run
   if (isQuestion(m)) return 'reply';
-  if (/\b(chỉnh sửa|sửa đổi|thay đổi|edit|change|modify|update|customize|customise)\b/.test(m)) return 'improve';
-  if (/\b(lỗi|sự cố|vấn đề|error|failed|failure|unauthorized|forbidden|permission|cannot start|couldn't start|doesn't work|not working|broken|problem|issue|crash|không chạy được|không hoạt động|bị lỗi)\b/.test(m)) return 'improve';
-  if ((/github|ghcr/.test(m) && /xuất|đăng|publish|release|push|upload/.test(m)) || (/solo\s*host/.test(m) && /xuất bản|publish|release|đăng/.test(m))) return 'publish';
-  if (/\b(zip|download|tải về|xuất file|export zip|file cài đặt|install kit)\b/.test(m)) return 'export';
-  if (/\b(chạy app|run the app|preview|test link|mở app|cho tôi link)\b/.test(m)) return 'run';
-  if (/\b(sửa lỗi|hãy sửa|fix (it|the)|crash|không chạy được|không hoạt động|bị lỗi|lỗi|sự cố|vấn đề|error|failed|failure|unauthorized|forbidden|permission|cannot start|couldn't start|doesn't work|not working|broken|registry|pull image)\b/.test(m)) return 'improve';
-  if (/\b(security|bảo mật|quét bảo mật|security scan|fix security|sửa bảo mật|unsafe|vulnerability)\b/.test(m)) return /\b(fix|sửa|repair|remove|khắc phục)\b/.test(m) ? 'improve' : 'analyze';
-  if (/\b(build lại|viết code|scaffold|tạo app|build the app)\b/.test(m)) return 'build';
+
+  const has = (re) => re.test(m);
+
+  // Feature-change verbs + feature nouns → improve (wins over publish/export keywords)
+  const changeVerb = /(?:(?<![\p{L}\p{N}])(?:thêm|đổi|bớt|xoá|xóa|sửa|làm\s*cho|chỉnh\s*sửa|sửa\s*đổi|thay\s*đổi)(?![\p{L}\p{N}])|(?<![\p{L}\p{N}])(?:add|change|remove|make|update|modify|edit)(?![\p{L}\p{N}]))/iu;
+  const featureNoun = /(?:(?<![\p{L}\p{N}])(?:nút|form|trang|màu|nền|đăng\s*nhập|đăng\s*ký|đăng\s*xuất|tính\s*năng|chức\s*năng)(?![\p{L}\p{N}])|(?<![\p{L}\p{N}])(?:button|toggle|page|color|login|signup|sign[\s-]?up|csv|dark\s*mode)(?![\p{L}\p{N}])|tải\s*file|export\s*csv|download\s*file)/iu;
+  if (changeVerb.test(m) && featureNoun.test(m)) return 'improve';
+  if (changeVerb.test(m)) return 'improve';
+
+  // GHCR image + SoloHost install keywords → export
+  if (/ghcr\.io\/[\w.\/\-]+/i.test(m) && /(?:solohost|cài\s*đặt|install\s*kit|docker-compose|config_options|tạo\s*file)/iu.test(m)) {
+    return 'export';
+  }
+
+  // Publish — requires clear object; not đăng nhập/ký/xuất
+  const isAuthWord = /(?:đăng\s*nhập|đăng\s*ký|đăng\s*xuất)/iu.test(m);
+  if (!isAuthWord) {
+    if (has(/(?:xuất\s*bản|(?<![\p{L}\p{N}])publish(?![\p{L}\p{N}]))/iu)) return 'publish';
+    if (has(/(?:đăng)(?![\p{L}\p{N}])/iu) && has(/(?:app|ứng\s*dụng|lên\s*github|lên\s*ghcr|lên\s*solohost)/iu)) return 'publish';
+    if (has(/(?:đẩy|push)/iu) && has(/(?:github|ghcr)/iu)) return 'publish';
+  }
+
+  // Export — needs noun object
+  if (has(/(?:tải|download|export)\s+(?:zip|file\s*zip|bộ\s*cài|install\s*kit|mã\s*nguồn|source)|(?:zip|bộ\s*cài|install\s*kit)\s*(?:tải|download)|xuất\s*file/iu)) {
+    return 'export';
+  }
+
+  // Run / preview
+  if (has(/(?:chạy\s*thử|mở\s*app|run\s*(?:the\s*)?app|preview|test\s*link|open\s*(?:the\s*)?(?:app|preview))/iu)) {
+    return 'run';
+  }
+
+  // Explicit app bug fix
+  if (has(/(?:sửa\s*lỗi|hãy\s*sửa|fix\s+(?:it|the|lỗi)|không\s*lưu\s*được|không\s*chạy\s*được|không\s*hoạt\s*động|bị\s*lỗi|broken|not\s*working|doesn't\s*work|does\s*not\s*work|crash)/iu)) {
+    return 'improve';
+  }
+
+  if (['HOST', 'GITHUB', 'PREVIEW', 'DOCKER', 'NETWORK'].includes(layer.layer)) return 'analyze';
+  if (layer.layer === 'GENERATED_APP') return 'improve';
+
+  if (has(/(?:tổng\s*hợp|liệt\s*kê|summary|summarize|list)[\s\S]{0,40}(?:lỗi|error|issue)|(?:diagnose|diagnosis|kiểm\s*tra\s*toàn\s*bộ|check\s*all)/iu)) {
+    return 'analyze';
+  }
+
+  if (has(/(?:security|bảo\s*mật|vulnerability|quét\s*bảo\s*mật)/iu)) {
+    return has(/(?:fix|sửa|repair|remove|khắc\s*phục)/iu) ? 'improve' : 'analyze';
+  }
+
+  // Build / create — "tạo app tải video" is CREATE not export
+  if (has(/(?:tạo\s*app|build\s*(?:the\s*)?app|scaffold|viết\s*code|build\s*lại)/iu)) {
+    return 'build';
+  }
+
+  if (has(/(?:lỗi|hỏng|sự\s*cố|vấn\s*đề|error|failed|failure|broken|problem|issue)/iu)) {
+    return 'improve';
+  }
+
   return null;
 }
 

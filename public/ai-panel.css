@@ -360,3 +360,6 @@
 #aiFab[hidden] {
   display: none !important;
 }
+.remote-access-card{background:#141b26;border:1px solid #2c3648;border-radius:12px;padding:10px;margin:8px 0}
+.remote-access-card .warn{color:#f0c674}
+.remote-access-card canvas{display:block;margin:8px auto;background:#fff;border-radius:8px}

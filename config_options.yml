@@ -48,3 +48,15 @@ fields:
     type: password
     preserve_if_blank: true
     help: "Required only for GitHub publishing. Keep this token private."
+
+  - name: PUBLIC_URL
+    label: Public URL
+    type: text
+    preserve_if_blank: true
+    help: "Optional public https://host:port so the remote access QR works."
+
+  - name: BUILDER_ACCESS_PASSWORD
+    label: Builder access password
+    type: password
+    preserve_if_blank: true
+    help: "Optional but strongly recommended before using the remote QR."

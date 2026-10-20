@@ -31,7 +31,7 @@ export function loadConfig() {
       enabled: process.env.SHFH_ENABLED !== '0',
     },
     version: packageVersion(),
-    accessPassword: process.env.BUILDER_ACCESS_PASSWORD || process.env.ACCESS_PASSWORD || '',
+    accessPassword: process.env.BUILDER_ACCESS_PASSWORD || process.env.ACCESS_PASSWORD || (function(){try{const p=path.join(process.cwd(),'data','access.json');return JSON.parse(fs.readFileSync(p,'utf8')).password||''}catch{return ''}})(),
     runtime: {
       mode: process.env.PREVIEW_MODE || 'auto',
       podman: { apiUrl: process.env.PODMAN_API_URL || process.env.SANDBOX_PODMAN_API_URL || process.env.CONTAINER_SANDBOX_PODMAN_API_URL || '' },
