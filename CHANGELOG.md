@@ -1,9 +1,10 @@
 # Changelog
 
-## 1.8.9
-- Fix Run / Publish / Donate: Publish uses action publish (full payload); robust click wiring + delegation
-- Raise AI FAB/panel above chat composer so menus stay usable
-- Cache-bust app.js / styles / ai-panel
+## 1.8.10
+- Welcome chat card follows EN/VI language setting (English default)
+- Fix more-menu Undo (rollbackLast) and route all ⋯ items through quick() like v1.7.4
+- Run / Publish / Donate use the same quick() actions as classic data-action buttons
+- i18n for more menu + welcome; language toggle re-renders welcome
 
-## 1.8.8
-- Export languageInstructionFor (startup crash fix)
+## 1.8.9
+- Quick actions wiring and AI FAB position

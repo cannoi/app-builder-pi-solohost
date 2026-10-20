@@ -1,4 +1,19 @@
 const $ = (id) => document.getElementById(id);
+function uiT(key, fallback = '') {
+  try {
+    if (window.pafI18n && typeof window.pafI18n.t === 'function') return window.pafI18n.t(key);
+  } catch {}
+  return fallback || key;
+}
+function uiLocale() {
+  try {
+    if (window.pafI18n && window.pafI18n.locale) return window.pafI18n.locale;
+    const s = localStorage.getItem('paf_locale');
+    if (s === 'vi' || s === 'en') return s;
+  } catch {}
+  return 'en';
+}
+
 const state = { projectId: null, projects: [], busy: false, jobId: null, poll: null, pollFailures: 0, seenEvents: 0, files: [], settings: null, pollInFlight: false, pollInFlightJobId: null, watchSeq: 0, lastNotice: '' };
 
 async function api(url, options = {}) {
@@ -692,6 +707,7 @@ async function quick(action, extraPayload = {}) {
   if (state.busy) return;
   if (action === 'support') return openSupport();
   if (action === 'feedback') return openFeedback();
+  if (action === 'rollback' || action === 'undo') return rollbackLast();
   if (action === 'script-run') return downloadScript('run');
   if (action === 'script-github') return downloadScript('github');
   if (action === 'docker') return inspectDocker();
@@ -713,7 +729,7 @@ async function quick(action, extraPayload = {}) {
     catch (e) { add('ai', e.message); }
     return;
   }
-  if (!state.projectId) { add('ai', 'Start with your app idea in the chat. I’ll create the project first.'); return; }
+  if (!state.projectId) { add('ai', uiT('msg.startIdea', 'Start with your app idea in the chat. I will create the project first.')); return; }
   setBusy(true, `${actionText(action)}…`);
   try {
     let r;
@@ -1242,18 +1258,22 @@ function renderWelcome() {
   chat.innerHTML = '';
   const box = document.createElement('div');
   box.className = 'msg ai welcomeCard';
+  const title = uiT('welcome.title', 'App Builder — Pi SoloHost');
+  const body = uiT('welcome.body', 'Type an idea, paste a GitHub link to upgrade, attach a ZIP, or ask to change a feature. One chat — I route the rest.');
+  const ideaLabel = uiT('welcome.idea', '💡 Sample idea');
+  const ghLabel = uiT('welcome.github', '🔗 Paste GitHub link');
+  const setLabel = uiT('welcome.settings', '⚙ Connect AI');
   box.innerHTML = `
-    <h2>App Builder — Pi SoloHost</h2>
-    <p><strong>EN:</strong> Type an idea, paste a GitHub link to upgrade, attach a ZIP/image, or ask to change a feature. One chat — I route the rest.</p>
-    <p><strong>VI:</strong> Gõ ý tưởng, dán link GitHub để nâng cấp, đính kèm ZIP/ảnh, hoặc nhờ đổi tính năng. Một ô chat — tôi tự phân loại và làm.</p>
+    <h2>${title}</h2>
+    <p>${body}</p>
     <div class="welcomeActions">
-      <button type="button" class="primary" data-welcome="idea">💡 Ý tưởng mẫu / Sample idea</button>
-      <button type="button" data-welcome="github">🔗 Dán link GitHub</button>
-      <button type="button" data-welcome="settings">⚙ Kết nối AI / Connect AI</button>
+      <button type="button" class="primary" data-welcome="idea">${ideaLabel}</button>
+      <button type="button" data-welcome="github">${ghLabel}</button>
+      <button type="button" data-welcome="settings">${setLabel}</button>
     </div>`;
   chat.appendChild(box);
   box.querySelector('[data-welcome="idea"]').onclick = () => {
-    $('message').value = 'Tạo app quản lý bán hàng đơn giản cho cửa hàng nhỏ';
+    $('message').value = uiT('welcome.ideaText', 'Create a simple sales app for a small shop');
     $('message').focus();
   };
   box.querySelector('[data-welcome="github"]').onclick = () => {
@@ -1264,13 +1284,12 @@ function renderWelcome() {
     if (typeof openSettings === 'function') openSettings();
     else $('settings')?.removeAttribute('hidden');
   };
-  // Context chips for new users
   const chip = $('contextChip');
   if (chip) {
     chip.hidden = false;
-    chip.textContent = '💡 Thử: app bán trà sữa';
+    chip.textContent = uiT('welcome.chip', '💡 Try: milk-tea shop app');
     chip.onclick = () => {
-      $('message').value = 'Tạo app bán trà sữa với menu và giỏ hàng';
+      $('message').value = uiT('welcome.chipText', 'Create a milk-tea shop app with menu and cart');
       $('message').focus();
     };
   }
@@ -1288,31 +1307,21 @@ $('moreBtn')?.addEventListener('click', (e) => {
 document.addEventListener('click', () => { const m = $('moreMenu'); if (m) m.hidden = true; });
 $('moreMenu')?.addEventListener('click', (e) => e.stopPropagation());
 document.querySelectorAll('#moreMenu [data-more]').forEach((btn) => {
-  btn.addEventListener('click', async () => {
+  btn.addEventListener('click', async (e) => {
+    e.preventDefault();
+    e.stopPropagation();
     const act = btn.dataset.more;
-    $('moreMenu').hidden = true;
+    const menu = $('moreMenu');
+    if (menu) menu.hidden = true;
     try {
-      if (act === 'export') {
-        if (!state.projectId) return add('ai', 'Open or create an app first / Hãy mở hoặc tạo app trước.');
-        await downloadZip(state.projectId, 'project');
-      } else if (act === 'import') {
-        $('importZipInput')?.click();
-      } else if (act === 'sandbox') {
-        if (typeof startSandboxDemo === 'function') startSandboxDemo();
-        else if (typeof quick === 'function') quick('sandbox');
-      } else if (act === 'script-run') {
-        if (typeof downloadScript === 'function') downloadScript('run');
-        else if (typeof quick === 'function') quick('script-run');
-      } else if (act === 'script-github') {
-        if (typeof downloadScript === 'function') downloadScript('github');
-        else if (typeof quick === 'function') quick('script-github');
-      } else if (act === 'rollback') {
-        if (typeof rollback === 'function') rollback();
-        else if (typeof quick === 'function') quick('rollback');
-      } else if (act === 'support') {
-        if (typeof openSupport === 'function') openSupport();
-        else if (typeof quick === 'function') quick('support');
-      }
+      // Same actions as v1.7.4 data-action buttons (via quick)
+      if (act === 'export') return quick('export');
+      if (act === 'import') return quick('import');
+      if (act === 'sandbox') return quick('sandbox');
+      if (act === 'script-run') return quick('script-run');
+      if (act === 'script-github') return quick('script-github');
+      if (act === 'rollback') return quick('rollback');
+      if (act === 'support') return quick('support');
     } catch (err) {
       add('ai', err.message || String(err));
     }
@@ -1461,44 +1470,43 @@ Promise.all([loadStatus(), loadProjects(), loadSettings(), loadFeedbackConfig()]
 
 /* Language: #langToggle wired in public/i18n.js */
 
-/* Quick actions: Run / Publish / Donate (above chat input) */
+/* Quick actions: Run / Publish / Donate — same semantics as v1.7.4 data-action */
 (function wireQuickActions() {
   function onRun() {
     if (state.busy) return;
-    if (!state.projectId) { add('ai', 'Open or create an app first.'); return; }
+    if (!state.projectId) { add('ai', uiT('msg.needApp', 'Open or create an app first.')); return; }
     quick('run');
   }
   function onPublish() {
     if (state.busy) return;
-    if (!state.projectId) { add('ai', 'Open or create an app first.'); return; }
-    // Must use action "publish" so payload includes approved/confirm/push (not bare /release)
+    if (!state.projectId) { add('ai', uiT('msg.needApp', 'Open or create an app first.')); return; }
     quick('publish', { approved: true, confirm: true, push: true });
   }
   function onDonate() {
-    if (typeof openSupport === 'function') openSupport();
-    else {
-      const fab = document.getElementById('aiFab');
-      fab?.click();
-      setTimeout(() => {
-        document.querySelector('[data-tab="feedback"]')?.click();
-      }, 200);
-    }
+    quick('support');
   }
   const bind = (id, fn) => {
     const el = document.getElementById(id);
     if (!el) return;
-    el.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); fn(); });
+    el.onclick = (e) => { e.preventDefault(); e.stopPropagation(); fn(); };
   };
   bind('btnRun', onRun);
   bind('btnPublish', onPublish);
   bind('btnDonate', onDonate);
-  // Event delegation fallback if buttons are re-rendered
   document.getElementById('quickActions')?.addEventListener('click', (e) => {
     const btn = e.target.closest('button');
-    if (!btn) return;
+    if (!btn || !document.getElementById('quickActions')?.contains(btn)) return;
     if (btn.id === 'btnRun') onRun();
     else if (btn.id === 'btnPublish') onPublish();
     else if (btn.id === 'btnDonate') onDonate();
   });
 })();
+
+/* Re-render welcome when language changes (only on empty chat / no project) */
+window.addEventListener('paf-locale', () => {
+  try {
+    if (!state.projectId) renderWelcome();
+    if (window.pafI18n && typeof window.pafI18n.apply === 'function') window.pafI18n.apply();
+  } catch {}
+});
 

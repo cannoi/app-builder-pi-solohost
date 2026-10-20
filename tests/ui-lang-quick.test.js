@@ -84,3 +84,24 @@ test('remote info uses shared access password flag', () => {
   const src = fs.readFileSync(path.join(root, 'src/api/routes.js'), 'utf8');
   assert.match(src, /passwordEnabled = Boolean\(cfg\.accessPassword\)/);
 });
+
+test('welcome and more-menu i18n keys exist in EN and VI', () => {
+  const src = fs.readFileSync(path.join(root, 'public/i18n.js'), 'utf8');
+  for (const key of ['welcome.title', 'welcome.body', 'welcome.idea', 'more.zip', 'more.rollback', 'qa.run']) {
+    assert.match(src, new RegExp("'" + key.replace('.', '\\.') + "'"));
+  }
+  const app = fs.readFileSync(path.join(root, 'public/app.js'), 'utf8');
+  assert.match(app, /function renderWelcome/);
+  assert.match(app, /uiT\('welcome\.body'/);
+  assert.match(app, /action === 'rollback'/);
+  assert.match(app, /quick\('publish'/);
+  assert.match(app, /quick\('export'\)/);
+  assert.doesNotMatch(app, /typeof rollback === 'function'/);
+});
+
+test('more menu buttons use data-i18n single language labels', () => {
+  const html = fs.readFileSync(path.join(root, 'public/index.html'), 'utf8');
+  assert.match(html, /data-more="export"[^>]*data-i18n="more\.zip"/);
+  assert.match(html, /data-more="rollback"[^>]*data-i18n="more\.rollback"/);
+  assert.doesNotMatch(html, /Tải ZIP \/ Download ZIP/);
+});
