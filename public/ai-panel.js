@@ -25,9 +25,9 @@ async function renderRemoteAccessCard() {
     if (!info.publicUrl) {
       const ip = info.publicIp || '…';
       const port = info.hostPort || 'HOST_PORT';
-      body.innerHTML = '<p class="small">Auto-detect could not build a public link yet.</p>'
-        + '<p class="small">Expected: <code>http://PUBLIC_IP:HOST_PORT</code> (SoloHost assigns HOST_PORT).</p>'
-        + '<p class="small">Detected IP: <code>' + ip + '</code> · Port: <code>' + port + '</code></p>'
+      body.innerHTML = '<p class="small"><strong>One link:</strong> <code>http://PUBLIC_IP:HOST_PORT</code></p>'
+        + '<p class="small">HOST_PORT = port SoloHost published outside the container (not 8080 inside).</p>'
+        + '<p class="small">IP: <code>' + ip + '</code> · Host port: <code>' + port + '</code></p>'
         + '<button type="button" id="remoteRefresh" class="primary">↻ Detect again</button>'
         + '<input id="remoteUrlInput" type="url" placeholder="http://x.x.x.x:18123" style="width:100%;margin-top:8px">'
         + '<button type="button" id="remoteUrlSave">Save URL</button>';

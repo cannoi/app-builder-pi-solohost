@@ -142,3 +142,28 @@ test('resolvePublicUrl auto-builds from detected IP + HOST_PORT', async () => {
     }
   }
 });
+
+test('detectHostPort rejects container port 8080 and builds one public link', async () => {
+  const { detectHostPort, resolvePublicUrl } = await import('../src/remote/info.js');
+  const prev = { ...process.env };
+  delete process.env.HOST_PORT;
+  delete process.env.SOLOHOST_HOST_PORT;
+  delete process.env.PUBLIC_PORT;
+  delete process.env.PUBLIC_URL;
+  process.env.PORT = '8080';
+  try {
+    const hp = detectHostPort({ req: { headers: { host: '127.0.0.1:8080' } }, cfg: { port: 8080 } });
+    assert.equal(hp.port, 0);
+    process.env.PUBLIC_IP = '203.0.113.50';
+    process.env.HOST_PORT = '18201';
+    const r = await resolvePublicUrl({ cfg: {}, req: { headers: { host: '127.0.0.1:8080' } }, dataDir: '/tmp' });
+    assert.equal(r.publicUrl, 'http://203.0.113.50:18201');
+    assert.equal(r.hostPort, 18201);
+    assert.ok(!String(r.publicUrl).endsWith(':8080'));
+  } finally {
+    for (const k of Object.keys(process.env)) {
+      if (!(k in prev)) delete process.env[k];
+    }
+    Object.assign(process.env, prev);
+  }
+});

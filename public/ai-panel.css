@@ -33,7 +33,7 @@
 .ai-fab {
   position: fixed;
   right: max(12px, calc(50% - 190px + 12px));
-  bottom: 148px;
+  bottom: 92px;
   width: 60px;
   height: 60px;
   border-radius: 50%;
@@ -366,16 +366,16 @@
 
 /* AI panel / FAB sit above the chat composer so menus are not covered */
 .ai-fab {
-  bottom: 148px !important;
+  bottom: 92px !important;
   right: 16px !important;
   z-index: 420 !important;
 }
 #ai-panel, .ai-panel-root, .panel.ai-panel {
-  bottom: 148px !important;
+  bottom: 92px !important;
   max-height: min(62vh, 480px) !important;
   z-index: 415 !important;
 }
 @media (max-width: 640px) {
-  .ai-fab { bottom: 168px !important; }
-  #ai-panel, .ai-panel-root, .panel.ai-panel { bottom: 168px !important; max-height: min(55vh, 420px) !important; }
+  .ai-fab { bottom: 108px !important; }
+  #ai-panel, .ai-panel-root, .panel.ai-panel { bottom: 108px !important; max-height: min(55vh, 420px) !important; }
 }

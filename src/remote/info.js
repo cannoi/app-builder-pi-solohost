@@ -109,6 +109,17 @@ export async function detectPublicIp({ dataDir = '', cfg = {} } = {}) {
  * SoloHost-assigned host port for this app (the port on the public IP).
  * Container may listen on 8080 while SoloHost maps e.g. 18144 → 8080.
  */
+/** Container-only ports — never use these as the public SoloHost host port. */
+const INTERNAL_PORTS = new Set([8080, 80, 443, 3000, 5000, 8000, 5173, 4173]);
+
+function isValidExternalPort(n) {
+  return Number.isFinite(n) && n > 0 && n < 65536 && !INTERNAL_PORTS.has(n);
+}
+
+/**
+ * SoloHost-assigned host port (outside the container).
+ * Never returns 8080/PORT inside the container.
+ */
 export function detectHostPort({ req, cfg = {} } = {}) {
   const candidates = [
     process.env.HOST_PORT,
@@ -116,32 +127,30 @@ export function detectHostPort({ req, cfg = {} } = {}) {
     process.env.PUBLIC_PORT,
     process.env.PI_HOST_PORT,
     process.env.SOLOHOST_PORT,
+    process.env.APP_HOST_PORT,
     cfg?.hostPort,
     cfg?.publicPort,
   ];
   for (const c of candidates) {
     const n = Number(c);
-    if (Number.isFinite(n) && n > 0 && n < 65536) return { port: n, source: 'env' };
+    if (isValidExternalPort(n)) return { port: n, source: 'env' };
   }
 
   const xfPort = String(req?.headers?.['x-forwarded-port'] || '').split(',')[0].trim();
   if (/^\d+$/.test(xfPort)) {
     const n = Number(xfPort);
-    if (n > 0 && n < 65536) return { port: n, source: 'forwarded' };
+    // SoloHost reverse-proxy may forward the external port
+    if (isValidExternalPort(n)) return { port: n, source: 'forwarded' };
   }
 
   const hostHeader = String(req?.headers?.['x-forwarded-host'] || req?.headers?.host || '');
   const hostPortMatch = hostHeader.match(/:(\d+)\s*$/);
   if (hostPortMatch && !isLoopbackHost(hostHeader)) {
     const n = Number(hostPortMatch[1]);
-    if (n > 0 && n < 65536) return { port: n, source: 'request' };
+    if (isValidExternalPort(n)) return { port: n, source: 'request' };
   }
 
-  // Last resort: process listen port (often 8080 inside container — weak for public QR)
-  const listen = Number(process.env.PORT || cfg?.port || 0);
-  if (Number.isFinite(listen) && listen > 0 && listen < 65536) {
-    return { port: listen, source: 'listen' };
-  }
+  // Do NOT fall back to process.env.PORT / 8080 — that is the in-container port.
   return { port: 0, source: 'none' };
 }
 
@@ -182,7 +191,8 @@ export async function resolvePublicUrl({ cfg, req, dataDir }) {
   const { ip, source: ipSource } = await detectPublicIp({ dataDir, cfg });
   const { port, source: portSource } = detectHostPort({ req, cfg });
 
-  if (ip && port) {
+  // Single canonical link only: public IP + SoloHost external host port (never container 8080)
+  if (ip && port && !INTERNAL_PORTS.has(port)) {
     return {
       publicUrl: `http://${ip}:${port}`,
       source: 'solohost-auto',
@@ -192,24 +202,17 @@ export async function resolvePublicUrl({ cfg, req, dataDir }) {
       portSource,
     };
   }
-  if (ip) {
-    return {
-      publicUrl: `http://${ip}`,
-      source: 'public_ip',
-      publicIp: ip,
-      hostPort: 0,
-      ipSource,
-      portSource,
-    };
-  }
 
   return {
     publicUrl: '',
     source: 'none',
-    publicIp: '',
-    hostPort: port || 0,
+    publicIp: ip || '',
+    hostPort: (port && !INTERNAL_PORTS.has(port)) ? port : 0,
     ipSource,
     portSource,
+    hint: !ip
+      ? 'public_ip_missing'
+      : (!port || INTERNAL_PORTS.has(port) ? 'host_port_missing' : 'unknown'),
   };
 }
 
