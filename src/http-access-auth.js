@@ -50,10 +50,13 @@ export function accessCookieHeader(token) {
 export function createAccessAuthMiddleware(cfg) {
   return function accessAuth(req, res, next) {
     const path = req.path || req.url || '';
+    // Health must stay open for Docker/SoloHost/GitHub smoke tests even when a password is set.
+    const bare = String(path).split('?')[0];
     if (
-      path === '/api/access/status' || path === '/api/access/login' || path === '/api/access/logout'
-      || path === '/login.html' || path === '/favicon.ico' || path === '/app-logo.jpg'
-      || path === '/made-by.png' || path === '/styles.css'
+      bare === '/health' || bare === '/ready'
+      || bare === '/api/access/status' || bare === '/api/access/login' || bare === '/api/access/logout'
+      || bare === '/login.html' || bare === '/favicon.ico' || bare === '/app-logo.jpg'
+      || bare === '/made-by.png' || bare === '/styles.css'
     ) return next();
     if (isAccessAuthorized(req, cfg)) return next();
     if (String(path).startsWith('/api/')) {

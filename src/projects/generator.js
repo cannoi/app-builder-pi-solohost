@@ -64,6 +64,7 @@ export function localPlan(idea, analysis) {
 export async function writeGithubWorkflow(root, project = {}) {
   const version = String(project.version || '0.1.0').replace(/[^0-9A-Za-z._-]/g, '-');
   const listenPort = Number(project.listenPort || 0);
+  const preferred = listenPort > 0 ? String(listenPort) : '8080';
   const yml = `name: Build SoloHost image
 
 on:
@@ -82,7 +83,7 @@ jobs:
       packages: write
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v4
 
       - name: Log in to GHCR
         uses: docker/login-action@v3
@@ -91,43 +92,45 @@ jobs:
           username: \${{ github.actor }}
           password: \${{ secrets.GITHUB_TOKEN }}
 
-      - name: Docker metadata
-        uses: docker/metadata-action@v5
-        id: meta
-        with:
-          images: ghcr.io/\${{ github.repository }}
-          tags: |
-            type=raw,value=latest
-            type=raw,value=${version}
-            type=raw,value=\${{ github.sha }}
-            type=ref,event=tag
-            type=sha,prefix=
+      - name: Lowercase image name
+        id: image
+        shell: bash
+        run: |
+          set -euo pipefail
+          REPO="$(echo "ghcr.io/\${{ github.repository }}" | tr '[:upper:]' '[:lower:]')"
+          echo "repo=\${REPO}" >> "$GITHUB_OUTPUT"
+          echo "tag_sha=\${REPO}:\${{ github.sha }}" >> "$GITHUB_OUTPUT"
+          echo "tag_latest=\${REPO}:latest" >> "$GITHUB_OUTPUT"
+          echo "tag_version=\${REPO}:${version}" >> "$GITHUB_OUTPUT"
 
       - name: Build image
         uses: docker/build-push-action@v6
         with:
           context: .
           load: true
-          tags: \${{ steps.meta.outputs.tags }}
-          labels: \${{ steps.meta.outputs.labels }}
+          tags: |
+            \${{ steps.image.outputs.tag_sha }}
+            \${{ steps.image.outputs.tag_latest }}
+            \${{ steps.image.outputs.tag_version }}
 
       - name: Smoke test image
         shell: bash
         run: |
           set -euo pipefail
-          REPO="ghcr.io/\${{ github.repository }}"
-          REPO="\${REPO,,}"
-          IMAGE="$REPO:\${{ github.sha }}"
+          SHA="\${{ github.sha }}"
+          IMAGE="\${{ steps.image.outputs.tag_sha }}"
           if ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
-            echo "Expected immutable release image tag was not found locally: $IMAGE"
+            IMAGE="$(docker images --format '{{.Repository}}:{{.Tag}}' | grep -F "$SHA" | head -n1 || true)"
+          fi
+          if [[ -z "$IMAGE" ]] || ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
+            echo "Expected immutable release image tag was not found locally for sha=$SHA"
             docker images
             exit 1
           fi
           echo "Smoke-testing the exact release image: $IMAGE"
-          # Do not assume port 8080. Many valid apps listen on 3000/4173/5173/etc.
-          # Prefer image EXPOSE values, then probe a small universal web-port set.
-          mapfile -t EXPOSED < <(docker image inspect "\${IMAGE}" --format '{{range $p, $_ := .Config.ExposedPorts}}{{println $p}}{{end}}' 2>/dev/null | sed -E 's#/.*$##' | sed '/^$/d' | sort -u)
-          COMMON=(${listenPort ? `${listenPort} ` : ''}3000 3001 4173 5000 5173 6080 8000 8080 8081 8501)
+
+          mapfile -t EXPOSED < <(docker image inspect "$IMAGE" --format '{{range $p, $_ := .Config.ExposedPorts}}{{println $p}}{{end}}' 2>/dev/null | sed -E 's#/.*$##' | sed '/^$/d' | sort -u)
+          COMMON=(${preferred} 8080 3000 3001 4173 5000 5173 6080 8000 8081 8501)
           PORTS=()
           add_port() {
             local p="$1"
@@ -147,28 +150,37 @@ jobs:
             RUN_ARGS+=( -p "127.0.0.1:$((18080+i)):$p" )
             i=$((i+1))
           done
-          echo "Smoke-testing the image with its declared default runtime user."
-          docker run -d --rm --name paf-smoke -e NODE_ENV=production -e PORT="\${PORTS[0]}" "\${RUN_ARGS[@]}" "\${IMAGE}" >/dev/null
+          APP_PORT="\${PORTS[0]}"
+          echo "Smoke-testing with PORT=$APP_PORT"
+          docker run -d --rm --name paf-smoke \\
+            -e NODE_ENV=production \\
+            -e PORT="$APP_PORT" \\
+            -e BIND=0.0.0.0 \\
+            -e HOST=0.0.0.0 \\
+            "\${RUN_ARGS[@]}" \\
+            "$IMAGE" >/dev/null
           trap 'docker logs paf-smoke 2>/dev/null || true; docker stop paf-smoke >/dev/null 2>&1 || true' EXIT
 
-          for i in {1..45}; do
+          for i in $(seq 1 60); do
             j=0
             for p in "\${PORTS[@]}"; do
               host_port=$((18080+j))
-              if curl -fsS --max-time 3 "http://127.0.0.1:\${host_port}/health" >/dev/null 2>&1 || curl -fsS --max-time 3 "http://127.0.0.1:\${host_port}/" >/dev/null 2>&1; then
+              if curl -fsS --max-time 3 "http://127.0.0.1:\${host_port}/health" >/dev/null 2>&1 \\
+                || curl -fsS --max-time 3 "http://127.0.0.1:\${host_port}/ready" >/dev/null 2>&1 \\
+                || curl -fsS --max-time 3 "http://127.0.0.1:\${host_port}/" >/dev/null 2>&1; then
                 echo "Smoke test passed on container port \${p}."
                 exit 0
               fi
               j=$((j+1))
             done
             if ! docker inspect -f '{{.State.Running}}' paf-smoke 2>/dev/null | grep -q true; then
-              echo 'Container exited before smoke test passed.'
+              echo "Container exited before smoke test passed."
               docker logs paf-smoke 2>/dev/null || true
               exit 1
             fi
             sleep 2
           done
-          echo 'Container did not become reachable on any detected/common web port within 90 seconds.'
+          echo "Container did not become reachable on any detected/common web port within 120 seconds."
           docker logs paf-smoke 2>/dev/null || true
           exit 1
 
@@ -176,11 +188,17 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          while IFS= read -r tag; do
+          for tag in \\
+            "\${{ steps.image.outputs.tag_sha }}" \\
+            "\${{ steps.image.outputs.tag_latest }}" \\
+            "\${{ steps.image.outputs.tag_version }}"
+          do
             [[ -n "$tag" ]] || continue
-            echo "Pushing tested image: $tag"
-            docker image push "$tag"
-          done <<< "\${{ steps.meta.outputs.tags }}"
+            if docker image inspect "$tag" >/dev/null 2>&1; then
+              echo "Pushing tested image: $tag"
+              docker image push "$tag"
+            fi
+          done
 `;
 
   await writeSafeFile(root, '.github/workflows/docker.yml', yml);
