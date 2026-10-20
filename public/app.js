@@ -1329,7 +1329,16 @@ document.querySelectorAll('#moreMenu [data-more]').forEach((btn) => {
 });
 
 $('message').addEventListener('keydown', (e) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); handleTextCommand($('message').value.trim()); } });
-document.querySelectorAll('[data-action]').forEach((b) => b.onclick = () => quick(b.dataset.action));
+document.querySelectorAll('[data-action]').forEach((b) => {
+  b.onclick = (e) => {
+    // quickActions handles its own buttons
+    if (b.closest('#quickActions')) return;
+    e.preventDefault();
+    const a = b.dataset.action;
+    if (a === 'publish') quick('publish', { approved: true, confirm: true, push: true });
+    else quick(a);
+  };
+});
 if ($('liveBtn')) $('liveBtn').onclick = () => stopLive();
 $('attachBtn').onclick = () => $('fileInput').click();
 $('fileInput').onchange = () => { state.files.push(...Array.from($('fileInput').files || [])); renderFiles(); $('fileInput').value = ''; };
@@ -1463,50 +1472,62 @@ bindSupport();
 Promise.all([loadStatus(), loadProjects(), loadSettings(), loadFeedbackConfig()]).then(async () => {
   await initFeedbackHub();
   const id = savedProjectId();
+  // Default = New app + welcome guide. Only restore a project if user last had one selected.
   if (id && state.projects.some((p) => p.id === id)) await openProject(id, false);
-  else if (state.projects[0]?.id) await openProject(state.projects[0].id, false);
-  else renderWelcome();
+  else {
+    state.projectId = null;
+    rememberProject(null);
+    if ($('projectSelect')) $('projectSelect').value = '';
+    renderWelcome();
+  }
 }).catch(() => renderWelcome());
 
 /* Language: #langToggle wired in public/i18n.js */
 
-/* Quick actions: Run / Publish / Donate — same semantics as v1.7.4 data-action */
+/* Quick actions — same pattern as v1.7.4 data-action → quick() */
 (function wireQuickActions() {
-  function onRun() {
-    if (state.busy) return;
-    if (!state.projectId) { add('ai', uiT('msg.needApp', 'Open or create an app first.')); return; }
-    quick('run');
-  }
-  function onPublish() {
-    if (state.busy) return;
-    if (!state.projectId) { add('ai', uiT('msg.needApp', 'Open or create an app first.')); return; }
-    quick('publish', { approved: true, confirm: true, push: true });
-  }
-  function onDonate() {
-    quick('support');
-  }
-  const bind = (id, fn) => {
-    const el = document.getElementById(id);
-    if (!el) return;
-    el.onclick = (e) => { e.preventDefault(); e.stopPropagation(); fn(); };
-  };
-  bind('btnRun', onRun);
-  bind('btnPublish', onPublish);
-  bind('btnDonate', onDonate);
-  document.getElementById('quickActions')?.addEventListener('click', (e) => {
-    const btn = e.target.closest('button');
-    if (!btn || !document.getElementById('quickActions')?.contains(btn)) return;
-    if (btn.id === 'btnRun') onRun();
-    else if (btn.id === 'btnPublish') onPublish();
-    else if (btn.id === 'btnDonate') onDonate();
+  const root = document.getElementById('quickActions');
+  if (!root) return;
+  root.addEventListener('click', (e) => {
+    const btn = e.target.closest('button[data-action]');
+    if (!btn || !root.contains(btn)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const action = btn.getAttribute('data-action');
+    if (!action) return;
+    // Allow Run/Publish even if a previous job left busy stuck after cancel
+    if (state.busy && (action === 'run' || action === 'publish')) {
+      // soft unlock if busy bar is hidden (desync)
+      const bar = document.getElementById('busyBar');
+      if (bar && bar.hidden) state.busy = false;
+    }
+    if (state.busy) {
+      add('system', uiT('msg.busy', 'Wait for the current step to finish…'));
+      return;
+    }
+    if (action === 'publish') {
+      if (!state.projectId) { add('ai', uiT('msg.needApp', 'Open or create an app first.')); return; }
+      quick('publish', { approved: true, confirm: true, push: true });
+      return;
+    }
+    if (action === 'run') {
+      if (!state.projectId) { add('ai', uiT('msg.needApp', 'Open or create an app first.')); return; }
+      quick('run');
+      return;
+    }
+    if (action === 'support') {
+      quick('support');
+      return;
+    }
+    quick(action);
   });
 })();
 
-/* Re-render welcome when language changes (only on empty chat / no project) */
 window.addEventListener('paf-locale', () => {
   try {
     if (!state.projectId) renderWelcome();
     if (window.pafI18n && typeof window.pafI18n.apply === 'function') window.pafI18n.apply();
   } catch {}
 });
+
 

@@ -108,14 +108,14 @@
         export: 'more.zip',
         import: 'more.import',
         sandbox: 'more.sandbox',
+        'script-run': 'more.scriptRun',
+        'script-github': 'more.scriptGithub',
+        rollback: 'more.rollback',
         support: 'more.support',
       };
       more.querySelectorAll('[data-more]').forEach((b) => {
         const key = map[b.getAttribute('data-more')];
-        if (key) {
-          const icon = (b.textContent || '').trim().slice(0, 2);
-          b.textContent = (icon.match(/[⬇⬆🧪💛]/) ? icon + ' ' : '') + t(key);
-        }
+        if (key) b.textContent = t(key); // single label (icon already in dictionary string)
       });
     }
   }

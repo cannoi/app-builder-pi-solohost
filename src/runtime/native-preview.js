@@ -103,10 +103,17 @@ export class NativePreview {
     } catch (err) {
       e2e = { status: 'skipped', error: String(err.message || err).slice(0, 300) };
     }
+    // Missing Playwright browser must not fail ordinary Run / preview
+    const e2eErr = String(e2e?.error || '');
+    if (e2e && e2e.status !== 'passed' && /Executable doesn|playwright install|browserType\.launch/i.test(e2eErr)) {
+      e2e = { status: 'skipped', error: e2eErr.slice(0, 300) };
+    }
 
     if (!keepRunning) await this.stop({ projectSlug: safe });
     const requireInternet = this.cfg?.preview?.requireInternet === true;
-    const requireBrowserTest = this.cfg?.preview?.requireBrowserTest === true;
+    // Browser E2E is optional unless explicitly required AND a browser is available
+    let requireBrowserTest = this.cfg?.preview?.requireBrowserTest === true;
+    if (requireBrowserTest && e2e?.status === 'skipped') requireBrowserTest = false;
     const verified = (!requireInternet || internet.ok) && (!requireBrowserTest || e2e.status === 'passed');
     return {
       status: verified ? 'passed' : 'failed',

@@ -105,3 +105,19 @@ test('more menu buttons use data-i18n single language labels', () => {
   assert.match(html, /data-more="rollback"[^>]*data-i18n="more\.rollback"/);
   assert.doesNotMatch(html, /Tải ZIP \/ Download ZIP/);
 });
+
+test('quick action buttons expose data-action like v1.7.4', () => {
+  const html = fs.readFileSync(path.join(root, 'public/index.html'), 'utf8');
+  assert.match(html, /id="btnRun"[^>]*data-action="run"/);
+  assert.match(html, /id="btnPublish"[^>]*data-action="publish"/);
+  assert.match(html, /id="btnDonate"[^>]*data-action="support"/);
+  const app = fs.readFileSync(path.join(root, 'public/app.js'), 'utf8');
+  assert.match(app, /closest\('button\[data-action\]'\)/);
+  assert.match(app, /quick\('publish'/);
+});
+
+test('i18n more-menu apply does not double-prefix icons', () => {
+  const src = fs.readFileSync(path.join(root, 'public/i18n.js'), 'utf8');
+  assert.doesNotMatch(src, /icon\.match\(\/\[⬇⬆/);
+  assert.match(src, /b\.textContent = t\(key\)/);
+});

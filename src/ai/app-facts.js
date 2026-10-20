@@ -9,7 +9,7 @@ function pkg() {
   try {
     return JSON.parse(fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), '../../package.json'), 'utf8'));
   } catch {
-    return { name: 'App Builder', version: '0.0.0' };
+    return { name: 'Quick actions: Run/Publish/Donate use data-action→quick(). Welcome shows on New app. More menu labels single icon. Playwright optional for Run. App Builder', version: '0.0.0' };
   }
 }
 
