@@ -1,9 +1,10 @@
 # Changelog
 
-## 1.8.6
-- Smoke test: native `docker build` (reliable local tags), in-container /health probe, host HTTP any status
-- Universal mount failure no longer blocks HTTP listen
-- actions/checkout@v5
+## 1.8.7
+- Fix container exit on smoke: chown after COPY, DATA_DIR=/app/data, preflight yaml/sqlite/octokit during image build
+- playwright moved to optionalDependencies; Chromium removed from image (E2E optional)
+- docker-entrypoint + src/boot.js so startup crashes always print to logs
+- Smoke prints full container logs + exit code on failure
 
-## 1.8.5
-- Earlier smoke hardening (multi-port, any HTTP code)
+## 1.8.6
+- In-container health probe and native docker build

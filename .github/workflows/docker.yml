@@ -36,7 +36,7 @@ jobs:
           echo "sha=${SHA}" >> "$GITHUB_OUTPUT"
           echo "tag_sha=${REPO}:${SHA}" >> "$GITHUB_OUTPUT"
           echo "tag_latest=${REPO}:latest" >> "$GITHUB_OUTPUT"
-          echo "tag_version=${REPO}:1.8.6" >> "$GITHUB_OUTPUT"
+          echo "tag_version=${REPO}:1.8.7" >> "$GITHUB_OUTPUT"
 
       - name: Build image (docker build)
         shell: bash
@@ -91,11 +91,25 @@ jobs:
             -e BIND=0.0.0.0 \
             -e FACTORY_BIND=0.0.0.0 \
             -e HOST=0.0.0.0 \
+            -e DATA_DIR=/app/data \
             -p 127.0.0.1:18080:8080 \
             "$IMAGE_ID"
 
-          cleanup() { docker logs paf-smoke 2>/dev/null || true; docker rm -f paf-smoke >/dev/null 2>&1 || true; }
+          cleanup() {
+            echo "===== container logs ====="
+            docker logs paf-smoke 2>&1 || true
+            echo "===== container inspect ====="
+            docker inspect paf-smoke --format 'status={{.State.Status}} exit={{.State.ExitCode}} err={{.State.Error}}' 2>&1 || true
+            docker rm -f paf-smoke >/dev/null 2>&1 || true
+          }
           trap cleanup EXIT
+
+          # Give the process a moment to crash-or-listen
+          sleep 3
+          if ! docker inspect -f '{{.State.Running}}' paf-smoke 2>/dev/null | grep -q true; then
+            echo "Container exited before smoke test passed."
+            exit 1
+          fi
 
           # Wait until process listens — probe INSIDE the container first (no publish ambiguity)
           for i in $(seq 1 60); do

@@ -6,7 +6,7 @@
 module.exports = {
   knowledge: `App Builder — Pi SoloHost. Idea → Build → Run → Improve → Publish for Pi SoloHost apps.
 You are App Builder only. Never ask for wallet seeds. Never reveal API/GitHub/feedback tokens. Feedback Hub is built-in.
-Install fields: full|defaults|auth|custom. Validation OK|FAIL|UNREACHABLE. One chat routes CREATE/MODIFY/RUN/PUBLISH/EXPORT/UPGRADE. Medium-risk applies with checkpoint; high risk needs confirm. Remote QR in AI panel. Remote QR in AI panel. Main UI: Run/Publish/Donate above the chat box. Language toggle EN/VI is on the top bar after Settings. GitHub publish smoke accepts any HTTP response on /health|/ready|/; image tag resolved by SHA. Remote QR uses the same BUILDER_ACCESS_PASSWORD as app login; public URL is PUBLIC_IP:SoloHost host port. Always reply in the user's language.`,
+Install fields: full|defaults|auth|custom. Validation OK|FAIL|UNREACHABLE. One chat routes CREATE/MODIFY/RUN/PUBLISH/EXPORT/UPGRADE. Medium-risk applies with checkpoint; high risk needs confirm. Remote QR in AI panel. Remote QR in AI panel. Main UI: Run/Publish/Donate above the chat box. Language toggle EN/VI is on the top bar after Settings. Image start uses docker-entrypoint preflight (yaml/sqlite). GitHub publish smoke accepts any HTTP response on /health|/ready|/; image tag resolved by SHA. Remote QR uses the same BUILDER_ACCESS_PASSWORD as app login; public URL is PUBLIC_IP:SoloHost host port. Always reply in the user's language.`,
 
   actions: [
     { name: 'open_builder_settings', description: 'Open Settings for GitHub and AI.' },
