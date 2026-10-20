@@ -57,8 +57,17 @@
 .welcomeCard p{margin:6px 0;opacity:.9;line-height:1.45}
 .welcomeCard .welcomeActions{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}
 
-.quickActions{display:flex;gap:8px;flex-wrap:wrap;padding:0 2px 8px;align-items:center}
-.quickActions .qaBtn{background:#252d38;color:var(--text);border:1px solid var(--line);border-radius:12px;padding:9px 12px;font-size:.85rem;font-weight:600}
-.quickActions .qaBtn.primary{background:var(--accent);color:#fff;border-color:transparent}
+
+
+
 .langToggle{min-width:40px;font-weight:700;letter-spacing:.02em}
 .topRight{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+
+
+/* Quick actions must stay clickable above chat */
+.quickActions{position:relative;z-index:30;display:flex;gap:8px;flex-wrap:wrap;padding:0 2px 8px;align-items:center;pointer-events:auto}
+.quickActions .qaBtn{background:#252d38;color:var(--text);border:1px solid var(--line);border-radius:12px;padding:9px 12px;font-size:.85rem;font-weight:600;cursor:pointer;pointer-events:auto;-webkit-tap-highlight-color:transparent}
+.quickActions .qaBtn:active{transform:scale(0.98)}
+.quickActions .qaBtn.primary{background:var(--accent);color:#fff;border-color:transparent}
+.quickActions .qaBtn:disabled{opacity:.5;cursor:not-allowed}
+.composer{position:relative;z-index:25}

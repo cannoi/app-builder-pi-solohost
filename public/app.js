@@ -717,7 +717,8 @@ async function quick(action, extraPayload = {}) {
   setBusy(true, `${actionText(action)}…`);
   try {
     let r;
-    if (action === 'publish') {
+    if (action === 'release') action = 'publish';
+  if (action === 'publish') {
       const checkOnly = extraPayload.verifyImage === true || extraPayload.recheck === true;
       r = await api(`/api/projects/${state.projectId}/release`, { method: 'POST', body: JSON.stringify({
         approved: true,
@@ -1460,21 +1461,44 @@ Promise.all([loadStatus(), loadProjects(), loadSettings(), loadFeedbackConfig()]
 
 /* Language: #langToggle wired in public/i18n.js */
 
-/* Quick actions restored */
-document.getElementById('btnRun')?.addEventListener('click', () => {
-  if (state.busy) return;
-  if (!state.projectId) { add('ai', 'Open or create an app first.'); return; }
-  quick('run');
-});
-document.getElementById('btnPublish')?.addEventListener('click', () => {
-  if (state.busy) return;
-  if (!state.projectId) { add('ai', 'Open or create an app first.'); return; }
-  quick('release', { approved: true, confirm: true, push: true });
-});
-document.getElementById('btnDonate')?.addEventListener('click', () => {
-  const fab = document.getElementById('aiFab');
-  fab?.click();
-  setTimeout(() => {
-    document.querySelector('[data-tab="feedback"]')?.click();
-  }, 200);
-});
+/* Quick actions: Run / Publish / Donate (above chat input) */
+(function wireQuickActions() {
+  function onRun() {
+    if (state.busy) return;
+    if (!state.projectId) { add('ai', 'Open or create an app first.'); return; }
+    quick('run');
+  }
+  function onPublish() {
+    if (state.busy) return;
+    if (!state.projectId) { add('ai', 'Open or create an app first.'); return; }
+    // Must use action "publish" so payload includes approved/confirm/push (not bare /release)
+    quick('publish', { approved: true, confirm: true, push: true });
+  }
+  function onDonate() {
+    if (typeof openSupport === 'function') openSupport();
+    else {
+      const fab = document.getElementById('aiFab');
+      fab?.click();
+      setTimeout(() => {
+        document.querySelector('[data-tab="feedback"]')?.click();
+      }, 200);
+    }
+  }
+  const bind = (id, fn) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); fn(); });
+  };
+  bind('btnRun', onRun);
+  bind('btnPublish', onPublish);
+  bind('btnDonate', onDonate);
+  // Event delegation fallback if buttons are re-rendered
+  document.getElementById('quickActions')?.addEventListener('click', (e) => {
+    const btn = e.target.closest('button');
+    if (!btn) return;
+    if (btn.id === 'btnRun') onRun();
+    else if (btn.id === 'btnPublish') onPublish();
+    else if (btn.id === 'btnDonate') onDonate();
+  });
+})();
+

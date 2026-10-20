@@ -33,7 +33,7 @@
 .ai-fab {
   position: fixed;
   right: max(12px, calc(50% - 190px + 12px));
-  bottom: 20px;
+  bottom: 148px;
   width: 60px;
   height: 60px;
   border-radius: 50%;
@@ -363,3 +363,19 @@
 .remote-access-card{background:#141b26;border:1px solid #2c3648;border-radius:12px;padding:10px;margin:8px 0}
 .remote-access-card .warn{color:#f0c674}
 .remote-access-card canvas{display:block;margin:8px auto;background:#fff;border-radius:8px}
+
+/* AI panel / FAB sit above the chat composer so menus are not covered */
+.ai-fab {
+  bottom: 148px !important;
+  right: 16px !important;
+  z-index: 420 !important;
+}
+#ai-panel, .ai-panel-root, .panel.ai-panel {
+  bottom: 148px !important;
+  max-height: min(62vh, 480px) !important;
+  z-index: 415 !important;
+}
+@media (max-width: 640px) {
+  .ai-fab { bottom: 168px !important; }
+  #ai-panel, .ai-panel-root, .panel.ai-panel { bottom: 168px !important; max-height: min(55vh, 420px) !important; }
+}

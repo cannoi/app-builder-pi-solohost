@@ -36,7 +36,7 @@ jobs:
           echo "sha=${SHA}" >> "$GITHUB_OUTPUT"
           echo "tag_sha=${REPO}:${SHA}" >> "$GITHUB_OUTPUT"
           echo "tag_latest=${REPO}:latest" >> "$GITHUB_OUTPUT"
-          echo "tag_version=${REPO}:1.8.7" >> "$GITHUB_OUTPUT"
+          echo "tag_version=${REPO}:1.8.9" >> "$GITHUB_OUTPUT"
 
       - name: Build image (docker build)
         shell: bash
