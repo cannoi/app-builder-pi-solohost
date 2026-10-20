@@ -186,7 +186,7 @@ function mountAIRoutes(router, ai, opts = {}) {
           // Keep system prompt small for fast panel replies (coding tasks use full Builder prompts).
           let knowledge = String((adapter && adapter.knowledge) ||
             'App Builder — Pi SoloHost. Help Build/Run/Publish. Reply in user language. Be short.').trim();
-          if (knowledge.length > 900) knowledge = knowledge.slice(0, 900);
+          if (knowledge.length > 2500) knowledge = knowledge.slice(0, 2500);
           const hist = Array.isArray(b.history) ? b.history.slice(-4) : [];
           const histText = hist
             .map((h) => `${h.role || 'user'}: ${String(h.content || '').slice(0, 500)}`)

@@ -1,3 +1,16 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+function packageVersion() {
+  try {
+    const pkgPath = path.join(path.dirname(fileURLToPath(import.meta.url)), '../../package.json');
+    return JSON.parse(fs.readFileSync(pkgPath, 'utf8')).version || '0.0.0';
+  } catch {
+    return '0.0.0';
+  }
+}
+
 export function loadConfig() {
   const config = {
     port: Number(process.env.PORT || 8080),
@@ -17,7 +30,7 @@ export function loadConfig() {
       ingestToken: process.env.SHFH_INGEST_TOKEN || '',
       enabled: process.env.SHFH_ENABLED !== '0',
     },
-    version: '1.7.1',
+    version: packageVersion(),
     accessPassword: process.env.BUILDER_ACCESS_PASSWORD || process.env.ACCESS_PASSWORD || '',
     runtime: {
       mode: process.env.PREVIEW_MODE || 'auto',

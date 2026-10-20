@@ -166,24 +166,33 @@ document.getElementById('aiSend')?.addEventListener('click', sendAI);
 aiInput?.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); sendAI(); } });
 
 async function loadLogs() {
-  const view = document.getElementById('logsView');
+  const view = document.getElementById('logsView') || document.getElementById('logOut');
   if (!view) return;
   view.textContent = 'Loading unified Builder log…';
   try {
-    const [logResponse, jobResponse] = await Promise.all([
-      fetch('/api/logs'),
-      fetch('/api/activity/unified?limit=80')
+    const qs = window.__pafProjectId ? `?projectId=${encodeURIComponent(window.__pafProjectId)}&limit=120` : '?limit=120';
+    const [uni, global] = await Promise.all([
+      fetch('/api/activity/unified' + qs).then((r) => r.json()).catch(() => ({ entries: [] })),
+      fetch('/api/activity/global' + qs).then((r) => r.json()).catch(() => ({ jobs: [], activity: [] })),
     ]);
-    if (!logResponse.ok || !jobResponse.ok) throw new Error('Could not load all Builder logs.');
-    const [logData, jobData] = await Promise.all([logResponse.json(), jobResponse.json()]);
     const rows = [];
-    for (const entry of (jobData.entries || [])) rows.push({ ts: entry.ts || '', level: entry.level || 'task', msg: entry.msg || '' });
-    for (const entry of (logData.logs || [])) rows.push({ ts: entry.ts || '', level: entry.level || 'info', msg: entry.msg || '' });
+    for (const e of (uni.entries || [])) {
+      rows.push({ ts: e.ts || '', level: e.level || 'task', msg: e.msg || '' });
+    }
+    for (const j of (global.jobs || [])) {
+      rows.push({
+        ts: j.created_at || j.updated_at || '',
+        level: j.error ? 'error' : 'task',
+        msg: `${j.type || 'job'} · ${j.status || ''} · ${j.stage || ''}${j.error ? ' · ' + String(j.error).slice(0, 400) : ''}`,
+      });
+    }
+    for (const a of (global.activity || [])) {
+      rows.push({ ts: a.t || a.ts || '', level: a.status === 'error' ? 'error' : 'info', msg: `${a.action || ''} · ${a.detail || ''}`.trim() });
+    }
     rows.sort((a, b) => String(a.ts).localeCompare(String(b.ts)));
-    view.textContent = rows.slice(-200).map(row => `${row.ts} [${String(row.level).toUpperCase()}] ${row.msg}`).join('\n') || '(no Builder activity yet)';
-    view.scrollTop = view.scrollHeight;
-  } catch (e) {
-    view.textContent = `Log unavailable: ${e.message || e}`;
+    view.textContent = rows.slice(-300).map((row) => `${row.ts} [${String(row.level).toUpperCase()}] ${row.msg}`).join('\n') || '(no Builder activity yet)';
+  } catch (err) {
+    view.textContent = 'Could not load logs: ' + (err.message || err);
   }
 }
 document.getElementById('logsRefresh')?.addEventListener('click', loadLogs);

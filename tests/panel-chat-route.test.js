@@ -21,5 +21,5 @@ test('Panel knowledge stays short', async () => {
   const adapter = await fs.readFile(new URL('../src/lib/app-adapter.cjs', import.meta.url), 'utf8');
   const m = adapter.match(/knowledge:\s*`([\s\S]*?)`/);
   assert.ok(m);
-  assert.ok(m[1].length < 900, `knowledge too long: ${m[1].length}`);
+  assert.ok(m[1].length < 2500, `knowledge too long: ${m[1].length}`);
 });

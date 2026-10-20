@@ -72,13 +72,8 @@ const vi = {
   'solohost.fields.mode_custom': 'Tùy chọn',
 };
 
-const es = { 'solohost.kit.title': 'Kit de instalación SoloHost', 'solohost.kit.copy': 'Copiar' };
-const fr = { 'solohost.kit.title': 'Kit d’installation SoloHost', 'solohost.kit.copy': 'Copier' };
-const de = { 'solohost.kit.title': 'SoloHost-Installationskit', 'solohost.kit.copy': 'Kopieren' };
-const pt = { 'solohost.kit.title': 'Kit de instalação SoloHost', 'solohost.kit.copy': 'Copiar' };
-const id = { 'solohost.kit.title': 'Kit instalasi SoloHost', 'solohost.kit.copy': 'Salin' };
 
-const catalogs = { en, vi, es, fr, de, pt, id };
+const catalogs = { en, vi };
 
 function format(str, params = {}) {
   return String(str).replace(/\{(\w+)\}/g, (_, k) => (params[k] != null ? String(params[k]) : `{${k}}`));
