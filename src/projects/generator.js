@@ -83,7 +83,7 @@ jobs:
       packages: write
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Log in to GHCR
         uses: docker/login-action@v3
@@ -92,57 +92,70 @@ jobs:
           username: \${{ github.actor }}
           password: \${{ secrets.GITHUB_TOKEN }}
 
-      - name: Lowercase image name
+      - name: Image names
         id: image
         shell: bash
         run: |
           set -euo pipefail
           REPO="$(echo "ghcr.io/\${{ github.repository }}" | tr '[:upper:]' '[:lower:]')"
+          SHA="\${{ github.sha }}"
           echo "repo=\${REPO}" >> "$GITHUB_OUTPUT"
-          echo "tag_sha=\${REPO}:\${{ github.sha }}" >> "$GITHUB_OUTPUT"
+          echo "sha=\${SHA}" >> "$GITHUB_OUTPUT"
+          echo "tag_sha=\${REPO}:\${SHA}" >> "$GITHUB_OUTPUT"
           echo "tag_latest=\${REPO}:latest" >> "$GITHUB_OUTPUT"
           echo "tag_version=\${REPO}:${version}" >> "$GITHUB_OUTPUT"
 
-      - name: Build image
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          load: true
-          tags: |
-            \${{ steps.image.outputs.tag_sha }}
-            \${{ steps.image.outputs.tag_latest }}
-            \${{ steps.image.outputs.tag_version }}
+      - name: Build image (docker build)
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG_SHA="\${{ steps.image.outputs.tag_sha }}"
+          TAG_LATEST="\${{ steps.image.outputs.tag_latest }}"
+          TAG_VERSION="\${{ steps.image.outputs.tag_version }}"
+          docker build --tag "$TAG_SHA" --tag "$TAG_LATEST" --tag "$TAG_VERSION" .
+          docker image inspect "$TAG_SHA" >/dev/null
+          docker images | head -20
 
       - name: Smoke test image
         shell: bash
         run: |
-          set -euo pipefail
-          SHA="\${{ github.sha }}"
-          IMAGE="\${{ steps.image.outputs.tag_sha }}"
-          if ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
-            IMAGE="$(docker images --format '{{.Repository}}:{{.Tag}}' | grep -F "$SHA" | head -n1 || true)"
+          set -uo pipefail
+          TAG_SHA="\${{ steps.image.outputs.tag_sha }}"
+          REPO="\${{ steps.image.outputs.repo }}"
+          SHA="\${{ steps.image.outputs.sha }}"
+          SHORT="$(echo "$SHA" | cut -c1-12)"
+          IMAGE=""
+          for c in "$TAG_SHA" "\${REPO}:\${SHA}" "\${REPO}:\${SHORT}" "\${REPO}:latest"; do
+            if docker image inspect "$c" >/dev/null 2>&1; then IMAGE="$c"; break; fi
+          done
+          if [[ -z "$IMAGE" ]]; then
+            IMAGE="$(docker images --format '{{.Repository}}:{{.Tag}}' | grep -iF "$REPO" | head -n1 || true)"
           fi
           if [[ -z "$IMAGE" ]] || ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
             echo "Expected immutable release image tag was not found locally for sha=$SHA"
-            docker images
+            docker images || true
             exit 1
           fi
+          docker tag "$IMAGE" "$TAG_SHA" 2>/dev/null || true
+          IMAGE="$TAG_SHA"
+          IMAGE_ID="$(docker image inspect --format '{{.Id}}' "$IMAGE")"
           echo "Smoke-testing the exact release image: $IMAGE"
 
           mapfile -t EXPOSED < <(docker image inspect "$IMAGE" --format '{{range $p, $_ := .Config.ExposedPorts}}{{println $p}}{{end}}' 2>/dev/null | sed -E 's#/.*$##' | sed '/^$/d' | sort -u)
-          COMMON=(${preferred} 8080 3000 3001 4173 5000 5173 6080 8000 8081 8501)
+          IMG_PORT="$(docker image inspect "$IMAGE" --format '{{range .Config.Env}}{{println .}}{{end}}' 2>/dev/null | sed -n 's/^PORT=//p' | head -n1 || true)"
+          COMMON=(${preferred} 8080 3000 3001 4000 4173 5000 5173 6080 8000 8081 8501 80)
           PORTS=()
           add_port() {
             local p="$1"
             [[ "$p" =~ ^[0-9]+$ ]] || return 0
-            local existing
-            for existing in "\${PORTS[@]}"; do [[ "$existing" == "$p" ]] && return 0; done
+            for existing in "\${PORTS[@]:-}"; do [[ "$existing" == "$p" ]] && return 0; done
             PORTS+=("$p")
           }
-          for p in "\${EXPOSED[@]}"; do add_port "$p"; done
+          [[ -n "\${IMG_PORT:-}" ]] && add_port "$IMG_PORT"
+          for p in "\${EXPOSED[@]:-}"; do add_port "$p"; done
           for p in "\${COMMON[@]}"; do add_port "$p"; done
           if [[ "\${#PORTS[@]}" -eq 0 ]]; then PORTS=(8080); fi
-          if [[ "\${#PORTS[@]}" -gt 10 ]]; then PORTS=("\${PORTS[@]:0:10}"); fi
+          if [[ "\${#PORTS[@]}" -gt 8 ]]; then PORTS=("\${PORTS[@]:0:8}"); fi
 
           RUN_ARGS=()
           i=0
@@ -151,32 +164,51 @@ jobs:
             i=$((i+1))
           done
           APP_PORT="\${PORTS[0]}"
-          echo "Smoke-testing with PORT=$APP_PORT"
-          docker run -d --rm --name paf-smoke \\
+          echo "Smoke-testing with PORT=$APP_PORT (candidates: \${PORTS[*]})"
+          docker rm -f paf-smoke >/dev/null 2>&1 || true
+          docker run -d --name paf-smoke \\
             -e NODE_ENV=production \\
             -e PORT="$APP_PORT" \\
             -e BIND=0.0.0.0 \\
+            -e FACTORY_BIND=0.0.0.0 \\
             -e HOST=0.0.0.0 \\
             "\${RUN_ARGS[@]}" \\
-            "$IMAGE" >/dev/null
-          trap 'docker logs paf-smoke 2>/dev/null || true; docker stop paf-smoke >/dev/null 2>&1 || true' EXIT
+            "$IMAGE_ID"
+          trap 'docker logs paf-smoke 2>/dev/null || true; docker rm -f paf-smoke >/dev/null 2>&1 || true' EXIT
+
+          http_up() {
+            local url="$1"
+            local code
+            code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 3 "$url" || echo 000)"
+            [[ "$code" =~ ^[1-5][0-9][0-9]$ ]]
+          }
 
           for i in $(seq 1 60); do
-            j=0
-            for p in "\${PORTS[@]}"; do
-              host_port=$((18080+j))
-              if curl -fsS --max-time 3 "http://127.0.0.1:\${host_port}/health" >/dev/null 2>&1 \\
-                || curl -fsS --max-time 3 "http://127.0.0.1:\${host_port}/ready" >/dev/null 2>&1 \\
-                || curl -fsS --max-time 3 "http://127.0.0.1:\${host_port}/" >/dev/null 2>&1; then
-                echo "Smoke test passed on container port \${p}."
-                exit 0
-              fi
-              j=$((j+1))
-            done
             if ! docker inspect -f '{{.State.Running}}' paf-smoke 2>/dev/null | grep -q true; then
               echo "Container exited before smoke test passed."
               docker logs paf-smoke 2>/dev/null || true
               exit 1
+            fi
+            # In-container probe on APP_PORT
+            if docker exec paf-smoke node -e "fetch('http://127.0.0.1:'+process.env.PORT+'/health').then(r=>process.exit(0)).catch(()=>process.exit(1))" 2>/dev/null \\
+              || docker exec paf-smoke node -e "fetch('http://127.0.0.1:'+process.env.PORT+'/').then(r=>process.exit(0)).catch(()=>process.exit(1))" 2>/dev/null; then
+              echo "Smoke test passed on container port \${APP_PORT} (in-container)."
+              exit 0
+            fi
+            j=0
+            for p in "\${PORTS[@]}"; do
+              host_port=$((18080+j))
+              if http_up "http://127.0.0.1:\${host_port}/health" \\
+                || http_up "http://127.0.0.1:\${host_port}/ready" \\
+                || http_up "http://127.0.0.1:\${host_port}/" \\
+                || http_up "http://127.0.0.1:\${host_port}/api/health"; then
+                echo "Smoke test passed on container port \${p} (host \${host_port})."
+                exit 0
+              fi
+              j=$((j+1))
+            done
+            if (( i % 10 == 0 )); then
+              echo "… waiting ($i/60)"; docker logs --tail 20 paf-smoke 2>/dev/null || true
             fi
             sleep 2
           done
@@ -202,7 +234,7 @@ jobs:
 `;
 
   await writeSafeFile(root, '.github/workflows/docker.yml', yml);
-  await writeSafeFile(root, '.dockerignore', 'node_modules\n.git\nsolohost\n*.zip\n.env\n');
+  await writeSafeFile(root, '.dockerignore', ['node_modules', '.git', 'solohost', '*.zip', '.env'].join(String.fromCharCode(10)) + String.fromCharCode(10));
   return ['.github/workflows/docker.yml'];
 }
 

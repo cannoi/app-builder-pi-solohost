@@ -20,6 +20,9 @@ COPY README.md INSTALL.md CHANGELOG.md ./
 
 LABEL org.opencontainers.image.source="https://github.com/cannoi/app-builder-pi-solohost"
 
+ENV PORT=8080
+ENV BIND=0.0.0.0
+ENV FACTORY_BIND=0.0.0.0
 USER node
 EXPOSE 8080
 

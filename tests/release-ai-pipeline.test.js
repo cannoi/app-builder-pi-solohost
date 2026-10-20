@@ -17,7 +17,7 @@ test('GitHub workflow smoke test probes common web ports and pushes the tested i
   assert.match(yml, /8080/);
   assert.match(yml, /Smoke test passed on container port/);
   assert.match(yml, /Smoke-testing with PORT=/);
-  assert.match(yml, /Lowercase image name/);
+  assert.match(yml, /Image names|Lowercase image name/);
   assert.match(yml, /tr '\[:upper:\]' '\[:lower:\]'/);
   assert.doesNotMatch(yml, /docker run[^\n]*--user 0/);
   assert.match(yml, /docker image push/);
@@ -162,7 +162,8 @@ test('GitHub workflow publishes a full immutable commit SHA tag', async () => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'paf-workflow-sha-'));
   await writeGithubWorkflow(dir, { version: '1.4.48' });
   const yml = await fs.readFile(path.join(dir, '.github/workflows/docker.yml'), 'utf8');
-  assert.match(yml, /tag_sha=.*github\.sha/);
+  assert.match(yml, /github\.sha/);
+  assert.match(yml, /tag_sha=/);
   assert.match(yml, /steps\.image\.outputs\.tag_sha/);
   assert.match(yml, /github\.sha/);
   assert.doesNotMatch(yml, /tagging fallback/);

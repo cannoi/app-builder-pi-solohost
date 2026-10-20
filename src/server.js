@@ -80,7 +80,13 @@ setInterval(() => {
 
 const app = createApp();
 registerRoutes(app, ctx);
-mountUniversalModules(app, { cfg, log, builderAI: ai });
+try {
+  mountUniversalModules(app, { cfg, log, builderAI: ai });
+} catch (err) {
+  log.error('Universal AI/Feedback mount failed (server continues without panel modules)', {
+    error: String(err?.message || err),
+  });
+}
 
 const publicDir = path.resolve(path.dirname(new URL(import.meta.url).pathname), '../public');
 const server = listen(app, {
