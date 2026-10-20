@@ -1,6 +1,6 @@
 services:
   app-builder:
-    image: ghcr.io/cannoi/app-builder-pi-solohost:1.8.12
+    image: ghcr.io/cannoi/app-builder-pi-solohost:1.8.13
     restart: unless-stopped
     labels:
       pi.ui.primary: "true"
@@ -14,6 +14,9 @@ services:
       GITHUB_TOKEN: "${GITHUB_TOKEN}"
       PREVIEW_MODE: "${PREVIEW_MODE}"
       PUBLIC_URL: "${PUBLIC_URL}"
+      PUBLIC_IP: "${PUBLIC_IP}"
+      HOST_PORT: "${HOST_PORT}"
+      SOLOHOST_HOST_PORT: "${SOLOHOST_HOST_PORT}"
       BUILDER_ACCESS_PASSWORD: "${BUILDER_ACCESS_PASSWORD}"
       PREVIEW_ONLINE: "true"
     volumes:

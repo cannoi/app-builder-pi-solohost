@@ -72,7 +72,7 @@ test('remote URL can use SoloHost PUBLIC_IP + HOST_PORT', async () => {
   try {
     const r = await resolvePublicUrl({ cfg: {}, req: { headers: { host: '127.0.0.1:8080' } }, dataDir: '/tmp' });
     assert.equal(r.publicUrl, 'http://203.0.113.9:18781');
-    assert.equal(r.source, 'solohost');
+    assert.ok(['solohost', 'solohost-auto'].includes(r.source));
   } finally {
     process.env.PUBLIC_URL = prev.PUBLIC_URL;
     process.env.PUBLIC_IP = prev.PUBLIC_IP;
@@ -120,4 +120,25 @@ test('i18n more-menu apply does not double-prefix icons', () => {
   const src = fs.readFileSync(path.join(root, 'public/i18n.js'), 'utf8');
   assert.doesNotMatch(src, /icon\.match\(\/\[⬇⬆/);
   assert.match(src, /b\.textContent = t\(key\)/);
+});
+
+test('resolvePublicUrl auto-builds from detected IP + HOST_PORT', async () => {
+  const { resolvePublicUrl, detectHostPort } = await import('../src/remote/info.js');
+  const prev = { ...process.env };
+  process.env.PUBLIC_IP = '198.51.100.20';
+  process.env.HOST_PORT = '18144';
+  delete process.env.PUBLIC_URL;
+  try {
+    const r = await resolvePublicUrl({ cfg: {}, req: { headers: { host: '127.0.0.1:8080' } }, dataDir: '/tmp' });
+    assert.equal(r.publicUrl, 'http://198.51.100.20:18144');
+    assert.ok(['solohost', 'solohost-auto'].includes(r.source));
+    assert.equal(r.hostPort, 18144);
+    const hp = detectHostPort({ req: { headers: { host: '127.0.0.1:8080' } }, cfg: {} });
+    assert.equal(hp.port, 18144);
+  } finally {
+    for (const k of ['PUBLIC_IP', 'HOST_PORT', 'PUBLIC_URL']) {
+      if (prev[k] == null) delete process.env[k];
+      else process.env[k] = prev[k];
+    }
+  }
 });

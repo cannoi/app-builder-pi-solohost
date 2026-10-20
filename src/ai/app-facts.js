@@ -1,3 +1,4 @@
+Remote QR auto-detects public IP and SoloHost HOST_PORT (http://IP:PORT); PUBLIC_URL overrides.
 /**
  * Single source of app facts for Panel + Builder AI knowledge.
  */

@@ -53,7 +53,19 @@ fields:
     label: Public URL
     type: text
     preserve_if_blank: true
-    help: "Optional public https://host:port so the remote access QR works."
+    help: "Optional full public URL. Leave blank to auto-detect PUBLIC_IP + SoloHost HOST_PORT for QR."
+
+  - name: PUBLIC_IP
+    label: Public IP
+    type: text
+    preserve_if_blank: true
+    help: "Optional. Leave blank: Builder discovers the public IP automatically."
+
+  - name: HOST_PORT
+    label: SoloHost host port
+    type: number
+    preserve_if_blank: true
+    help: "Port SoloHost published for this app (not the container 8080). Auto-read from HOST_PORT when set by SoloHost."
 
   - name: BUILDER_ACCESS_PASSWORD
     label: Builder access password

@@ -23,9 +23,18 @@ async function renderRemoteAccessCard() {
   try {
     const info = await fetch('/api/remote/info').then((r) => r.json());
     if (!info.publicUrl) {
-      body.innerHTML = '<p class="small">Public URL = http://PUBLIC_IP:HOST_PORT (SoloHost port) so phones can open Builder.</p>'
-        + '<input id="remoteUrlInput" type="url" placeholder="https://example.com:8080" style="width:100%">'
-        + '<button type="button" id="remoteUrlSave" class="primary">Save URL</button>';
+      const ip = info.publicIp || '…';
+      const port = info.hostPort || 'HOST_PORT';
+      body.innerHTML = '<p class="small">Auto-detect could not build a public link yet.</p>'
+        + '<p class="small">Expected: <code>http://PUBLIC_IP:HOST_PORT</code> (SoloHost assigns HOST_PORT).</p>'
+        + '<p class="small">Detected IP: <code>' + ip + '</code> · Port: <code>' + port + '</code></p>'
+        + '<button type="button" id="remoteRefresh" class="primary">↻ Detect again</button>'
+        + '<input id="remoteUrlInput" type="url" placeholder="http://x.x.x.x:18123" style="width:100%;margin-top:8px">'
+        + '<button type="button" id="remoteUrlSave">Save URL</button>';
+      body.querySelector('#remoteRefresh')?.addEventListener('click', async () => {
+        await fetch('/api/remote/info?refresh=1');
+        renderRemoteAccessCard();
+      });
       body.querySelector('#remoteUrlSave')?.addEventListener('click', async () => {
         const url = body.querySelector('#remoteUrlInput')?.value?.trim();
         if (!url) return;
@@ -43,6 +52,21 @@ async function renderRemoteAccessCard() {
       + '<button type="button" id="remoteCopy">Copy URL</button>';
     const urlEl = body.querySelector('#remoteUrlText');
     if (urlEl) urlEl.textContent = info.publicUrl;
+    const meta = document.createElement('p');
+    meta.className = 'small';
+    meta.textContent = (info.source === 'solohost-auto' || info.source === 'solohost')
+      ? ('Auto: ' + (info.publicIp || '') + ':' + (info.hostPort || '') + ' (' + (info.source || '') + ')')
+      : ('Source: ' + (info.source || ''));
+    body.appendChild(meta);
+    const refreshBtn = document.createElement('button');
+    refreshBtn.type = 'button';
+    refreshBtn.id = 'remoteRefreshOk';
+    refreshBtn.textContent = '↻ Refresh';
+    refreshBtn.addEventListener('click', async () => {
+      await fetch('/api/remote/info?refresh=1');
+      renderRemoteAccessCard();
+    });
+    body.appendChild(refreshBtn);
     const canvas = body.querySelector('#remoteQrCanvas');
     if (canvas && window.PafQR) window.PafQR.renderToCanvas(info.publicUrl, canvas, 160);
     body.querySelector('#remoteGenPass')?.addEventListener('click', async () => {

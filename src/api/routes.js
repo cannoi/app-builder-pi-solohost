@@ -45,17 +45,26 @@ export function registerRoutes(r, app) {
       preview: { mode: cfg.runtime?.mode || 'auto', containerSandbox: Boolean(cfg.runtime?.podman?.apiUrl), dockerSocket: false },
     });
 
-  r.get('/api/remote/info', async (req, res) => {
+    r.get('/api/remote/info', async (req, res) => {
     try {
-      const { resolvePublicUrl, isLoopbackRequest } = await import('../remote/info.js');
+      const { resolvePublicUrl, isLoopbackRequest, detectPublicIp, detectHostPort } = await import('../remote/info.js');
       const dataDir = cfg.dataDir || cfg.paths?.data || path.join(process.cwd(), 'data');
-      const { publicUrl, source } = await resolvePublicUrl({ cfg, req, dataDir });
+      const refresh = String(req.query?.refresh || '') === '1' || String(req.query?.refresh || '') === 'true';
+      if (refresh) {
+        try { await fs.unlink(path.join(dataDir, 'public-ip-cache.json')); } catch { /* none */ }
+      }
+      const resolved = await resolvePublicUrl({ cfg, req, dataDir });
       const passwordEnabled = Boolean(cfg.accessPassword);
       res.json({
-        publicUrl,
-        source,
+        ok: true,
+        publicUrl: resolved.publicUrl || '',
+        source: resolved.source || 'none',
+        publicIp: resolved.publicIp || '',
+        hostPort: resolved.hostPort || 0,
+        ipSource: resolved.ipSource || '',
+        portSource: resolved.portSource || '',
         passwordEnabled,
-        isLoopbackRequest: isLoopbackRequest(req),
+        loopback: isLoopbackRequest(req),
       });
     } catch (err) {
       res.status(500).json({ error: String(err.message || err) });
