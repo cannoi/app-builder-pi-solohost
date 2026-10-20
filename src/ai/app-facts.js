@@ -1,11 +1,3 @@
-Remote link like Snake Arcade: learn host port from request Host header; public IP via ipify; URL http://IP:hostPort. Remote QR auto-detects public IP and SoloHost HOST_PORT (http://IP:PORT); PUBLIC_URL overrides.
-/**
- * Single source of app facts for Panel + Builder AI knowledge.
- */
-import fs from 'node:fs';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
-
 function pkg() {
   try {
     return JSON.parse(fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), '../../package.json'), 'utf8'));
