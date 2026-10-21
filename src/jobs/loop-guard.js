@@ -1,6 +1,22 @@
-import { fingerprintError } from '../dare/fingerprint.js';
+/**
+ * Loop guard: block repeated no-progress repairs.
+ * Fingerprint includes provider/model + optional diff hash so a real provider switch is a new attempt (P7).
+ */
+import crypto from 'node:crypto';
 
-export function shouldBlockRepeatedAction(history, fingerprint, now = Date.now(), windowMs = 10 * 60_000, maxAttempts = 1) {
+export function fingerprintError(evidence = '') {
+  const s = String(evidence || '')
+    .toLowerCase()
+    .replace(/\d{2,}/g, '#')
+    .replace(/https?:\/\/\S+/g, 'URL')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 1200);
+  if (!s) return 'NONE';
+  return crypto.createHash('sha1').update(s).digest('hex').slice(0, 16);
+}
+
+export function shouldBlockRepeatedAction(history, fingerprint, now = Date.now(), windowMs = 10 * 60_000, maxAttempts = 2) {
   if (!history || history.fingerprint !== fingerprint) return false;
   const last = Date.parse(history.lastAt || '');
   if (!Number.isFinite(last) || now - last > windowMs) return false;
@@ -8,9 +24,7 @@ export function shouldBlockRepeatedAction(history, fingerprint, now = Date.now()
 }
 
 export function nextRepeatState(history, fingerprint, now = Date.now()) {
-  const same = history?.fingerprint === fingerprint && Number.isFinite(Date.parse(history?.lastAt || ''))
-    ? Number.isFinite(now - Date.parse(history.lastAt))
-    : false;
+  const same = history?.fingerprint === fingerprint;
   return {
     fingerprint,
     attempts: same ? Number(history.attempts || 0) + 1 : 1,
@@ -18,15 +32,43 @@ export function nextRepeatState(history, fingerprint, now = Date.now()) {
   };
 }
 
-export function repairFingerprint({ feedback = '', runtime = {} } = {}) {
-  const evidence = [runtime?.error, runtime?.logs, runtime?.brief, feedback].filter(Boolean).join('\n');
+export function repairFingerprint({
+  feedback = '',
+  runtime = {},
+  provider = '',
+  model = '',
+  diffHash = '',
+} = {}) {
+  const evidence = [
+    runtime?.error,
+    runtime?.logs,
+    runtime?.brief,
+    feedback,
+    provider ? `provider:${provider}` : '',
+    model ? `model:${model}` : '',
+    diffHash ? `diff:${diffHash}` : '',
+  ]
+    .filter(Boolean)
+    .join('\n');
   const fp = fingerprintError(evidence);
   if (fp && fp !== 'NONE' && fp !== 'UNKNOWN') return fp;
-  return `USER:${String(feedback || '').toLowerCase().replace(/\d{2,}/g, '#').replace(/https?:\/\/\S+/g, 'URL').replace(/\s+/g, ' ').trim().slice(0, 900)}`;
+  return `USER:${String(feedback || '')
+    .toLowerCase()
+    .replace(/\d{2,}/g, '#')
+    .replace(/https?:\/\/\S+/g, 'URL')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 900)}`;
 }
 
-/** Stop AI/DARE cycles when the same fingerprint produces no validation progress. */
-export function shouldStopNoProgress({ fingerprint, previousFingerprint, attempt = 0, validationImproved = false, sourceChanged = false, maxAttempts = 2 } = {}) {
+export function shouldStopNoProgress({
+  fingerprint,
+  previousFingerprint,
+  attempt = 0,
+  validationImproved = false,
+  sourceChanged = false,
+  maxAttempts = 2,
+} = {}) {
   if (validationImproved || (sourceChanged && fingerprint !== previousFingerprint)) return false;
   if (!fingerprint) return false;
   if (fingerprint === previousFingerprint && Number(attempt) >= maxAttempts) return true;

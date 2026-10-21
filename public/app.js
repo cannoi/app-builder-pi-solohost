@@ -223,6 +223,19 @@ function renderSoloHostKitCard(kit) {
   return box;
 }
 
+
+function renderOrchestratorPlanCard(text) {
+  const lines = String(text || '').split('\n').filter(Boolean);
+  if (lines.length < 2) return null;
+  if (!/^(Plan|Kế hoạch)/i.test(lines[0]) && !/[✅⚠️⏳⏭️☐]/.test(text)) return null;
+  const items = lines.slice(1).map((ln) => {
+    const esc = (s) => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;');
+    return '<li>' + esc(ln) + '</li>';
+  }).join('');
+  return '<div class="orch-plan-card" data-orch-plan="1"><div class="orch-plan-title">' +
+    lines[0].replace(/</g,'&lt;') + '</div><ul class="orch-plan-list">' + items + '</ul></div>';
+}
+
 function shouldSkipNotice(text, meta = {}) {
   // User-driven feedback always shows (buttons / chat). Job noise may dedupe within 3s.
   if (meta.force || meta.fromUser) {

@@ -47,6 +47,7 @@ const MODULES = {
   upgrade: 'Upgrade is separate from Build. Upgrade changes behavior; Build validates/repairs; Publish produces deployment artifacts (config_options.yml, pi.ui.primary).',
   feedback: 'Feedback Hub is built in (nothing to enter). Server posts to hub; browser never sees ingest token. If hub down, Feedback tab shows localized offline message. Feedback tab is on the robot AI panel.',
   language: 'UI languages: English and Vietnamese. Chat replies always follow the user language.',
+  orchestrator: 'Complex multi-file requests use Orchestrator V3: plan → execute → verify → repair. Feasibility conflicts (e.g. LAN vs 127.0.0.1) ask once.',
   troubleshooting: 'If AI fails: check Settings provider+key, Load models, GitHub token before Publish. Prefer Diagnose & Fix with logs over restarting from scratch.',
 };
 

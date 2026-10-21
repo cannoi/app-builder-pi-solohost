@@ -155,3 +155,5 @@
     else boot();
   }
 })(typeof window !== 'undefined' ? window : globalThis);
+
+// orch_planning / orch_task_done used by orchestrator emit messages (en/vi in pipeline emit)

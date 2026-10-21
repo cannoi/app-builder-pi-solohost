@@ -71,3 +71,9 @@
 .quickActions .qaBtn.primary{background:var(--accent);color:#fff;border-color:transparent}
 .quickActions .qaBtn:disabled{opacity:.5;cursor:not-allowed}
 .composer{position:relative;z-index:25}
+
+/* Orchestrator plan checklist */
+.orch-plan-card{margin:8px 0;padding:10px 12px;border-radius:12px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);font-size:13px;line-height:1.45}
+.orch-plan-title{font-weight:600;margin-bottom:6px}
+.orch-plan-list{margin:0;padding-left:4px;list-style:none}
+.orch-plan-list li{padding:2px 0}

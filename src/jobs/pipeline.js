@@ -16,6 +16,7 @@ import { formatSoloHostErrors } from '../release/manager.js';
 import { inferAction, extractGhcrImage, guessSoloHostPorts, classifyLogs, classifyFailureLayer, formatLayerDiagnosis, describeFailure, diagnoseSource, nextStep, guideCard, isHostDockerCommand, isNpmOnEmptyRisk, splitUserSteps, parseGithubRepoUrl } from '../scripts/ops.js';
 import { stampMadeBy } from '../projects/badge.js';
 import { isChangeEngineV2Enabled, runModifyEngine, verifyModifyResult } from '../engine/modify-engine.js';
+import { isOrchestratorV3Enabled, classifyComplexity, runOrchestrator } from '../orchestrator/index.js';
 import { createProjectZip } from '../projects/exporter.js';
 import { gcDocker } from '../docker/cleanup.js';
 import { detectUserLanguage, languageInstruction, languageInstructionFor } from '../ai/language.js';
@@ -1507,6 +1508,49 @@ export function registerPipeline(app) {
         planned.push({ action: String(step.action || inferAction(step.goal || '') || action), goal: String(step.goal || message) });
       }
     } else {
+      // Complex multi-file requests: one orchestrator job (not regex step-split)
+      try {
+        if (isOrchestratorV3Enabled && isOrchestratorV3Enabled()) {
+          const { classifyComplexity, runOrchestrator } = await import('../orchestrator/index.js');
+          const cx = classifyComplexity({ request: message });
+          if (cx.level === 'complex' && project) {
+            emit('orchestrator', 'running', 'Complex chat → orchestrator');
+            const source = projects.sourceDir(project.slug);
+            const editsMod = await import('../engine/edits.js');
+            const fsP = await import('node:fs/promises');
+            const pathMod = await import('node:path');
+            const applyEdits = async (edits) => {
+              const paths = [...new Set((edits || []).map((e) => e.path).filter(Boolean))];
+              const beforeMap = await editsMod.loadFiles((rel) => fsP.readFile(pathMod.join(source, rel), 'utf8'), paths);
+              const { afterMap, touched, errors } = editsMod.applyEditsInMemory(beforeMap, edits || []);
+              if (errors?.length) throw new Error(errors.map((e) => e.message || e).join('; '));
+              await editsMod.commitFiles({
+                readFile: (rel) => fsP.readFile(pathMod.join(source, rel), 'utf8'),
+                writeFile: (rel, text) => fsP.writeFile(pathMod.join(source, rel), text),
+                unlink: (rel) => fsP.unlink(pathMod.join(source, rel)),
+                beforeMap, afterMap, touched,
+              });
+              return { touched };
+            };
+            const orch = await runOrchestrator({
+              ai, projectDir: source, request: message,
+              lang: detectUserLanguage(message) || 'en',
+              applyEdits, emit,
+              provider: job.payload?.provider || '',
+              model: job.payload?.model || '',
+              resume: Boolean(job.payload?.resumeOrchestrator),
+            });
+            if (orch?.used) {
+              payload.result = orch;
+              if (orch.planCard) emit('orchestrator', 'plan', orch.planCard);
+              emit('builder_chat', 'done', orch.brief || orch.planCard || 'Orchestrator finished');
+              return orch;
+            }
+          }
+        }
+      } catch (err) {
+        emit('orchestrator', 'failed', `Falling back to step split: ${String(err?.message || err).slice(0, 160)}`);
+      }
       const pieces = splitUserSteps(message);
       if (pieces.length > 1) planned.push(...pieces.map((goal) => ({ action: inferAction(goal) || action, goal })));
       else planned.push({ action, goal: String(r.json?.feedback || message) });
@@ -2281,6 +2325,79 @@ export function registerPipeline(app) {
     const securityContext = security.findings?.length ? `\nSECURITY FINDINGS (treat as concrete repair requirements):\n${security.copy_for_ai}\n` : '';
 
     // —— Change Engine V2 (flagged; MODIFY only) ——
+
+    // Orchestrator V3 for complex multi-file requests (flag ORCHESTRATOR_V3, default on)
+    try {
+      if (isOrchestratorV3Enabled()) {
+        const cx = classifyComplexity({ request: String(feedback || '') });
+        if (cx.level === 'complex') {
+          emit('orchestrator', 'running', `Complex request → orchestrator (${cx.signals.slice(0, 3).join(', ')})`);
+          const editsMod = await import('../engine/edits.js');
+          const fsP = await import('node:fs/promises');
+          const pathMod = await import('node:path');
+          const applyEdits = async (edits) => {
+            const paths = [...new Set((edits || []).map((e) => e.path).filter(Boolean))];
+            const beforeMap = await editsMod.loadFiles((rel) => fsP.readFile(pathMod.join(source, rel), 'utf8'), paths);
+            const { afterMap, touched, errors } = editsMod.applyEditsInMemory(beforeMap, edits || []);
+            if (errors?.length) throw new Error(errors.map((e) => e.message || e).join('; '));
+            await editsMod.commitFiles({
+              readFile: (rel) => fsP.readFile(pathMod.join(source, rel), 'utf8'),
+              writeFile: (rel, text) => fsP.writeFile(pathMod.join(source, rel), text),
+              unlink: (rel) => fsP.unlink(pathMod.join(source, rel)),
+              beforeMap,
+              afterMap,
+              touched,
+            });
+            return { touched };
+          };
+          const orch = await runOrchestrator({
+            ai,
+            projectDir: source,
+            request: String(feedback || ''),
+            lang: detectUserLanguage(String(feedback || '')) || 'en',
+            applyEdits,
+            emit,
+            scanBefore: security,
+            scanProject: (dir) => scanProject(dir),
+          });
+          if (orch?.needsUser) {
+            const q = orch.question;
+            const msg = typeof q === 'object'
+              ? `NEEDS_USER_ACTION: ${q.what || q.en || q.vi || JSON.stringify(q)}`
+              : `NEEDS_USER_ACTION: ${q}`;
+            emit('orchestrator', 'paused', msg);
+            return {
+              feedback,
+              rootCause: 'feasibility',
+              explanation: msg,
+              files: [],
+              tested: { staticResult: baselineStatic, nodeResult: baselineNode, scan: security },
+              runtime: null,
+              needsUser: true,
+              orchestrator: orch,
+              brief: msg,
+            };
+          }
+          if (orch?.used) {
+            emit('orchestrator', 'done', orch.brief || 'Orchestrator finished');
+            return {
+              feedback,
+              rootCause: '',
+              explanation: orch.brief || 'Orchestrator completed',
+              files: orch.files || [],
+              tested: { staticResult: baselineStatic, nodeResult: baselineNode, scan: security },
+              runtime: null,
+              orchestrator: orch,
+              brief: orch.brief,
+              next: orch.brief,
+            };
+          }
+        }
+      }
+    } catch (err) {
+      emit('orchestrator', 'failed', `Orchestrator fallback to legacy: ${String(err?.message || err).slice(0, 200)}`);
+    }
+
     const useCE = isChangeEngineV2Enabled() && (String(options.intent || '').toUpperCase() === 'MODIFY' || String(options.forceChangeEngine || '') === '1');
     if (useCE) {
       emit('ai', 'running', 'Change Engine V2 — search/replace edits…');
@@ -2396,7 +2513,7 @@ export function registerPipeline(app) {
     const afterScan = await scanProject(source);
     const afterScore = failureScore(afterStatic, afterNode);
     let runtime = null;
-    const changedSecurity = afterScan.critical > security.critical || afterScan.warning > security.warning;
+    const changedSecurity = afterScan.critical > security.critical; // P4: warnings do not force rollback
     if (afterScore > baselineScore || afterScan.critical > 0 || changedSecurity) {
       const latest = patchCheckpoint?.snapshot || snapshots.list(project.id)[0];
       if (latest?.id) {

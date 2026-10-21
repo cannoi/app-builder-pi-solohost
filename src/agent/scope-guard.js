@@ -1,6 +1,6 @@
 /**
  * Execution scope guard — Upgrade must not invoke Build-only repair.
- * Phase: upgrade | build | publish
+ * P8 exception: task-scoped repair of files touched by the current Upgrade/Orchestrator task is allowed.
  */
 export const PHASE = Object.freeze({
   UPGRADE: 'upgrade',
@@ -18,18 +18,29 @@ const BUILD_ONLY = new Set([
   'releaseValidationRepair',
 ]);
 
+/** Task-scoped ops allowed even in Upgrade when limited to touched files. */
+const TASK_SCOPED_ALLOWED = new Set([
+  'taskRepair',
+  'orchestratorRepair',
+  'applyTaskEdits',
+  'verifyTask',
+]);
+
 /**
  * @param {string} phase
  * @param {string} operation
- * @throws {{ code: 'UPGRADE_SCOPE_VIOLATION' }}
+ * @param {{ taskScoped?: boolean, touchedFiles?: string[] }} [opts]
  */
-export function assertPhaseAllows(phase, operation) {
+export function assertPhaseAllows(phase, operation, opts = {}) {
   const p = String(phase || '').toLowerCase();
   const op = String(operation || '');
   if (p === PHASE.UPGRADE && BUILD_ONLY.has(op)) {
+    if (opts.taskScoped && TASK_SCOPED_ALLOWED.has(op)) return true;
+    // Full-project DARE/scan still blocked
     const err = new Error(
       `UPGRADE_SCOPE_VIOLATION: "${op}" is a Build-phase operation and cannot run during Upgrade. ` +
-        'Upgrade changes requested behavior only; use Build for scan/DARE/repair.',
+        'Upgrade changes requested behavior only; use Build for full scan/DARE/repair. ' +
+        'Task-scoped repair of files this task touched is allowed via taskRepair.',
     );
     err.code = 'UPGRADE_SCOPE_VIOLATION';
     err.phase = p;
@@ -39,18 +50,24 @@ export function assertPhaseAllows(phase, operation) {
   return true;
 }
 
-/** True when project metadata marks upgrade origin. */
 export function isUpgradeOrigin(meta = {}) {
   return meta?.origin === 'upgrade' || meta?.phase === 'upgrade';
 }
 
-/**
- * Wrap a Build-only function so Upgrade origin projects cannot call it.
- */
 export function guardBuildOperation(operationName, fn, getPhase) {
   return async function guarded(...args) {
     const phase = typeof getPhase === 'function' ? await getPhase(...args) : getPhase;
     assertPhaseAllows(phase, operationName);
     return fn(...args);
   };
+}
+
+/** True when operation is allowed as task-scoped repair in Upgrade. */
+export function allowTaskScopedRepair(phase, operation) {
+  try {
+    assertPhaseAllows(phase, operation, { taskScoped: true });
+    return true;
+  } catch {
+    return TASK_SCOPED_ALLOWED.has(String(operation || ''));
+  }
 }

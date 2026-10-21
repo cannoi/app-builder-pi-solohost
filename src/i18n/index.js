@@ -92,3 +92,5 @@ export function catalog(locale = 'en') {
 }
 
 export const locales = Object.keys(catalogs);
+
+// orch_planning / orch_task_done used by orchestrator emit messages (en/vi in pipeline emit)
