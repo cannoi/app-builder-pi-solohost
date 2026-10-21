@@ -182,3 +182,60 @@ export async function runAgentLoop({
 }
 
 export { MAX_STEPS_SOFT as MAX_STEPS, MAX_TOOLS_PER_STEP, MAX_TOOL_CHARS };
+
+
+/**
+ * Read-only tools for Change Engine V2 / Modify Engine.
+ */
+export function createReadOnlyTools({ sourceDir, listFiles, readFile, runStatic, runNode, runScan }) {
+  return {
+    async list_files({ prefix = '' } = {}) {
+      const all = await listFiles(sourceDir);
+      const pfx = String(prefix || '');
+      return (all || []).filter((f) => !pfx || f.startsWith(pfx)).slice(0, 400).join('\n');
+    },
+    async search_text({ query, max = 30 } = {}) {
+      const q = String(query || '');
+      if (!q) return '';
+      const files = await listFiles(sourceDir);
+      const hits = [];
+      for (const rel of files.slice(0, 200)) {
+        if (/\.(png|jpg|jpeg|gif|webp|ico|zip|gz)$/i.test(rel)) continue;
+        let text = '';
+        try { text = await readFile(path.join(sourceDir, rel)); } catch { continue; }
+        if (text.includes(q)) {
+          const lines = text.split('\n');
+          for (let i = 0; i < lines.length && hits.length < max; i++) {
+            if (lines[i].includes(q)) hits.push(`${rel}:${i + 1}:${lines[i].trim().slice(0, 200)}`);
+          }
+        }
+        if (hits.length >= max) break;
+      }
+      return hits.join('\n');
+    },
+    async read_file({ path: rel } = {}) {
+      return await readFile(path.join(sourceDir, String(rel || '')));
+    },
+    async read_range({ path: rel, start = 1, end = 80 } = {}) {
+      const text = await readFile(path.join(sourceDir, String(rel || '')));
+      const lines = String(text).split('\n');
+      const a = Math.max(1, Number(start) || 1);
+      const b = Math.min(lines.length, Number(end) || a + 80);
+      return lines.slice(a - 1, b).map((l, i) => `${a + i}|${l}`).join('\n');
+    },
+    async inspect_compose() {
+      try { return await readFile(path.join(sourceDir, 'docker-compose.yml')); }
+      catch { return '(no docker-compose.yml)'; }
+    },
+    async inspect_config_options() {
+      try { return await readFile(path.join(sourceDir, 'config_options.yml')); }
+      catch { return '(no config_options.yml)'; }
+    },
+    async run_check({ type = 'static' } = {}) {
+      if (type === 'node' && runNode) return JSON.stringify(await runNode());
+      if (type === 'scan' && runScan) return JSON.stringify(await runScan());
+      if (runStatic) return JSON.stringify(await runStatic());
+      return '{"status":"skipped"}';
+    },
+  };
+}

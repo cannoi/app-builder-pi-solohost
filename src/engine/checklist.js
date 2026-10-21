@@ -100,3 +100,17 @@ export async function evaluateChecklist(items, ctx = {}) {
 export function checklistPassed(evaluated) {
   return (evaluated || []).filter((i) => i.required).every((i) => i.status === 'pass');
 }
+
+export function checklistNeedsRepair(results) {
+  return (results || []).some((r) => r.required && r.status === 'fail');
+}
+
+export function formatChecklistReport(results, language = 'en') {
+  const lines = (results || []).map((r) => `- [${r.status}] ${r.text}${r.detail ? ` (${r.detail})` : ''}`);
+  if (String(language).toLowerCase().startsWith('vi')) {
+    return `Checklist:\n${lines.join('\n')}`;
+  }
+  return `Checklist:\n${lines.join('\n')}`;
+}
+
+export default { buildChecklist, evaluateChecklist, checklistPassed, checklistNeedsRepair, formatChecklistReport };
