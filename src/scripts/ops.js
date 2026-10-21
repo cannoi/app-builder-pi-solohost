@@ -279,7 +279,7 @@ export function guideCard({ runtime, findings, action, publishReady = false }) {
     return { step: 3, title: 'Try it, then publish', action: 'publish', label: '🚀 Publish', detail: 'Open the test link. If the app feels right, tap Publish. If not, tell me what to change.' };
   }
   if (findings?.some((f) => f.code === 'empty_source' || f.code === 'no_manifest')) {
-    return { step: 1, title: 'Create the app files', action: 'build', label: '✨ Build', detail: 'There is no app yet. Tap Build and I will write the files.' };
+    return { step: 1, title: 'Create the app files', action: 'build', label: '✨ Build', detail: 'There is no app yet. Type your idea or "continue" and I will write the files.' };
   }
   if (runtime?.status === 'failed' || findings?.length) {
     return { step: 2, title: 'Fix and run', action: 'run', label: '▶ Run', detail: 'I found a problem. Tap Run and I will fix what I can, then open a test link.' };

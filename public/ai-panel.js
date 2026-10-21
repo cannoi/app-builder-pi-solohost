@@ -100,97 +100,7 @@ async function renderRemoteAccessCard() {
 }
 
 
-async function renderRemoteAccessCard() {
-  const chat = document.getElementById('aiChat');
-  if (!chat) return;
-  let card = document.getElementById('remoteAccessCard');
-  if (!card) {
-    card = document.createElement('div');
-    card.id = 'remoteAccessCard';
-    card.className = 'remote-access-card';
-    card.innerHTML = '<div class="remote-head"><strong>📱 Remote access</strong> <button type="button" id="remoteToggle" class="small">Hide</button></div>'
-      + '<div id="remoteBody"></div>';
-    chat.prepend(card);
-    card.querySelector('#remoteToggle')?.addEventListener('click', () => {
-      const b = card.querySelector('#remoteBody');
-      if (!b) return;
-      const hide = b.style.display === 'none';
-      b.style.display = hide ? '' : 'none';
-      card.querySelector('#remoteToggle').textContent = hide ? 'Hide' : 'Show';
-    });
-  }
-  const body = card.querySelector('#remoteBody');
-  try {
-    const info = await fetch('/api/remote/info').then((r) => r.json());
-    if (!info.publicUrl) {
-      const ip = info.publicIp || '…';
-      const port = info.hostPort || 'HOST_PORT';
-      body.innerHTML = '<p class="small"><strong>One link:</strong> <code>http://PUBLIC_IP:HOST_PORT</code></p>'
-        + '<p class="small">HOST_PORT = port SoloHost published outside the container (not 8080 inside).</p>'
-        + '<p class="small">IP: <code>' + ip + '</code> · Host port: <code>' + port + '</code></p>'
-        + '<button type="button" id="remoteRefresh" class="primary">↻ Detect again</button>'
-        + '<input id="remoteUrlInput" type="url" placeholder="http://x.x.x.x:18123" style="width:100%;margin-top:8px">'
-        + '<button type="button" id="remoteUrlSave">Save URL</button>';
-      body.querySelector('#remoteRefresh')?.addEventListener('click', async () => {
-        await fetch('/api/remote/info?refresh=1');
-        renderRemoteAccessCard();
-      });
-      body.querySelector('#remoteUrlSave')?.addEventListener('click', async () => {
-        const url = body.querySelector('#remoteUrlInput')?.value?.trim();
-        if (!url) return;
-        await fetch('/api/remote/url', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ publicUrl: url }) });
-        renderRemoteAccessCard();
-      });
-      return;
-    }
-    const warn = info.passwordEnabled
-      ? '<p class="small">🔒 Same login password protects remote QR access.</p>'
-      : '<p class="small warn">⚠ No login password (BUILDER_ACCESS_PASSWORD)</p><button type="button" id="remoteGenPass">Tạo mật khẩu / Create password</button>';
-    body.innerHTML = warn
-      + '<canvas id="remoteQrCanvas" width="160" height="160" aria-label="QR"></canvas>'
-      + '<div class="small"><code id="remoteUrlText"></code></div>'
-      + '<button type="button" id="remoteCopy">Copy URL</button>';
-    const urlEl = body.querySelector('#remoteUrlText');
-    if (urlEl) urlEl.textContent = info.publicUrl;
-    const meta = document.createElement('p');
-    meta.className = 'small';
-    meta.textContent = (info.source === 'solohost-auto' || info.source === 'solohost')
-      ? ('Auto: ' + (info.publicIp || '') + ':' + (info.hostPort || '') + ' (' + (info.source || '') + ')')
-      : ('Source: ' + (info.source || ''));
-    body.appendChild(meta);
-    const refreshBtn = document.createElement('button');
-    refreshBtn.type = 'button';
-    refreshBtn.id = 'remoteRefreshOk';
-    refreshBtn.textContent = '↻ Refresh';
-    refreshBtn.addEventListener('click', async () => {
-      await fetch('/api/remote/info?refresh=1');
-      renderRemoteAccessCard();
-    });
-    body.appendChild(refreshBtn);
-    const canvas = body.querySelector('#remoteQrCanvas');
-    if (canvas && window.PafQR) window.PafQR.renderToCanvas(info.publicUrl, canvas, 160);
-    body.querySelector('#remoteGenPass')?.addEventListener('click', async () => {
-      try {
-        const r = await fetch('/api/access/generate', { method: 'POST' });
-        const data = await r.json();
-        if (data.password) alert('Password (shown once): ' + data.password);
-        renderRemoteAccessCard();
-      } catch (e) { alert(e.message || e); }
-    });
-    body.querySelector('#remoteCopy')?.addEventListener('click', async () => {
-      try { await navigator.clipboard.writeText(info.publicUrl); } catch {}
-    });
-  } catch (e) {
-    body.textContent = 'Remote info unavailable: ' + (e.message || e);
-  }
-}
 
-'use strict';
-/**
- * Reference AI panel controller (from Snake Arcade).
- * Host app may copy to public/ai-panel.js and adapt gameContext() / executeActions().
- * Depends on: UniversalAI, UniversalFeedback, markup in example/ui/ai-panel.html, styles in ai-panel.css.
- */
 function escapeHtml(s) {
   return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
@@ -363,18 +273,31 @@ async function loadLogs() {
       fetch('/api/activity/global' + qs).then((r) => r.json()).catch(() => ({ jobs: [], activity: [] })),
     ]);
     const rows = [];
+    const seenMsg = new Set();
+    const push = (row) => {
+      const key = `${row.level}|${String(row.msg).slice(0, 240)}`;
+      if (seenMsg.has(key)) return;
+      seenMsg.add(key);
+      rows.push(row);
+    };
     for (const e of (uni.entries || [])) {
-      rows.push({ ts: e.ts || '', level: e.level || 'task', msg: e.msg || '' });
+      push({ ts: e.ts || '', level: e.level || 'task', msg: e.msg || '' });
     }
+    // Only add global jobs not already represented in unified timeline
+    const uniText = rows.map((r) => r.msg).join('\n');
     for (const j of (global.jobs || [])) {
-      rows.push({
-        ts: j.created_at || j.updated_at || '',
+      const id = j.id || '';
+      if (id && uniText.includes(id)) continue;
+      const label = `${j.type || 'job'} · ${j.status || ''} · ${j.stage || ''}`;
+      if (uniText.includes(label)) continue;
+      push({
+        ts: j.updated_at || j.created_at || '',
         level: j.error ? 'error' : 'task',
-        msg: `${j.type || 'job'} · ${j.status || ''} · ${j.stage || ''}${j.error ? ' · ' + String(j.error).slice(0, 400) : ''}`,
+        msg: `${label}${j.error ? ' · ' + String(j.error).slice(0, 400) : ''}`,
       });
     }
     for (const a of (global.activity || [])) {
-      rows.push({ ts: a.t || a.ts || '', level: a.status === 'error' ? 'error' : 'info', msg: `${a.action || ''} · ${a.detail || ''}`.trim() });
+      push({ ts: a.t || a.ts || '', level: a.status === 'error' ? 'error' : 'info', msg: `${a.action || ''} · ${a.detail || ''}`.trim() });
     }
     rows.sort((a, b) => String(a.ts).localeCompare(String(b.ts)));
     view.textContent = rows.slice(-300).map((row) => `${row.ts} [${String(row.level).toUpperCase()}] ${row.msg}`).join('\n') || '(no Builder activity yet)';

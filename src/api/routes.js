@@ -1234,10 +1234,24 @@ export function registerRoutes(r, app) {
       for (const summary of summaries) {
         const job = jobs.get(summary.id);
         if (!job) continue;
-        entries.push({ ts: job.created_at || summary.created_at || '', level: 'task', msg: `${job.type || 'task'} · ${job.status || 'unknown'} · ${job.stage || ''}` });
-        if (job.error) entries.push({ ts: job.updated_at || summary.updated_at || '', level: 'error', msg: `${job.type || 'task'} failed: ${String(job.error).slice(0, 1200)}` });
+        // Timeline only from real job events (avoid status summary colliding at created_at)
+        const seenErr = new Set();
         for (const event of (job.events || [])) {
-          entries.push({ ts: event.created_at || '', level: /fail|error|blocked/i.test(`${event.status || ''} ${event.message || ''}`) ? 'error' : 'task', msg: `${job.type || 'task'} · ${event.stage || ''} · ${event.status || ''} · ${String(event.message || '').slice(0, 1200)}` });
+          const msg = `${job.type || 'task'} · ${event.stage || ''} · ${event.status || ''} · ${String(event.message || '').slice(0, 1200)}`;
+          const isErr = /fail|error|blocked/i.test(`${event.status || ''} ${event.message || ''}`);
+          if (isErr) {
+            const key = String(event.message || msg).slice(0, 200);
+            if (seenErr.has(key)) continue;
+            seenErr.add(key);
+          }
+          entries.push({ ts: event.created_at || '', level: isErr ? 'error' : 'task', msg });
+        }
+        if (job.error) {
+          const key = String(job.error).slice(0, 200);
+          if (!seenErr.has(key)) {
+            seenErr.add(key);
+            entries.push({ ts: job.updated_at || '', level: 'error', msg: `${job.type || 'task'} failed: ${String(job.error).slice(0, 1200)}` });
+          }
         }
       }
       entries.sort((a, b) => String(a.ts).localeCompare(String(b.ts)));

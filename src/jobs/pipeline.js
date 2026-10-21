@@ -493,7 +493,7 @@ export function registerPipeline(app) {
         action: 'analyze',
         ok: false,
         diagnosis,
-        brief: 'Check is locked. There is no app yet. Tap Build first.',
+        brief: 'Check is locked. There is no app yet. Type your idea in chat or say "continue" to generate files.',
         next: 'Tap ✨ Build, then Check again.',
       };
     }
@@ -511,7 +511,7 @@ export function registerPipeline(app) {
       tested,
       diagnosis,
       brief,
-      next: tested.scan?.critical ? 'Tap Improve so I can remove the unsafe setting.' : (runtime.status === 'passed' ? 'If the preview looks right, tap Publish.' : 'Tap ▶ Run next.'),
+      next: tested.scan?.critical ? 'Describe the unsafe setting in chat so I can remove it.' : (runtime.status === 'passed' ? 'If the preview looks right, tap 🚀 Publish or type "publish".' : 'Type "run" or tap ▶ Run next.'),
     };
   });
 
@@ -740,7 +740,7 @@ export function registerPipeline(app) {
       if (security.critical > 0) {
         const report = security.copy_for_ai || 'APP BUILDER SECURITY REPORT\nNo detailed report was generated.';
         emit('security', 'failed', `${security.summary}\n\n${report}`);
-        throw new Error(`RELEASE_SECURITY_BLOCKED\n${security.summary}\n\n${report}\n\nNEXT: Tap Improve and let the AI apply the smallest targeted security fix, then Run and Publish again.`);
+        throw new Error(`RELEASE_SECURITY_BLOCKED\n${security.summary}\n\n${report}\n\nNEXT: Describe the issue in chat so AI can apply the smallest security fix, then Run and Publish again.`);
       }
       if (runtime.status !== 'passed' || runtime.health !== true) throw new Error('Release blocked: run the app successfully before publishing. Tap Run first.');
     } else {
@@ -2120,6 +2120,25 @@ export function registerPipeline(app) {
 
   async function runProject(project, emit) {
     const source = projects.sourceDir(project.slug);
+    // Empty / unfinished project: guide via chat, do not diagnose
+    try {
+      const hasIndex = await fs.access(path.join(source, 'index.html')).then(() => true).catch(() => false)
+        || await fs.access(path.join(source, 'public', 'index.html')).then(() => true).catch(() => false);
+      let hasStart = false;
+      try {
+        const pkg = JSON.parse(await fs.readFile(path.join(source, 'package.json'), 'utf8'));
+        hasStart = Boolean(pkg?.scripts?.start || pkg?.scripts?.dev);
+      } catch {}
+      if (!hasIndex && !hasStart) {
+        const lang = detectUserLanguage('') || 'en';
+        const vi = String(lang).startsWith('vi');
+        const msg = vi
+          ? 'App chưa được tạo xong. Gõ "tiếp tục" để mình viết lại các file.'
+          : 'The app is not finished yet. Type "continue" and I will write the files again.';
+        emit('run', 'failed', msg);
+        return { status: 'failed', error: msg, brief: msg, emptyProject: true, health: false };
+      }
+    } catch {}
     const runtime = await runner.runApp({ sourcePath: source, projectSlug: project.slug, timeout: cfg.limits.sandboxTimeoutSec, keepRunning: true });
     await projects.saveMetadata(project, 'runtime.json', { ...runtime, image: runtime.image || null, lastSeenAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
     const tests = await projects.readMetadata(project, 'test-plan.json', {});
@@ -2145,6 +2164,38 @@ export function registerPipeline(app) {
     emit('analyze', staticResult.status === 'passed' && nodeResult.status !== 'failed' && scan.critical === 0 ? 'done' : 'failed',
       `INSPECT ONLY: source ${staticResult.status}; runtime tests ${nodeResult.status}; security critical ${scan.critical}.`);
     return { staticResult, nodeResult, scan, diagnosis, inspectOnly: true };
+  }
+
+
+  function formatChangeReport({ lang = 'en', files = [], tested = null, runtime = null, scopeLabel = '', canUndo = true } = {}) {
+    const vi = String(lang || '').toLowerCase().startsWith('vi');
+    const paths = (files || []).map((f) => (typeof f === 'string' ? f : f?.path)).filter(Boolean).slice(0, 3);
+    const changed = paths.length
+      ? (vi ? `Đã đổi: ${paths.join(', ')}` : `Changed: ${paths.join(', ')}`)
+      : (vi ? 'Đã đổi: không có file (không thay đổi mã).' : 'Changed: no files (no code change).');
+    const checks = [];
+    if (tested?.staticResult) checks.push('static');
+    if (tested?.nodeResult) checks.push('node');
+    if (tested?.scan) checks.push('scan');
+    if (runtime?.status === 'passed' || tested?.e2e?.status === 'passed') checks.push('preview');
+    const verified = checks.length
+      ? (vi ? `Đã kiểm chứng: ${checks.join(', ')}` : `Verified: ${checks.join(', ')}`)
+      : (vi ? 'Đã kiểm chứng: chưa có kiểm chứng tự động.' : 'Verified: no automated checks ran.');
+    const touchedDocker = paths.some((x) => /Dockerfile/i.test(x));
+    const unverified = touchedDocker
+      ? (vi
+        ? 'Dockerfile đã đổi, chưa build thử Docker; image sẽ được kiểm tra khi Publish.'
+        : 'Dockerfile changed; Docker image not built yet — it will be checked at Publish.')
+      : (vi
+        ? 'Chưa kiểm chứng: Docker image build (sẽ kiểm khi Publish).'
+        : 'Not verified: Docker image build (checked at Publish).');
+    const undo = canUndo
+      ? (vi ? 'Bạn có thể gõ "hoàn tác" hoặc mở ⋯ → Undo nếu cần.' : 'You can type "undo" or open ⋯ → Undo if needed.')
+      : '';
+    const scope = scopeLabel
+      ? (vi ? `Phạm vi: ${scopeLabel}` : `Scope: ${scopeLabel}`)
+      : '';
+    return [scope, changed, verified, unverified, undo].filter(Boolean).join('\n');
   }
 
   async function improveProject(project, feedback, emit, options = {}) {
@@ -2375,7 +2426,17 @@ export function registerPipeline(app) {
       runtime.brief = briefFail(runtime.error);
       emit('run', 'failed', runtime.error);
     }
-    return { feedback, rootCause: r.json.root_cause || '', explanation: r.json.explanation || '', files: r.json.files.map((f) => f.path), tested, runtime };
+    const changeFiles = r.json.files.map((f) => f.path);
+    const scopeLabel = changeFiles.length > 3 ? (options?.intent === 'improve' ? 'multi-file change' : 'broad change') : (changeFiles.length ? 'focused change' : 'no change');
+    const brief = formatChangeReport({
+      lang: options?.lang || detectUserLanguage?.(String(feedback || '')) || 'en',
+      files: changeFiles,
+      tested,
+      runtime,
+      scopeLabel,
+      canUndo: true,
+    });
+    return { feedback, rootCause: r.json.root_cause || '', explanation: r.json.explanation || '', files: changeFiles, tested, runtime, brief, next: brief };
   }
 
   function imageInputs(files) {

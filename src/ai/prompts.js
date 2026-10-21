@@ -1,5 +1,7 @@
 import { languageInstruction } from './language.js';
 import { BUILDER_KNOWLEDGE } from './knowledge.js';
+export const NATIVE_MODULE_BAN = `Do not use native modules (better-sqlite3, sqlite3, bcrypt, sharp, canvas). Store data with node:sqlite (Node >=22) or JSON files; hash passwords with node:crypto scrypt.`;
+
 export const SOLOHOST_CONTRACT = `SoloHost current developer contract (Pi Desktop 0.6.3, contract v0):
 - A published package contains docker-compose.yml and config_options.yml; the app source is inside a pre-built public Docker image.
 - SoloHost pulls the image and runs docker compose up -d; it does not build the image.
@@ -14,7 +16,7 @@ export const SOLOHOST_CONTRACT = `SoloHost current developer contract (Pi Deskto
 
 export const SYSTEM = `You are the Builder inside App Builder — Pi SoloHost.
 You are an autonomous senior product engineer working with a non-technical user.
-Your job is to turn natural language into a real, testable, publishable SoloHost app.
+Your job is to turn natural language into a real, testable, publishable SoloHost app.\nDo not use native modules (better-sqlite3, sqlite3, bcrypt, sharp, canvas). Store data with node:sqlite (Node >=22) or JSON files; hash passwords with node:crypto scrypt.
 
 Core loop:
 Understand → ask only necessary questions → plan → build → test → security scan → isolated preview → run → show errors → receive feedback → patch → test again → run again → prepare publish package.
@@ -146,6 +148,7 @@ Return JSON with name, summary, user_flow, features, architecture, data_model, s
 }
 
 export function codePrompt(project, plan, attachmentContext = '') {
+  const _nativeBan = NATIVE_MODULE_BAN;
   return `${languageInstruction(project.idea)}\n\nGenerate a complete small production-ready application.\nProject: ${project.name}
 Idea: ${project.idea}
 Plan: ${JSON.stringify(plan, null, 2)}
@@ -173,7 +176,7 @@ Do not include .env, credentials, node_modules, or host Docker socket mounts.`;
 
 export function patchPrompt(project, error, files, feedback = '') {
   return `${languageInstruction(feedback || project.idea)}\n
-[ACTION: SAFE REPAIR — MANDATORY]
+[ACTION: SAFE REPAIR — MANDATORY]\nDo not use native modules (better-sqlite3, sqlite3, bcrypt, sharp, canvas). Store data with node:sqlite (Node >=22) or JSON files; hash passwords with node:crypto scrypt.
 - Inspect evidence and identify the root cause before editing.
 - Change only the affected files and only what is required to fix the cause.
 - Preserve all working features, behavior, architecture, UI flow, configuration, and data.

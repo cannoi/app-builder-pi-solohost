@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 function packageMeta() {
   try {
     const pkg = JSON.parse(
-      fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), '../package.json'), 'utf8'),
+      fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), '../../package.json'), 'utf8'),
     );
     return { version: pkg.version || '0.0.0', name: pkg.name || 'app-builder' };
   } catch {

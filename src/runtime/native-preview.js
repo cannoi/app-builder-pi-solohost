@@ -66,12 +66,12 @@ export class NativePreview {
       // a non-Node service (Python, Go, supervisord-managed multi-process
       // images, VNC/browser containers, etc.) — can never work here no matter
       // how many times Build is re-run; the old generic "No UI files were
-      // found. Tap Build first" message was actively misleading for exactly
+      // found. generate files via chat" message was actively misleading for exactly
       // that case. Give the real, actionable reason instead.
       const hasDockerfile = await fs.access(path.join(sourcePath, 'Dockerfile')).then(() => true).catch(() => false);
       const error = hasDockerfile
         ? 'This is a container-only app. Builder will use the protected Container Sandbox automatically when the SoloHost platform provides it; no local installation or manual Docker setup is required. If Sandbox is not available, Publish can still build the final image on GitHub Actions.'
-        : 'No UI files were found. Tap Build first so the app has an index page.';
+        : 'No UI files were found. Type "continue" and I will write the files again.';
       return { status: 'failed', runtime: 'native-preview', health: false, error };
     }
 
