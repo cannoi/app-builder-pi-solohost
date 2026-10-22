@@ -228,6 +228,20 @@ export class JobQueue {
     }
   }
 
+  /**
+   * Bind a job that started without a project (e.g. create_app, github import)
+   * to the project id once it exists — required for busy/ensureFree and UI polling.
+   */
+  attachProject(jobId, projectId) {
+    if (!jobId || !projectId) return;
+    this.db.run(
+      'UPDATE jobs SET project_id=?, updated_at=? WHERE id=?',
+      projectId,
+      new Date().toISOString(),
+      jobId,
+    );
+  }
+
   finish(jobId, result) {
     const row = this.db.get('SELECT status FROM jobs WHERE id = ?', jobId);
     if (row && row.status === 'cancelled') return;
