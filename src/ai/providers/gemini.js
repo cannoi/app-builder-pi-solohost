@@ -125,9 +125,12 @@ export class GeminiProvider {
     const body = {
       contents: [{ role: 'user', parts: [{ text: prompt }, ...images.map((i) => ({ inlineData: { mimeType: i.mimeType || i.type || 'image/png', data: String(i.dataUrl || '').replace(/^data:[^;]+;base64,/, '') } }))] }],
       ...(system ? { systemInstruction: { parts: [{ text: system }] } } : {}),
-      generationConfig: json
-        ? { responseMimeType: 'application/json', temperature: 0.3 }
-        : { temperature: 0.4 },
+      generationConfig: {
+        ...(json
+          ? { responseMimeType: 'application/json', temperature: 0.3 }
+          : { temperature: 0.4 }),
+        maxOutputTokens: json ? 8192 : 12288,
+      },
     };
     const started = Date.now();
     const res = await fetch(url, {
@@ -145,14 +148,37 @@ export class GeminiProvider {
     }
     let data;
     try { data = JSON.parse(raw); } catch { throw new Error('Gemini returned invalid JSON'); }
-    const text = (data.candidates || []).flatMap((c) => c.content?.parts || []).map((p) => p.text || '').join('');
-    if (!text) throw new Error('Gemini returned an empty response');
+    const candidates = data.candidates || [];
+    const finishReason = candidates[0]?.finishReason || data.promptFeedback?.blockReason || null;
+    const text = candidates.flatMap((c) => c.content?.parts || []).map((p) => p.text || '').join('');
+    if (!text) {
+      const err = new Error(finishReason === 'SAFETY' || data.promptFeedback?.blockReason
+        ? `Gemini blocked the response (${finishReason || data.promptFeedback.blockReason})`
+        : 'Gemini returned an empty response');
+      err.finishReason = finishReason;
+      err.classify = classifyProviderError(err);
+      throw err;
+    }
+    if (finishReason === 'MAX_TOKENS') {
+      // Return text but mark truncated so Doctor/caller can continue
+      return {
+        text,
+        provider: this.name,
+        model,
+        durationMs: Date.now() - started,
+        tokens: data.usageMetadata?.totalTokenCount ?? null,
+        finishReason: 'LENGTH',
+        truncated: true,
+        rawMeta: { key: maskKey(this.apiKey) },
+      };
+    }
     return {
       text,
       provider: this.name,
       model,
       durationMs: Date.now() - started,
       tokens: data.usageMetadata?.totalTokenCount ?? null,
+      finishReason: finishReason === 'STOP' ? 'STOP' : (finishReason || 'OTHER'),
       rawMeta: { key: maskKey(this.apiKey) },
     };
   }

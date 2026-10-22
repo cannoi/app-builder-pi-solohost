@@ -1,4 +1,4 @@
-import { createDeadline, mergeSignals } from '../core/budget.js';
+import { createDeadline, mergeSignals } from '../../core/budget.js';
 import { modelKey, isCooling, recordSuccess, recordFailure, rankByHealth } from './circuit.js';
 import { PROVIDER_CATALOG, catalogEntry, taskComplexity } from './catalog.js';
 import { buildAttemptPlan, normalizeRoutingMode, ROUTING_MODE, isRoutingLocked as routingLocked, DEFAULT_PROVIDER_PRIORITY } from './routing.js';
