@@ -1,106 +1,9 @@
-
-/** Remote access card — one link + local QR */
-async function renderRemoteAccessCard() {
-  const chat = document.getElementById('aiChat');
-  if (!chat) return;
-  let card = document.getElementById('remoteAccessCard');
-  if (!card) {
-    card = document.createElement('div');
-    card.id = 'remoteAccessCard';
-    card.className = 'remote-access-card';
-    card.innerHTML =
-      '<div class="remote-head">' +
-      '<span class="remote-title">📱 Remote access</span>' +
-      '<button type="button" id="remoteToggle" class="remote-btn ghost">Hide</button>' +
-      '</div><div id="remoteBody" class="remote-body"></div>';
-    chat.prepend(card);
-    card.querySelector('#remoteToggle')?.addEventListener('click', () => {
-      const b = card.querySelector('#remoteBody');
-      if (!b) return;
-      const hide = b.style.display === 'none';
-      b.style.display = hide ? '' : 'none';
-      card.querySelector('#remoteToggle').textContent = hide ? 'Hide' : 'Show';
-    });
-  }
-  const body = card.querySelector('#remoteBody');
-  try {
-    const info = await fetch('/api/remote/info').then((r) => r.json());
-    const url = info.publicUrl || '';
-    if (!url) {
-      const ip = info.publicIp || '—';
-      const port = info.hostPort || '—';
-      body.innerHTML =
-        '<p class="remote-hint">Link format: <code>http://IP:HOST_PORT</code></p>' +
-        '<div class="remote-meta"><span>IP <strong>' + ip + '</strong></span>' +
-        '<span>Port <strong>' + port + '</strong></span></div>' +
-        '<p class="remote-hint muted">HOST_PORT is the SoloHost published port (not 8080 inside the container).</p>' +
-        '<div class="remote-actions">' +
-        '<button type="button" id="remoteRefresh" class="remote-btn primary">↻ Detect</button>' +
-        '</div>' +
-        '<input id="remoteUrlInput" class="remote-input" type="url" placeholder="http://x.x.x.x:18123">' +
-        '<button type="button" id="remoteUrlSave" class="remote-btn">Save URL</button>';
-      body.querySelector('#remoteRefresh')?.addEventListener('click', async () => {
-        await fetch('/api/remote/info?refresh=1');
-        renderRemoteAccessCard();
-      });
-      body.querySelector('#remoteUrlSave')?.addEventListener('click', async () => {
-        const v = body.querySelector('#remoteUrlInput')?.value?.trim();
-        if (!v) return;
-        await fetch('/api/remote/url', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ publicUrl: v }),
-        });
-        renderRemoteAccessCard();
-      });
-      return;
-    }
-    const lock = info.passwordEnabled
-      ? '<p class="remote-hint">🔒 Same Builder login password</p>'
-      : '<p class="remote-hint warn">⚠ Set a login password for remote use</p>';
-    body.innerHTML =
-      lock +
-      '<canvas id="remoteQrCanvas" class="remote-qr" width="168" height="168" aria-label="QR"></canvas>' +
-      '<div class="remote-url"><code id="remoteUrlText"></code></div>' +
-      '<div class="remote-actions">' +
-      '<button type="button" id="remoteCopy" class="remote-btn primary">Copy link</button>' +
-      '<button type="button" id="remoteRefreshOk" class="remote-btn">↻</button>' +
-      (info.passwordEnabled ? '' : '<button type="button" id="remoteGenPass" class="remote-btn">Password</button>') +
-      '</div>';
-    const urlEl = body.querySelector('#remoteUrlText');
-    if (urlEl) urlEl.textContent = url;
-    const canvas = body.querySelector('#remoteQrCanvas');
-    if (canvas && window.PafQR) window.PafQR.renderToCanvas(url, canvas, 168);
-    body.querySelector('#remoteCopy')?.addEventListener('click', async () => {
-      try {
-        await navigator.clipboard.writeText(url);
-        const b = body.querySelector('#remoteCopy');
-        if (b) { b.textContent = 'Copied'; setTimeout(() => { b.textContent = 'Copy link'; }, 1500); }
-      } catch {
-        prompt('Copy URL', url);
-      }
-    });
-    body.querySelector('#remoteRefreshOk')?.addEventListener('click', async () => {
-      await fetch('/api/remote/info?refresh=1');
-      renderRemoteAccessCard();
-    });
-    body.querySelector('#remoteGenPass')?.addEventListener('click', async () => {
-      try {
-        const r = await fetch('/api/access/generate', { method: 'POST' });
-        const data = await r.json();
-        if (data.password) alert('Password (once): ' + data.password);
-        renderRemoteAccessCard();
-      } catch (e) {
-        alert(e.message || e);
-      }
-    });
-  } catch (err) {
-    body.innerHTML = '<p class="remote-hint warn">' + (err.message || err) + '</p>';
-  }
-}
-
-
-
+'use strict';
+/**
+ * Reference AI panel controller (from Snake Arcade).
+ * Host app may copy to public/ai-panel.js and adapt gameContext() / executeActions().
+ * Depends on: UniversalAI, UniversalFeedback, markup in example/ui/ai-panel.html, styles in ai-panel.css.
+ */
 function escapeHtml(s) {
   return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
@@ -193,7 +96,7 @@ const ai = window.UniversalAI.create({
   onOpen() {
     const ov = document.getElementById('aiOverlay');
     if (ov) ov.hidden = false;
-    setFabVisible(false); try { renderRemoteAccessCard(); } catch (e) { console.warn(e); };
+    setFabVisible(false);
     refreshStatus();
   },
   onActions: executeActions
@@ -263,49 +166,21 @@ document.getElementById('aiSend')?.addEventListener('click', sendAI);
 aiInput?.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); sendAI(); } });
 
 async function loadLogs() {
-  const view = document.getElementById('logsView') || document.getElementById('logOut');
+  const view = document.getElementById('logsView');
   if (!view) return;
-  view.textContent = 'Loading unified Builder log…';
   try {
-    const qs = window.__pafProjectId ? `?projectId=${encodeURIComponent(window.__pafProjectId)}&limit=120` : '?limit=120';
-    const [uni, global] = await Promise.all([
-      fetch('/api/activity/unified' + qs).then((r) => r.json()).catch(() => ({ entries: [] })),
-      fetch('/api/activity/global' + qs).then((r) => r.json()).catch(() => ({ jobs: [], activity: [] })),
-    ]);
-    const rows = [];
-    const seenMsg = new Set();
-    const push = (row) => {
-      const key = `${row.level}|${String(row.msg).slice(0, 240)}`;
-      if (seenMsg.has(key)) return;
-      seenMsg.add(key);
-      rows.push(row);
-    };
-    for (const e of (uni.entries || [])) {
-      push({ ts: e.ts || '', level: e.level || 'task', msg: e.msg || '' });
-    }
-    // Only add global jobs not already represented in unified timeline
-    const uniText = rows.map((r) => r.msg).join('\n');
-    for (const j of (global.jobs || [])) {
-      const id = j.id || '';
-      if (id && uniText.includes(id)) continue;
-      const label = `${j.type || 'job'} · ${j.status || ''} · ${j.stage || ''}`;
-      if (uniText.includes(label)) continue;
-      push({
-        ts: j.updated_at || j.created_at || '',
-        level: j.error ? 'error' : 'task',
-        msg: `${label}${j.error ? ' · ' + String(j.error).slice(0, 400) : ''}`,
-      });
-    }
-    for (const a of (global.activity || [])) {
-      push({ ts: a.t || a.ts || '', level: a.status === 'error' ? 'error' : 'info', msg: `${a.action || ''} · ${a.detail || ''}`.trim() });
-    }
-    rows.sort((a, b) => String(a.ts).localeCompare(String(b.ts)));
-    view.textContent = rows.slice(-300).map((row) => `${row.ts} [${String(row.level).toUpperCase()}] ${row.msg}`).join('\n') || '(no Builder activity yet)';
-  } catch (err) {
-    view.textContent = 'Could not load logs: ' + (err.message || err);
+    const r = await fetch('/api/logs');
+    const j = await r.json();
+    view.textContent = (j.logs || []).map(l => (l.ts || '') + ' [' + l.level + '] ' + l.msg).join('\n') || '(no logs)';
+  } catch (e) {
+    view.textContent = e.message;
   }
 }
 document.getElementById('logsRefresh')?.addEventListener('click', loadLogs);
+document.getElementById('logsClear')?.addEventListener('click', async () => {
+  await fetch('/api/logs', { method: 'DELETE' });
+  loadLogs();
+});
 
 const fb = window.UniversalFeedback.create({
   onUnread: setUnread,

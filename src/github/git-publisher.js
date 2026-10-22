@@ -242,7 +242,7 @@ export async function publishWithGit({ token, upgradeOrigin = false, repoName, s
       report.code = validation.scan?.critical ? 'secret' : 'PROJECT_INVALID';
       report.error = validation.errors.join(' ');
       report.fix = validation.scan?.critical
-        ? 'A secret was found. Describe it in chat so I can remove it, then Publish again.'
+        ? 'A secret was found. I can remove it if you tap Improve, then Publish again.'
         : 'Tap Check, then Improve. Publish only after files pass.';
       report.fallback = manualFallback(name);
       return report;
@@ -329,9 +329,7 @@ export async function publishWithGit({ token, upgradeOrigin = false, repoName, s
         }
       }
       if (!sha) {
-        const st = lastPublishError?.status || lastPublishError?.code || '';
-        const em = String(lastPublishError?.message || lastPublishError || 'unknown').replace(/ghs_[A-Za-z0-9]+|github_pat_[A-Za-z0-9_]+|x-access-token:[^@\s]+/gi, '[REDACTED]');
-        step('publishing', `GitHub API upload failed (${st}: ${em.slice(0, 160)}), trying the local Git fallback…`);
+        step('publishing', 'GitHub API upload failed, trying the local Git fallback…');
         try {
           sha = await gitPushWorktree({ work, token, owner: realOwner, repo: name, branch, version });
           lastPublishError = null;
@@ -409,35 +407,6 @@ async function copyWorktree(sourceDir, files) {
   return work;
 }
 
-async function bootstrapEmptyRepoWithContentsApi({ octokit, repoPath, branch = 'main' }) {
-  // Empty repos reject git/blobs (409). Seed a first commit via Contents API.
-  const body = {
-    message: 'chore: bootstrap repository for App Builder',
-    content: Buffer.from('# App Builder release\n', 'utf8').toString('base64'),
-    branch,
-  };
-  try {
-    await octokit.request({
-      method: 'PUT',
-      url: `${repoPath}/contents/README.md`,
-      data: body,
-    });
-  } catch (err) {
-    if (Number(err?.status) === 422 || /already exists/i.test(String(err?.message || ''))) {
-      // try .gitkeep instead
-      await octokit.request({
-        method: 'PUT',
-        url: `${repoPath}/contents/.gitkeep`,
-        data: { ...body, content: Buffer.from('\n', 'utf8').toString('base64'), message: 'chore: bootstrap empty repository' },
-      });
-    } else {
-      throw err;
-    }
-  }
-  const ref = await octokit.request({ method: 'GET', url: `${repoPath}/git/ref/heads/${encodeURIComponent(branch)}` });
-  return ref.data?.object?.sha || null;
-}
-
 export async function publishWorktreeWithGitHubApi({ octokit, work, owner, repo, branch = 'main', version = '0.1.0' }) {
   const files = (await listFiles(work)).filter((rel) => !SKIP.test(rel));
   if (!files.length) throw Object.assign(new Error('The project has no publishable files.'), { code: 'PROJECT_EMPTY' });
@@ -451,11 +420,6 @@ export async function publishWorktreeWithGitHubApi({ octokit, work, owner, repo,
     if (Number(err?.status) !== 404 && !/empty|not found/i.test(String(err?.message || ''))) throw err;
   }
 
-  // Empty repository: Git Data API blobs often return 409 until a first commit exists
-  if (!headSha) {
-    headSha = await bootstrapEmptyRepoWithContentsApi({ octokit, repoPath, branch });
-  }
-
   const entries = [];
   const concurrency = 6;
   let cursor = 0;
@@ -465,25 +429,11 @@ export async function publishWorktreeWithGitHubApi({ octokit, work, owner, repo,
       if (i >= files.length) return;
       const rel = files[i];
       const content = await fs.readFile(path.join(work, rel));
-      let blob;
-      try {
-        blob = await octokit.request({
-          method: 'POST',
-          url: `${repoPath}/git/blobs`,
-          data: { content: content.toString('base64'), encoding: 'base64' },
-        });
-      } catch (err) {
-        if ((Number(err?.status) === 409 || /empty/i.test(String(err?.message || ''))) && !headSha) {
-          headSha = await bootstrapEmptyRepoWithContentsApi({ octokit, repoPath, branch });
-          blob = await octokit.request({
-            method: 'POST',
-            url: `${repoPath}/git/blobs`,
-            data: { content: content.toString('base64'), encoding: 'base64' },
-          });
-        } else {
-          throw err;
-        }
-      }
+      const blob = await octokit.request({
+        method: 'POST',
+        url: `${repoPath}/git/blobs`,
+        data: { content: content.toString('base64'), encoding: 'base64' },
+      });
       entries[i] = { path: rel, mode: '100644', type: 'blob', sha: blob.data?.sha };
       if (!entries[i].sha) throw new Error(`GitHub did not return a blob SHA for ${rel}.`);
     }

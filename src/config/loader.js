@@ -1,16 +1,3 @@
-import fs from 'node:fs';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
-
-function packageVersion() {
-  try {
-    const pkgPath = path.join(path.dirname(fileURLToPath(import.meta.url)), '../../package.json');
-    return JSON.parse(fs.readFileSync(pkgPath, 'utf8')).version || '0.0.0';
-  } catch {
-    return '0.0.0';
-  }
-}
-
 export function loadConfig() {
   const config = {
     port: Number(process.env.PORT || 8080),
@@ -26,12 +13,12 @@ export function loadConfig() {
       url: String(process.env.SHFH_HUB_URL || process.env.FEEDBACK_HUB_URL || 'http://14.176.78.46:8090').replace(/\/$/, ''),
       appId: process.env.SHFH_APP_ID || process.env.FEEDBACK_APP_ID || 'app-builder-pi-solohost',
       appName: process.env.SHFH_APP_NAME || 'App Builder — Pi SoloHost',
-      // Token is resolved in src/feedback/hub-config.js for Universal Feedback mount only.
+      // Feedback ingest token is resolved server-side from the encrypted credential bundle.
       ingestToken: process.env.SHFH_INGEST_TOKEN || '',
       enabled: process.env.SHFH_ENABLED !== '0',
     },
-    version: packageVersion(),
-    accessPassword: process.env.BUILDER_ACCESS_PASSWORD || process.env.ACCESS_PASSWORD || (function(){try{const p=path.join(process.cwd(),'data','access.json');return JSON.parse(fs.readFileSync(p,'utf8')).password||''}catch{return ''}})(),
+    version: '1.7.1',
+    accessPassword: process.env.BUILDER_ACCESS_PASSWORD || process.env.ACCESS_PASSWORD || '',
     runtime: {
       mode: process.env.PREVIEW_MODE || 'auto',
       podman: { apiUrl: process.env.PODMAN_API_URL || process.env.SANDBOX_PODMAN_API_URL || process.env.CONTAINER_SANDBOX_PODMAN_API_URL || '' },
@@ -41,7 +28,7 @@ export function loadConfig() {
       requireBrowserTest: String(process.env.PREVIEW_REQUIRE_BROWSER_TEST || 'true').toLowerCase() === 'true',
     },
     ai: {
-      provider: ['gemini', 'deepseek'].includes(String(process.env.AI_PROVIDER || 'gemini').toLowerCase()) ? String(process.env.AI_PROVIDER || 'gemini').toLowerCase() : 'gemini',
+      provider: ['gemini', 'deepseek'].includes(String(process.env.AI_PROVIDER || 'deepseek').toLowerCase()) ? String(process.env.AI_PROVIDER || 'deepseek').toLowerCase() : 'deepseek',
       mode: (process.env.AI_MODE || 'single').toLowerCase() === 'council' ? 'council' : 'single',
       geminiKey: process.env.GEMINI_API_KEY || '',
       geminiModel: process.env.GEMINI_MODEL || '',

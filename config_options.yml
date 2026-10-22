@@ -1,74 +1,19 @@
 title: "App Builder — Pi SoloHost"
 eyebrow: SoloHost App
 description: "Build, test, repair, and publish simple SoloHost apps with AI."
-footer_hint: "Only enter the important AI and GitHub details you need. Secrets are password fields."
+footer_hint: "Only enter your Builder access password. All other settings are managed inside Builder Settings."
 output_file: .env
-after_save: "Settings saved. Changes apply automatically to the next Builder task."
+after_save: "Password saved. Open the app and configure AI or GitHub in Settings when needed."
+
 fixed_values:
   - name: PREVIEW_MODE
     value: "auto"
+  - name: PREVIEW_ONLINE
+    value: "true"
+
 fields:
-  - name: AI_PROVIDER
-    label: AI provider
-    type: select
-    default: "gemini"
-    options:
-      - value: gemini
-        label: Gemini
-      - value: deepseek
-        label: DeepSeek
-    help: "Choose the AI service used by the Builder."
-
-  - name: GEMINI_API_KEY
-    label: Gemini API key
-    type: password
-    preserve_if_blank: true
-    visible_if:
-      field: AI_PROVIDER
-      in: [gemini]
-    help: "Required when Gemini is selected. Model selection is automatic."
-
-  - name: DEEPSEEK_API_KEY
-    label: DeepSeek API key
-    type: password
-    preserve_if_blank: true
-    visible_if:
-      field: AI_PROVIDER
-      in: [deepseek]
-    help: "Required when DeepSeek is selected."
-
-  - name: GITHUB_OWNER
-    label: GitHub owner
-    type: text
-    preserve_if_blank: true
-    help: "Your GitHub username or organization used for publishing."
-
-  - name: GITHUB_TOKEN
-    label: GitHub token
-    type: password
-    preserve_if_blank: true
-    help: "Required only for GitHub publishing. Keep this token private."
-
-  - name: PUBLIC_URL
-    label: Public URL
-    type: text
-    preserve_if_blank: true
-    help: "Optional full public URL. Leave blank to auto-detect PUBLIC_IP + SoloHost HOST_PORT for QR."
-
-  - name: PUBLIC_IP
-    label: Public IP
-    type: text
-    preserve_if_blank: true
-    help: "Optional. Leave blank: Builder discovers the public IP automatically."
-
-  - name: HOST_PORT
-    label: SoloHost host port
-    type: number
-    preserve_if_blank: true
-    help: "Port SoloHost published for this app (not the container 8080). Auto-read from HOST_PORT when set by SoloHost."
-
   - name: BUILDER_ACCESS_PASSWORD
     label: Builder access password
     type: password
     preserve_if_blank: true
-    help: "Optional but strongly recommended before using the remote QR."
+    help: "Required to open Builder (remote QR). Use at least 16 characters and keep it private."

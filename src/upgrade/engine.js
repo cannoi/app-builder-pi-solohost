@@ -1,4 +1,3 @@
-import { isChangeEngineV2Enabled } from '../engine/flags.js';
 import { collectProjectContextText } from '../services/project-context-resolver.js';
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -397,38 +396,13 @@ Rules: do not invent facts; do not propose dependency-wide upgrades; do not modi
   return { ...finalJson, rule: parsed.valid ? parsed : null, gap, ruleStatus: parsed.valid ? formatRuleStatus(parsed, gap) : '', provider: result.provider || null };
 }
 
-export async function applyUpgrade({ project, projects, snapshots, plan, request, approved = false, ruleExecution = false }) {
+export async function applyUpgrade({
+ project, projects, snapshots, plan, request, approved = false, ruleExecution = false }) {
   const userAction = String(plan?.needs_user_action || '');
   if (/secret|credential|wallet|private key|payment key|destructive/i.test(userAction)) {
     throw new Error(`NEEDS_USER_ACTION: ${userAction}`);
   }
   void approved; void ruleExecution;
-
-  // Change Engine V2: optional plan.edits (search/replace) when flag is on
-  if (isChangeEngineV2Enabled() && Array.isArray(plan?.edits) && plan.edits.length) {
-    const { applyEditsInMemory, normalizeLf, isUnsafePath } = await import('../engine/edits.js');
-    const fs = await import('node:fs/promises');
-    const path = await import('node:path');
-    const sourceDir = projects.sourceDir(project.slug);
-    const paths = [...new Set(plan.edits.map((e) => String(e.path || '')))];
-    const fileMap = {};
-    for (const rel of paths) {
-      if (isUnsafePath(rel)) throw new Error('unsafe path in plan.edits: ' + rel);
-      try { fileMap[rel] = await fs.readFile(path.join(sourceDir, rel), 'utf8'); } catch { /* create */ }
-    }
-    const applied = applyEditsInMemory(fileMap, plan.edits);
-    if (!applied.ok) throw new Error(applied.error || 'Change Engine edits failed');
-    for (const rel of applied.touched) {
-      const abs = path.join(sourceDir, rel);
-      if (!(rel in applied.files)) await fs.unlink(abs).catch(() => {});
-      else {
-        await fs.mkdir(path.dirname(abs), { recursive: true });
-        await fs.writeFile(abs, normalizeLf(applied.files[rel]), 'utf8');
-      }
-    }
-    return { files: applied.touched, engine: 'v2-edits', plan };
-  }
-
   const files = Array.isArray(plan.files) ? plan.files.filter((f) => f && f.path && typeof f.content === 'string') : [];
   if (!files.length) throw Object.assign(new Error('Upgrade plan contains no file changes.'), { code: 'AI_NO_CHANGE', recoverable: true });
   if (files.length > MAX_AUTO_UPGRADE_FILES) throw new Error(`Upgrade scope is too large for an automatic patch (${MAX_AUTO_UPGRADE_FILES} files max).`);

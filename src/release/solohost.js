@@ -4,14 +4,6 @@ import fs from 'node:fs/promises';
 import { applyPolicyToVars, inventoryFields, suggestPolicy } from './solohost-fields.js';
 import { lintPackage } from './solohost-lint.js';
 
-
-/** Write image: value unquoted when safe for YAML scalars. */
-function formatImageYaml(image) {
-  const v = String(image || '').trim();
-  if (/^[A-Za-z0-9._\/@:-]+$/.test(v)) return v;
-  return JSON.stringify(v);
-}
-
 const COMPOSE_CANDIDATES = [
   'docker-compose.yml',
   'compose.yml',
@@ -236,8 +228,8 @@ function buildSoloHostCompose({ sourceCompose = '', image, hostPort, containerPo
   // validator to reject rather than guessing a destructive transformation.
   block = block.filter((line) => !/^\s{4}build:\s*/.test(line));
   const imageIndex = block.findIndex((line) => /^\s{4}image:\s*/.test(line));
-  if (imageIndex >= 0) block[imageIndex] = `    image: ${formatImageYaml(image)}`;
-  else block.splice(1, 0, `    image: ${formatImageYaml(image)}`);
+  if (imageIndex >= 0) block[imageIndex] = `    image: ${image}`;
+  else block.splice(1, 0, `    image: ${image}`);
 
   // Replace the primary UI ports block with exactly one loopback port.
   const portsIndex = block.findIndex((line) => /^\s{4}ports:\s*$/.test(line));
@@ -286,7 +278,7 @@ function canonicalCompose({ image, hostPort, containerPort, envVars }) {
     : `      PORT: ${containerPort}`;
   return `services:
   app:
-    image: ${formatImageYaml(image)}
+    image: ${JSON.stringify(String(image || '').trim())}
     restart: unless-stopped
     labels:
       pi.ui.primary: "true"

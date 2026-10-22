@@ -34,8 +34,7 @@ test('login page exists', () => {
   assert.match(html, /BUILDER_ACCESS_PASSWORD|Unlock/i);
 });
 
-test('unified activity log is only in the AI Panel', () => {
+test('settings contains activity log section', () => {
   const html = fs.readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
-  assert.doesNotMatch(html, /settingsLogs|Activity log|logOut/);
-  assert.match(html, /id="logsView"/);
+  assert.match(html, /settingsLogs|Activity log|logOut/);
 });

@@ -1,4 +1,3 @@
-import { litellmEnabled, litellmBaseUrl } from '../ai/litellm-layer.js';
 import { verifyAccessPassword, accessCookieHeader, accessPasswordConfigured } from '../http-access-auth.js';
 import path from 'node:path';
 import fs from 'node:fs/promises';
@@ -15,8 +14,6 @@ import { powerWarning } from '../docker/modes.js';
 import { preflightPrompt } from '../ai/prompts.js';
 import { normalizeDeepSeekModel } from '../ai/providers/deepseek.js';
 import { inferAction, parseGithubRepoUrl } from '../scripts/ops.js';
-import { routeIntent, isFastPath, isMultiStep } from '../router/intent.js';
-import { detectUserLanguage } from '../ai/language.js';
 import { createProjectZip } from '../projects/exporter.js';
 import { gcDocker } from '../docker/cleanup.js';
 
@@ -37,86 +34,16 @@ export function registerRoutes(r, app) {
   };
 
   r.get('/health', (_req, res) => {
-    let aiStatus = 'missing';
-    try {
-      const hub = ai?.hub?.state?.() || db.setting('aiHub', null);
-      const hasHub = (hub?.connections || []).some((c) => c && c.status !== 'INVALID');
-      const hasLegacy = Boolean(cfg.ai.geminiKey || cfg.ai.deepseekKey);
-      aiStatus = (hasLegacy || hasHub) ? 'configured' : 'missing';
-    } catch { aiStatus = (cfg.ai.geminiKey || cfg.ai.deepseekKey) ? 'configured' : 'missing'; }
     res.json({
       status: 'ok',
       version: cfg.version,
-      ai: aiStatus,
+      ai: (cfg.ai.geminiKey || cfg.ai.deepseekKey) ? 'configured' : 'missing',
       github: github.configured() ? 'configured' : 'optional',
       engine: cfg.runtime?.podman?.apiUrl ? 'podman-sandbox' : 'native-preview',
       preview: { mode: cfg.runtime?.mode || 'auto', containerSandbox: Boolean(cfg.runtime?.podman?.apiUrl), dockerSocket: false },
     });
   });
 
-  r.get('/api/remote/info', async (req, res) => {
-    try {
-      const { resolvePublicUrl, isLoopbackRequest, rememberPublicPort } = await import('../remote/info.js');
-      rememberPublicPort(req);
-      const dataDir = cfg.dataDir || cfg.paths?.data || path.join(process.cwd(), 'data');
-      const refresh = String(req.query?.refresh || '') === '1' || String(req.query?.refresh || '') === 'true';
-      if (refresh) {
-        try { await fs.unlink(path.join(dataDir, 'public-ip-cache.json')); } catch { /* none */ }
-      }
-      const resolved = await resolvePublicUrl({ cfg, req, dataDir });
-      const passwordEnabled = Boolean(cfg.accessPassword);
-      res.json({
-        ok: true,
-        publicUrl: resolved.publicUrl || '',
-        source: resolved.source || 'none',
-        publicIp: resolved.publicIp || '',
-        hostPort: resolved.hostPort || 0,
-        ipSource: resolved.ipSource || '',
-        portSource: resolved.portSource || '',
-        passwordEnabled,
-        loopback: isLoopbackRequest(req),
-      });
-    } catch (err) {
-      res.status(500).json({ error: String(err.message || err) });
-    }
-  });
-  r.post('/api/remote/url', async (req, res) => {
-    try {
-      const url = String(req.body?.publicUrl || req.body?.url || '').trim();
-      if (!url || !/^https?:\/\//i.test(url)) return res.status(400).json({ error: 'Invalid URL' });
-      const dataDir = cfg.dataDir || cfg.paths?.data || path.join(process.cwd(), 'data');
-      await fs.mkdir(dataDir, { recursive: true });
-      await fs.writeFile(path.join(dataDir, 'remote.json'), JSON.stringify({ publicUrl: url.replace(/\/$/, ''), updatedAt: new Date().toISOString() }, null, 2));
-      res.json({ ok: true, publicUrl: url.replace(/\/$/, '') });
-    } catch (err) {
-      res.status(500).json({ error: String(err.message || err) });
-    }
-  });
-
-  r.post('/api/access/generate', async (req, res) => {
-    try {
-      const { isLoopbackRequest } = await import('../remote/info.js');
-      const authorized = isLoopbackRequest(req) || (req.headers.cookie || '').includes('builder_access=');
-      if (!authorized && cfg.accessPassword) return res.status(403).json({ error: 'Forbidden' });
-      if (cfg.accessPassword && !isLoopbackRequest(req)) return res.status(400).json({ error: 'Password already set' });
-      const crypto = await import('node:crypto');
-      const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789';
-      let password = '';
-      const bytes = crypto.randomBytes(12);
-      for (let i = 0; i < 12; i++) password += alphabet[bytes[i] % alphabet.length];
-      const dataDir = cfg.dataDir || cfg.paths?.data || path.join(process.cwd(), 'data');
-      await fs.mkdir(dataDir, { recursive: true });
-      await fs.writeFile(path.join(dataDir, 'access.json'), JSON.stringify({ password, updatedAt: new Date().toISOString() }, null, 2), { mode: 0o600 });
-      cfg.accessPassword = password;
-      const { tokenFor, accessCookieHeader } = await import('../http-access-auth.js').catch(() => ({}));
-      const { verifyAccessPassword, accessCookieHeader: ach } = await import('../http-access-auth.js');
-      const v = verifyAccessPassword(password, cfg);
-      if (v.token) res.setHeader('Set-Cookie', ach(v.token));
-      res.json({ ok: true, password, once: true });
-    } catch (err) {
-      res.status(500).json({ error: String(err.message || err) });
-    }
-  });
   r.get('/ready', (_req, res) => {
     res.json({ ready: true });
   });
@@ -464,26 +391,19 @@ export function registerRoutes(r, app) {
       const probed = await ai.hub.testConnection({ provider, apiKey, baseUrl, model: body.model });
       const models = Array.isArray(probed?.models) ? probed.models : [];
       const id = `${provider}-${Date.now().toString(36)}`;
-      const anyVerified = models.some((m) => m && m.verified);
       ai.hub.upsertConnection({
         id,
         provider,
         apiKey,
         baseUrl,
-        status: anyVerified ? 'VERIFIED' : (probed?.ok === false ? 'ERROR' : 'READY'),
+        status: models.length ? 'VERIFIED' : 'READY',
         models,
-        lastVerified: anyVerified ? new Date().toISOString() : null,
-        lastError: probed?.warning || null,
+        lastVerified: new Date().toISOString(),
+        lastError: null,
       });
       ai.refresh();
-      const verifiedModel = models.find((m) => m && m.verified)?.id || probed?.verifiedModel || null;
-      res.json({
-        ok: Boolean(probed?.ok !== false || anyVerified),
-        models,
-        verifiedModel,
-        warning: probed?.warning || null,
-        hub: ai.hub.publicState(),
-      });
+      const verifiedModel = models.find((m) => m && m.verified)?.id || models[0]?.id || probed?.verifiedModel || null;
+      res.json({ ok: true, models, verifiedModel, hub: ai.hub.publicState() });
     } catch (err) {
       const cls = err.classify || { user: err.message };
       res.status(400).json({ error: cls.user || err.message, code: cls.code || 'UNKNOWN_PROVIDER_ERROR' });
@@ -555,63 +475,8 @@ export function registerRoutes(r, app) {
     }
   });
 
-  
-  r.get('/api/ai/doctor', async (_req, res) => {
-    const out = {
-      ok: false,
-      steps: [],
-      version: cfg.version,
-      at: new Date().toISOString(),
-    };
-    try {
-      const hub = ai?.hub;
-      const st = hub?.state?.() || {};
-      const conns = st.connections || [];
-      const hasKey = conns.some((c) => hub.key?.(c)) || Boolean(cfg.ai?.geminiKey || cfg.ai?.deepseekKey);
-      out.steps.push({ id: 'key_present', ok: hasKey, detail: hasKey ? 'key present' : 'no key' });
-      if (!hasKey) {
-        out.status = 'needs_key';
-        out.message = 'Add an AI key in Settings (Gemini recommended).';
-        return res.json(out);
-      }
-      const pf = hub.preflight?.({}) || { ready: false };
-      out.steps.push({ id: 'preflight', ok: Boolean(pf.ready), detail: pf.status || '', plan: pf.planPreview || [] });
-      // Prefer first gemini/custom connection for list
-      const conn = conns.find((c) => hub.key?.(c) && c.status !== 'INVALID') || conns[0];
-      if (conn && hub.discover) {
-        try {
-          const models = await hub.discover(conn, { force: false });
-          out.steps.push({ id: 'models_listed', ok: Array.isArray(models) && models.length > 0, detail: `${(models || []).length} models` });
-          const chat = (models || []).filter((m) => m && m.state !== 'unavailable');
-          const candidate = chat.find((m) => m.verified)?.id || chat[0]?.id;
-          if (candidate && hub.probeModel) {
-            const probe = await hub.probeModel({ ...conn, models: [{ id: candidate }] }, candidate);
-            out.steps.push({
-              id: 'best_verified',
-              ok: Boolean(probe?.ok),
-              detail: probe?.ok ? candidate : (probe?.error?.message || 'probe failed'),
-              model: candidate,
-            });
-          }
-        } catch (err) {
-          out.steps.push({ id: 'discover', ok: false, detail: String(err.message || err).slice(0, 200) });
-        }
-      }
-      out.ok = out.steps.every((s) => s.ok !== false) || out.steps.some((s) => s.id === 'best_verified' && s.ok);
-      out.status = out.ok ? 'healthy' : 'degraded';
-      out.routingMode = st.mode || 'AUTO';
-      out.preferredModels = st.preferredModels || [];
-      res.json(out);
-    } catch (err) {
-      out.message = String(err.message || err).slice(0, 240);
-      res.status(500).json(out);
-    }
-  });
-
-
   r.post('/api/ai/hub/routing', (req, res) => {
     ai.hub.setRouting({
-      mode: req.body?.mode,
       preferredProvider: req.body?.preferredProvider,
       preferredModel: req.body?.preferredModel,
       preferredModels: req.body?.preferredModels,
@@ -701,65 +566,28 @@ export function registerRoutes(r, app) {
     const message = String(req.body?.message || req.body?.idea || '').trim();
     if (!message) return res.status(400).json({ error: 'Tell me what you want to build or ask.' });
     if (!ensureFree(null, res)) return;
-    const files = Array.isArray(req.body?.files) ? req.body.files : [];
-    const lang = detectUserLanguage(message);
-    const decision = routeIntent({ message, files, hasProject: false });
     const githubRepo = parseGithubRepoUrl(message);
-
-    // Allowed without an open project: CREATE, UPGRADE_IMPORT, IMPORT, ASK, SETTINGS
-    if (githubRepo || decision.intent === 'UPGRADE_IMPORT') {
-      const job = jobs.enqueue({ type: 'upgrade_github_import', payload: { url: githubRepo?.url || message } });
+    if (githubRepo) {
+      const job = jobs.enqueue({ type: 'upgrade_github_import', payload: { url: githubRepo.url } });
       setImmediate(() => jobs.kick(job));
-      return res.status(202).json({ jobId: job.id, message: 'GitHub Upgrade Workshop started.', route: 'upgrade', intent: 'UPGRADE_IMPORT', reply_language: lang });
+      return res.status(202).json({ jobId: job.id, message: 'GitHub Upgrade Workshop started.', route: 'upgrade' });
     }
-    if (decision.intent === 'IMPORT' || files.some((f) => /\.zip$/i.test(f?.name || f?.originalname || ''))) {
-      const job = jobs.enqueue({ type: 'import_app', payload: { source: 'chat' } });
-      job._files = files;
-      setImmediate(() => jobs.kick(job));
-      return res.status(202).json({ jobId: job.id, message: 'Importing ZIP…', route: 'import', intent: 'IMPORT', reply_language: lang });
-    }
-    if (decision.intent === 'SETTINGS') {
-      return res.json({
-        reply: lang === 'Vietnamese' ? 'Mở ⚙ Settings để thêm khóa AI hoặc GitHub.' : 'Open ⚙ Settings to add an AI or GitHub key.',
-        route: 'answer', intent: 'SETTINGS', reply_language: lang,
-      });
-    }
-    if (decision.intent === 'ASK' || decision.source === 'infer' && decision.intent === 'ASK') {
-      try {
-        const routed = await ai.completeJson({
-          task: 'USER_CHAT',
-          system: 'Answer briefly in the user language. Return JSON {route,reply}. route is answer unless user clearly wants a new app built.',
-          prompt: preflightPrompt(message),
-          images: [],
-        });
-        return res.json({
-          reply: String(routed.json?.reply || '').trim() || (lang === 'Vietnamese' ? 'Bạn muốn tạo app gì?' : 'What app should I build?'),
-          route: 'answer', intent: 'ASK', reply_language: lang,
-        });
-      } catch (err) {
-        return res.json({
-          reply: lang === 'Vietnamese'
-            ? `AI tạm không trả lời được. Mô tả app bạn muốn tạo, hoặc dán link GitHub.`
-            : `AI is unavailable. Describe the app to build, or paste a GitHub link.`,
-          route: 'answer', intent: 'ASK', reply_language: lang,
-        });
+    const files = Array.isArray(req.body?.files) ? req.body.files : [];
+    try {
+      const routed = await ai.completeJson({ task: 'USER_CHAT', system: 'You route first messages. Return only JSON. Do not build unless the user clearly asks to build.', prompt: preflightPrompt(message), images: [] });
+      if (String(routed.json?.route || '').toLowerCase() !== 'build') {
+        return res.json({ reply: String(routed.json?.reply || '').trim() || 'I can answer questions here. Tell me when you want me to build an app.', route: 'answer' });
+      }
+    } catch (err) {
+      const inferred = inferAction(message);
+      if (inferred !== 'build') {
+        return res.json({ reply: `I could not analyze that request because the AI provider is unavailable. ${String(err.message || '').slice(0, 220)}`, route: 'answer' });
       }
     }
-    // No project yet: RUN/PUBLISH/EXPORT/MODIFY(partial)/REPAIR/UNDO → guide only
-    const blocked = new Set(['RUN', 'PUBLISH', 'EXPORT', 'REPAIR', 'UNDO']);
-    if (blocked.has(decision.intent) || (decision.intent === 'MODIFY' && !/(?:tạo\s*app|build\s+(?:an?\s+)?app|make\s+(?:an?\s+)?app)/iu.test(message))) {
-      return res.json({
-        reply: lang === 'Vietnamese'
-          ? 'Chưa có app. Hãy mô tả ý tưởng hoặc dán link GitHub.'
-          : 'No app yet. Describe an idea or paste a GitHub link.',
-        route: 'answer', intent: decision.intent, reply_language: lang,
-      });
-    }
-    // CREATE (or MODIFY that describes a full app)
-    const job = jobs.enqueue({ type: 'create_app', payload: { idea: message, autoBuild: true, intent: 'CREATE', reply_language: lang } });
+    const job = jobs.enqueue({ type: 'create_app', payload: { idea: message, autoBuild: true } });
     job._files = files;
     setImmediate(() => jobs.kick(job));
-    res.status(202).json({ jobId: job.id, message: 'Builder started.', route: 'build', intent: 'CREATE', reply_language: lang });
+    res.status(202).json({ jobId: job.id, message: 'Builder started.', route: 'build' });
   });
 
   r.post('/api/projects', (req, res) => {
@@ -870,6 +698,25 @@ export function registerRoutes(r, app) {
     res.status(202).json({ jobId: job.id, message: 'Project diagnosis started.' });
   });
 
+  r.post('/api/projects/:id/advisor', (req, res) => {
+    const p = projects.get(req.params.id);
+    if (!p) return res.status(404).json({ error: 'Project not found' });
+    if (!ensureFree(p.id, res)) return;
+    const job = jobs.enqueue({ type: 'builder_advisor', projectId: p.id, payload: { projectId: p.id, scope: req.body?.scope || '30d' } });
+    setImmediate(() => jobs.kick(job));
+    res.status(202).json({ jobId: job.id, message: 'Builder Advisor started.' });
+  });
+
+  r.post('/api/advisor/analyze', (req, res) => {
+    if (!ensureFree(req.body?.projectId || null, res)) return;
+    const job = jobs.enqueue({
+      type: 'builder_advisor',
+      projectId: req.body?.projectId || null,
+      payload: { projectId: req.body?.projectId || null, scope: req.body?.scope || '30d' },
+    });
+    setImmediate(() => jobs.kick(job));
+    res.status(202).json({ jobId: job.id, message: 'Advisor analysis started. No files will be changed.' });
+  });
 
   r.get('/api/projects/:id/diagnosis', async (req, res) => {
     const p = projects.get(req.params.id);
@@ -929,96 +776,31 @@ export function registerRoutes(r, app) {
       session: await projects.readMetadata(p, 'upgrade-session.json', null),
       ruleExecution: await projects.readMetadata(p, 'upgrade-rule-execution.json', null),
       diagnosis: await projects.readMetadata(p, 'project-diagnosis.json', null),
+      advisor: await projects.readMetadata(p, 'builder-advisor.json', null),
     });
   });
 
-  r.post('/api/projects/:id/chat', async (req, res) => {
+  r.post('/api/projects/:id/chat', (req, res) => {
     const p = projects.get(req.params.id);
     if (!p) return res.status(404).json({ error: 'Project not found' });
     if (!ensureFree(p.id, res)) return;
     const message = String(req.body?.message || '').trim();
     if (!message) return res.status(400).json({ error: 'Write a message first.' });
-    const files = Array.isArray(req.body?.files) ? req.body.files : [];
-    const lang = detectUserLanguage(message);
-    const decision = routeIntent({ message, files, hasProject: true });
     const githubRepo = parseGithubRepoUrl(message);
-
-    if (githubRepo || decision.intent === 'UPGRADE_IMPORT') {
-      const job = jobs.enqueue({ type: 'upgrade_github_import', payload: { url: githubRepo?.url || message } });
+    if (githubRepo && String(p.status || '').startsWith('UPGRADE')) {
+      const job = jobs.enqueue({ type: 'upgrade_github_import', payload: { url: githubRepo.url } });
       setImmediate(() => jobs.kick(job));
-      return res.status(202).json({ jobId: job.id, message: 'GitHub Upgrade Workshop started.', route: 'upgrade', intent: 'UPGRADE_IMPORT', reply_language: lang });
+      return res.status(202).json({ jobId: job.id, message: 'GitHub Upgrade Workshop started.', route: 'upgrade' });
     }
-    if (decision.intent === 'UNDO') {
-      const list = typeof snapshots?.list === 'function' ? snapshots.list(p.id) : [];
-      if (!list?.length) {
-        return res.json({
-          reply: lang === 'Vietnamese' ? 'Chưa có điểm khôi phục để hoàn tác.' : 'No checkpoint to undo.',
-          route: 'answer', intent: 'UNDO', reply_language: lang,
-        });
-      }
-      // Same path as POST /api/projects/:id/rollback
-      const target = list[0];
-      await snapshots.restore(p, target.id);
-      return res.json({
-        ok: true,
-        reply: lang === 'Vietnamese' ? `Đã hoàn tác về điểm ${target.id}.` : `Rolled back to checkpoint ${target.id}.`,
-        route: 'rollback', intent: 'UNDO', reply_language: lang, snapshotId: target.id,
-      });
-    }
-
-    // Fast path only for short, high-confidence RUN / EXPORT (zip)
-    const fast = isFastPath(decision, message);
-    if (fast && decision.intent === 'RUN') {
-      const job = jobs.enqueue({ type: 'run', projectId: p.id, payload: { projectId: p.id } });
-      setImmediate(() => jobs.kick(job));
-      return res.status(202).json({ jobId: job.id, message: 'Starting preview…', route: 'run', intent: 'RUN', reply_language: lang });
-    }
-    if (fast && decision.intent === 'EXPORT') {
-      const job = jobs.enqueue({ type: 'export_zip', projectId: p.id, payload: { projectId: p.id, kind: 'project' } });
-      setImmediate(() => jobs.kick(job));
-      return res.status(202).json({ jobId: job.id, message: 'Preparing ZIP…', route: 'export', intent: 'EXPORT', reply_language: lang });
-    }
-
-    // PUBLISH, multi-step, MODIFY, REPAIR, low confidence → builder_chat (AI + gates)
-    if (decision.intent === 'MODIFY' || decision.intent === 'REPAIR') {
-      const job = jobs.enqueue({
-        type: 'improve',
-        projectId: p.id,
-        payload: {
-          projectId: p.id,
-          feedback: message,
-          intent: decision.intent,
-          risk: decision.risk,
-          reply_language: lang,
-        },
-      });
-      job._files = files;
-      setImmediate(() => jobs.kick(job));
-      return res.status(202).json({ jobId: job.id, message: 'Applying change…', route: 'improve', intent: decision.intent, reply_language: lang });
-    }
-
-    if (String(p.status || '').startsWith('UPGRADE') && decision.intent !== 'ASK' && decision.intent !== 'PUBLISH') {
+    if (String(p.status || '').startsWith('UPGRADE')) {
       const job = jobs.enqueue({ type: 'upgrade_request', projectId: p.id, payload: { projectId: p.id, request: message } });
       setImmediate(() => jobs.kick(job));
-      return res.status(202).json({ jobId: job.id, message: 'Upgrade diagnosis started.', route: 'upgrade', intent: decision.intent, reply_language: lang });
+      return res.status(202).json({ jobId: job.id, message: 'Upgrade diagnosis started.', route: 'upgrade' });
     }
-
-    // Default: builder_chat handles PUBLISH confirmation, multi-step, questions, etc.
-    const job = jobs.enqueue({
-      type: 'builder_chat',
-      projectId: p.id,
-      payload: {
-        projectId: p.id,
-        message,
-        intent: decision.intent,
-        risk: decision.risk,
-        reply_language: lang,
-        multiStep: decision.multiStep || isMultiStep(message),
-      },
-    });
-    job._files = files;
+    const job = jobs.enqueue({ type: 'builder_chat', projectId: p.id, payload: { projectId: p.id, message } });
+    job._files = Array.isArray(req.body?.files) ? req.body.files : [];
     setImmediate(() => jobs.kick(job));
-    res.status(202).json({ jobId: job.id, message: 'Builder is working.', intent: decision.intent, reply_language: lang, via: 'builder_chat' });
+    res.status(202).json({ jobId: job.id, message: 'Builder is working.' });
   });
 
   r.post('/api/projects/:id/attachments', async (req, res) => {
@@ -1289,44 +1071,7 @@ export function registerRoutes(r, app) {
   });
 
   r.get('/api/jobs', (req, res) => {
-    const limit = Math.max(1, Math.min(Number(req.query?.limit || 30), 200));
-    res.json(jobs.list({ projectId: req.query.projectId, limit }));
-  });
-
-  // Read-only unified diagnostic feed: task lifecycle, every recorded job stage, and failures.
-  r.get('/api/activity/unified', (req, res) => {
-    const limit = Math.max(1, Math.min(Number(req.query?.limit || 80), 200));
-    try {
-      const summaries = jobs.list({ projectId: req.query.projectId, limit });
-      const entries = [];
-      for (const summary of summaries) {
-        const job = jobs.get(summary.id);
-        if (!job) continue;
-        // Timeline only from real job events (avoid status summary colliding at created_at)
-        const seenErr = new Set();
-        for (const event of (job.events || [])) {
-          const msg = `${job.type || 'task'} · ${event.stage || ''} · ${event.status || ''} · ${String(event.message || '').slice(0, 1200)}`;
-          const isErr = /fail|error|blocked/i.test(`${event.status || ''} ${event.message || ''}`);
-          if (isErr) {
-            const key = String(event.message || msg).slice(0, 200);
-            if (seenErr.has(key)) continue;
-            seenErr.add(key);
-          }
-          entries.push({ ts: event.created_at || '', level: isErr ? 'error' : 'task', msg });
-        }
-        if (job.error) {
-          const key = String(job.error).slice(0, 200);
-          if (!seenErr.has(key)) {
-            seenErr.add(key);
-            entries.push({ ts: job.updated_at || '', level: 'error', msg: `${job.type || 'task'} failed: ${String(job.error).slice(0, 1200)}` });
-          }
-        }
-      }
-      entries.sort((a, b) => String(a.ts).localeCompare(String(b.ts)));
-      res.json({ entries: entries.slice(-500) });
-    } catch (err) {
-      res.status(500).json({ error: String(err.message || err) });
-    }
+    res.json(jobs.list({ projectId: req.query.projectId }));
   });
 
   r.get('/api/projects/:id/logs', (req, res) => {

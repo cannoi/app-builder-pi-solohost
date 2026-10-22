@@ -1,7 +1,5 @@
 import { languageInstruction } from './language.js';
 import { BUILDER_KNOWLEDGE } from './knowledge.js';
-export const NATIVE_MODULE_BAN = `Do not use native modules (better-sqlite3, sqlite3, bcrypt, sharp, canvas). Store data with node:sqlite (Node >=22) or JSON files; hash passwords with node:crypto scrypt.`;
-
 export const SOLOHOST_CONTRACT = `SoloHost current developer contract (Pi Desktop 0.6.3, contract v0):
 - A published package contains docker-compose.yml and config_options.yml; the app source is inside a pre-built public Docker image.
 - SoloHost pulls the image and runs docker compose up -d; it does not build the image.
@@ -16,13 +14,13 @@ export const SOLOHOST_CONTRACT = `SoloHost current developer contract (Pi Deskto
 
 export const SYSTEM = `You are the Builder inside App Builder — Pi SoloHost.
 You are an autonomous senior product engineer working with a non-technical user.
-Your job is to turn natural language into a real, testable, publishable SoloHost app.\nDo not use native modules (better-sqlite3, sqlite3, bcrypt, sharp, canvas). Store data with node:sqlite (Node >=22) or JSON files; hash passwords with node:crypto scrypt.
+Your job is to turn natural language into a real, testable, publishable SoloHost app.
 
 Core loop:
 Understand → ask only necessary questions → plan → build → test → security scan → isolated preview → run → show errors → receive feedback → patch → test again → run again → prepare publish package.
 
 Rules:
-- Gemini is the default AI provider. DeepSeek, Custom OpenAI-compatible, and Personal AI Hub are supported fallbacks. Prefer the user-selected model; if none is set, use auto when the provider offers it.
+- DeepSeek is the default AI provider. Gemini is an optional fallback.
 - Prefer simple, maintainable stacks, but choose another stack when the project requires it.
 - Never place secrets in generated source.
 - Generated apps must listen on 0.0.0.0 inside the container and expose their real internal port.
@@ -148,44 +146,34 @@ Return JSON with name, summary, user_flow, features, architecture, data_model, s
 }
 
 export function codePrompt(project, plan, attachmentContext = '') {
-  const _nativeBan = NATIVE_MODULE_BAN;
-  return `${languageInstruction(project.idea)}
-
-Generate APP-SPECIFIC files for a small SoloHost app (Builder adds Dockerfile, docker-compose.yml, config_options.yml, .gitignore, README skeleton automatically).
-
-Project: ${project.name}
+  return `${languageInstruction(project.idea)}\n\nGenerate a complete small production-ready application.\nProject: ${project.name}
 Idea: ${project.idea}
 Plan: ${JSON.stringify(plan, null, 2)}
 Attachments: ${attachmentContext}
 
-${_nativeBan}
+Return JSON:
+{"files":[{"path":"relative/path","content":"..."}],"notes":"short notes"}
 
-Output protocol (preferred — raw file content, no JSON escaping):
-<<<FILE path="package.json">>>
-{ ... }
-<<<END FILE>>>
-<<<FILE path="server.js">>>
-...
-<<<END FILE>>>
-<<<NOTES>>>
-short notes
-<<<END NOTES>>>
+Required baseline:
+- package.json with start/test scripts
+- server and frontend appropriate to the chosen stack
+- health/readiness endpoint
+- Dockerfile
+- docker-compose.yml (127.0.0.1 host bind, label pi.ui.primary: "true")
+- config_options.yml (SoloHost operator form). Put API keys, access tokens, IDs, passwords, and other operator-specific settings here instead of hard-coding them. Use password fields for secrets and simple text/select fields for IDs/options; do not expose unnecessary internal metrics or technical numbers.
+- .env.example
+- .gitignore
+- README.md
+- INSTALL.md
+- tests
+- CHANGELOG.md
 
-You may instead return JSON: {"files":[{"path":"...","content":"..."}],"notes":"..."}
-
-Required app files (≤12, keep each file modest):
-- package.json with start script
-- main server (listen 0.0.0.0, PORT env, /health)
-- frontend (public/index.html + minimal CSS/JS if needed)
-- optional tests
-
-Do NOT emit: Dockerfile, docker-compose.yml, config_options.yml, .env, credentials, node_modules, docker.sock mounts.
-Do not put secrets in source.`;
+Do not include .env, credentials, node_modules, or host Docker socket mounts.`;
 }
 
 export function patchPrompt(project, error, files, feedback = '') {
   return `${languageInstruction(feedback || project.idea)}\n
-[ACTION: SAFE REPAIR — MANDATORY]\nDo not use native modules (better-sqlite3, sqlite3, bcrypt, sharp, canvas). Store data with node:sqlite (Node >=22) or JSON files; hash passwords with node:crypto scrypt.
+[ACTION: SAFE REPAIR — MANDATORY]
 - Inspect evidence and identify the root cause before editing.
 - Change only the affected files and only what is required to fix the cause.
 - Preserve all working features, behavior, architecture, UI flow, configuration, and data.

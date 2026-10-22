@@ -6,10 +6,10 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>App Builder — Pi SoloHost</title>
   <meta name="theme-color" content="#0e1116">
-  <link rel="stylesheet" href="/styles.css?v=2.4.0">
+  <link rel="stylesheet" href="/styles.css?v=1.7.2">
 <style>.paf-made-by{position:fixed;right:8px;bottom:8px;width:min(72px,12vw);max-width:12vw;height:auto;object-fit:contain;opacity:.5;background:transparent;padding:0;border:0;box-shadow:none;filter:none;pointer-events:none;z-index:30}</style>
-  <link rel="stylesheet" href="/ai-panel.css?v=2.4.0">
-</head><body data-ui-simple="1">
+  <link rel="stylesheet" href="/ai-panel.css">
+</head><body>
   <div id="app"><header class="hero">
   <img src="/banner.png" alt="App Builder — Pi SoloHost">
 </header>
@@ -44,7 +44,6 @@
     </select>
 
     <button id="settingsBtn" class="iconBtn" title="Settings">⚙</button>
-    <button id="langToggle" class="iconBtn langToggle" type="button" title="Language / Ngôn ngữ" aria-label="Language">EN</button>
   </div>
 </header>
 
@@ -67,23 +66,79 @@
 
   <section class="composer">
 
-    
-    <div class="contextChipRow" id="contextChipRow">
-      <button type="button" class="contextChip" id="contextChip" hidden></button>
+    <div class="quickGroups">
+
+      <!-- CREATE APP -->
+      <div class="group">
+        <span class="groupLabel">🏗️ Create App</span>
+
+        <button data-action="improve">✦ Improve</button>
+        <button data-action="edit">✎ Edit</button>
+        <button data-action="run">▶ Run</button>
+      </div>
+
+      <!-- UPGRADE APP -->
+      <div class="group">
+        <span class="groupLabel">🔧 Upgrade App</span>
+
+        <button data-action="upgrade">🔧 Upgrade</button>
+      </div>
+
+      <!-- PUBLISH -->
+      <div class="group">
+        <span class="groupLabel">🚀 Publish</span>
+
+        <button data-action="publish">🚀 Publish</button>
+      </div>
+
+      <!-- TOOLS -->
+      <div class="group">
+        <span class="groupLabel">🧰 Tools</span>
+
+        <button data-action="export">⬇ Zip</button>
+
+        <button
+          type="button"
+          id="importZipBtn"
+          data-action="import">
+          ⬆ Import
+        </button>
+
+        <button
+          type="button"
+          id="scriptRunBtn"
+          data-action="script-run">
+          📦 Run ZIP
+        </button>
+
+        <button data-action="sandbox">🧪 Sandbox</button>
+        <button
+          type="button"
+          id="scriptGhBtn"
+          data-action="script-github">
+          ⬆ GitHub
+        </button>
+      </div>
+
+      <!-- SUPPORT -->
+      <div class="group">
+        <span class="groupLabel">💛 Support</span>
+        <!-- feedback moved to universal AI panel -->
+        <button
+          type="button"
+          id="supportBtn"
+          data-action="support">
+          💛 Support
+        </button>
+      </div>
+
     </div>
 
-<input
+    <input
       id="importZipInput"
       type="file"
       accept=".zip,application/zip"
       hidden>
-
-    
-    <div class="quickActions" id="quickActions">
-      <button type="button" id="btnRun" class="qaBtn primary" data-action="run" data-i18n="qa.run">▶ Run</button>
-      <button type="button" id="btnPublish" class="qaBtn" data-action="publish" data-i18n="qa.publish">🚀 Publish</button>
-      <button type="button" id="btnDonate" class="qaBtn" data-action="support" data-i18n="qa.donate">💛 Donate</button>
-    </div>
 
     <div class="inputRow">
 
@@ -104,25 +159,17 @@
       <textarea
         id="message"
         rows="2"
-        placeholder="Describe your app idea, paste a GitHub link, or say what to change…" data-i18n-placeholder="chat.placeholder"></textarea>
+        placeholder="Tell me the app you want. I will lead the rest."></textarea>
 
-      <button id="sendBtn" class="send" title="Send">➤</button>
-      <button id="moreBtn" class="moreBtn" type="button" title="More" aria-haspopup="true">⋯</button>
-<div id="moreMenu" class="moreMenu" hidden>
-        <button type="button" data-more="export" data-i18n="more.zip">⬇ Download ZIP</button>
-        <button type="button" data-more="import" data-i18n="more.import">⬆ Import ZIP</button>
-        <button type="button" data-more="sandbox" data-i18n="more.sandbox">🧪 Sandbox</button>
-        <button type="button" data-more="script-run" data-i18n="more.scriptRun">📦 Run script on PC</button>
-        <button type="button" data-more="script-github" data-i18n="more.scriptGithub">⬆ GitHub push script</button>
-        <button type="button" data-more="rollback" data-i18n="more.rollback">↩ Undo</button>
-        <button type="button" data-more="support" data-i18n="more.support">💛 Support</button>
-      </div>
+      <button id="sendBtn" class="send">➤</button>
 
     </div>
 
     <div id="attachments" class="attachments"></div>
 
-    <p class="hint" data-i18n="chat.hint">1 Idea → 2 Run → 3 Publish. I keep the next step visible.</p>
+    <p class="hint">
+      1 Idea → 2 Run → 3 Publish. I keep the next step visible.
+    </p>
 
   </section>
 </main>
@@ -256,27 +303,14 @@
         placeholder="https://api.example.com/v1">
     </label>
 
-    <div class="row" style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin:8px 0">
-      <label style="display:flex;align-items:center;gap:6px;margin:0">
-        <input type="radio" name="routingMode" id="routingAuto" value="AUTO" checked>
-        <span data-i18n="routing.auto">Auto (recommended)</span>
-      </label>
-      <label style="display:flex;align-items:center;gap:6px;margin:0">
-        <input type="radio" name="routingMode" id="routingSelected" value="SELECTED">
-        <span data-i18n="routing.choose">Choose model</span>
-      </label>
-    </div>
-
     <label>
       Model
       <input id="hubModel" type="text" list="hubModelOptions" autocomplete="off"
         placeholder="Type model id or Load models then pick">
       <datalist id="hubModelOptions"></datalist>
     </label>
-    <div id="hubModelBadges" class="hubModelBadges small" style="margin:4px 0 8px;display:flex;flex-wrap:wrap;gap:6px"></div>
 
     <div class="row hubModelActions" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-      <button id="aiDoctorBtn" class="ws-btn" type="button" title="AI health check">🩺 AI check</button>
       <button id="hubLoadModels" class="ws-btn" type="button" title="Fetch models from Provider + API key">↻ Load models</button>
     </div>
 
@@ -300,7 +334,7 @@
     </label>
 
     <div class="settingNote">
-      <span>Auto prefers Gemini · user-selected model always first</span>
+      <span>First added key is used first</span>
       <span>🛡 No docker.sock</span>
     </div>
 
@@ -315,6 +349,37 @@
   </div>
 
   <button id="saveSettings" class="primary wide">Save</button>
+
+  <div class="settingsSection" id="settingsLogs">
+    <h3>📋 Activity log</h3>
+    <p class="muted">Recent Builder jobs and project activity — useful when asking AI to fix an error.</p>
+    <div class="settingsGrid compactModels">
+      <label>Scope
+        <select id="logScope">
+          <option value="global" selected>All recent jobs</option>
+          <option value="project">Current project</option>
+        </select>
+      </label>
+      <label>Refresh
+        <button id="logRefresh" class="wide" type="button">↻ Reload log</button>
+      </label>
+    </div>
+    <pre id="logOut" class="advisorOut muted">Open Settings to load activity…</pre>
+  </div>
+
+  <div class="advisorBox">
+    <h3>🧭 AI Advisor</h3>
+    <p class="muted">Reviews history only. It never edits your app or Builder.</p>
+    <label>Scope
+      <select id="advisorScope">
+        <option value="7d">7 days</option>
+        <option value="30d" selected>30 days</option>
+        <option value="all">All history</option>
+      </select>
+    </label>
+    <button id="advisorRun" class="wide" type="button">Analyze now</button>
+    <pre id="advisorOut" class="advisorOut muted">No analysis yet.</pre>
+  </div>
 
   <p id="settingsState" class="muted"></p>
 
@@ -383,6 +448,7 @@
         <div class="panel-body logs-body">
           <div class="logs-toolbar">
             <button type="button" class="ws-btn" id="logsRefresh">Refresh</button>
+            <button type="button" class="ws-btn" id="logsClear">Clear</button>
           </div>
           <pre id="logsView" class="logs-view">Loading…</pre>
         </div>
@@ -392,8 +458,7 @@
 
   
 
-<!-- shfh-client removed: universal feedback panel --><script src="/i18n.js?v=2.4.0"></script>
-  <script type="module" src="/app.js?v=2.4.0"></script><img
+<!-- shfh-client removed: universal feedback panel --><script src="/app.js?v=1.7.2"></script><img
 class="paf-made-by"
 src="/made-by.png"
 alt="Made with App Builder — Pi SoloHost">
@@ -403,7 +468,6 @@ alt="Made with App Builder — Pi SoloHost">
 <script src="/ai-hub-sdk.js"></script>
 <script src="/ai-module/ai-module.js?v=1.4.77"></script>
 <script src="/feedback-module/feedback-module.js?v=1.4.77"></script>
-<script src="/qrcode-lite.js"></script>
-<script src="/ai-panel.js?v=2.4.0"></script>
+<script src="/ai-panel.js?v=1.7.2"></script>
 </body>
                                              </html>

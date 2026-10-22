@@ -1,20 +1,5 @@
 const $ = (id) => document.getElementById(id);
-function uiT(key, fallback = '') {
-  try {
-    if (window.pafI18n && typeof window.pafI18n.t === 'function') return window.pafI18n.t(key);
-  } catch {}
-  return fallback || key;
-}
-function uiLocale() {
-  try {
-    if (window.pafI18n && window.pafI18n.locale) return window.pafI18n.locale;
-    const s = localStorage.getItem('paf_locale');
-    if (s === 'vi' || s === 'en') return s;
-  } catch {}
-  return 'en';
-}
-
-const state = { projectId: null, projects: [], busy: false, jobId: null, poll: null, pollFailures: 0, seenEvents: 0, files: [], settings: null, pollInFlight: false, pollInFlightJobId: null, watchSeq: 0, lastNotice: '', jobStartedAt: 0, slowOffered: false };
+const state = { projectId: null, projects: [], busy: false, jobId: null, poll: null, pollFailures: 0, seenEvents: 0, files: [], settings: null, pollInFlight: false, pollInFlightJobId: null, watchSeq: 0, lastNotice: '' };
 
 async function api(url, options = {}) {
   const r = await fetch(url, { headers: { 'Content-Type': 'application/json', ...(options.headers || {}) }, ...options });
@@ -223,37 +208,17 @@ function renderSoloHostKitCard(kit) {
   return box;
 }
 
-
-function renderOrchestratorPlanCard(text) {
-  const lines = String(text || '').split('\n').filter(Boolean);
-  if (lines.length < 2) return null;
-  if (!/^(Plan|Kế hoạch)/i.test(lines[0]) && !/[✅⚠️⏳⏭️☐]/.test(text)) return null;
-  const items = lines.slice(1).map((ln) => {
-    const esc = (s) => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;');
-    return '<li>' + esc(ln) + '</li>';
-  }).join('');
-  return '<div class="orch-plan-card" data-orch-plan="1"><div class="orch-plan-title">' +
-    lines[0].replace(/</g,'&lt;') + '</div><ul class="orch-plan-list">' + items + '</ul></div>';
-}
-
-function shouldSkipNotice(text, meta = {}) {
-  // User-driven feedback always shows (buttons / chat). Job noise may dedupe within 3s.
-  if (meta.force || meta.fromUser) {
-    state.lastNotice = '';
-    return false;
-  }
+function shouldSkipNotice(text) {
   const key = compactNotice(text).slice(0, 180);
   if (!key) return true;
-  const now = Date.now();
-  if (state.lastNotice === key && (now - (state.lastNoticeAt || 0)) < 3000) return true;
+  if (state.lastNotice === key) return true;
   state.lastNotice = key;
-  state.lastNoticeAt = now;
   return false;
 }
 function add(role, text, meta = {}) {
   if (!text) return;
   const textOut = role === 'user' ? text : compactNotice(text);
-  if (role !== 'user' && shouldSkipNotice(textOut, meta)) return;
+  if (role !== 'user' && shouldSkipNotice(textOut)) return;
   const stick = chatNearBottom();
   const el = document.createElement('div'); el.className = `msg ${role}`; el.textContent = role === 'user' ? text : compactNotice(text);
   if (meta.small) { const s = document.createElement('span'); s.className = 'small'; s.textContent = meta.small; el.appendChild(s); }
@@ -353,44 +318,18 @@ async function stopLive() {
     else setBusy(false);
   } catch (e) { handleJobActionError(e); }
 }
-
-function showSlowWaitCard(secs, modelHint) {
-  if (state.slowOffered) return;
-  state.slowOffered = true;
-  const box = document.createElement('div');
-  box.className = 'msg system';
-  box.id = 'slowWaitCard';
-  const m = modelHint || 'AI';
-  box.innerHTML = `<div><strong>Waiting for ${m} (${secs}s)…</strong></div>`;
-  const row = document.createElement('div');
-  row.className = 'actionCard';
-  const waitBtn = document.createElement('button');
-  waitBtn.textContent = 'Wait';
-  waitBtn.onclick = () => { state.slowOffered = false; box.remove(); };
-  const cancelBtn = document.createElement('button');
-  cancelBtn.textContent = 'Cancel';
-  cancelBtn.onclick = () => cancelCurrentJob();
-  const switchBtn = document.createElement('button');
-  switchBtn.textContent = 'Switch model';
-  switchBtn.onclick = () => { try { $('settingsBtn')?.click(); } catch {} };
-  row.append(waitBtn, cancelBtn, switchBtn);
-  box.appendChild(row);
-  $('chat')?.appendChild(box);
-}
-
 function setBusy(on, text = 'Working…') {
   state.busy = on;
-  if (on) { state.jobStartedAt = Date.now(); state.slowOffered = false; }
   $('busyBar').hidden = !on;
   $('busyText').textContent = on ? text : 'Ready';
   if ($('workPill')) { $('workPill').textContent = on ? 'Working' : 'Ready'; $('workPill').className = on ? 'pill work' : 'pill ready'; }
-  document.querySelectorAll('#attachBtn,#message,#moreBtn').forEach((x) => { if (x) x.disabled = on && x.id !== 'sendBtn'; });
+  document.querySelectorAll('.quickGroups button,#attachBtn,#message').forEach((x) => { x.disabled = on; });
   if ($('projectSelect')) $('projectSelect').disabled = on;
   // Send button turns into a Stop button while a job is running, instead of being disabled.
   const sendBtn = $('sendBtn');
   if (sendBtn) {
     sendBtn.disabled = false;
-    sendBtn.textContent = on ? '⏹' : '➤';
+    sendBtn.textContent = on ? '■' : '➤';
     sendBtn.title = on ? 'Stop / cancel current action' : 'Send';
     sendBtn.classList.toggle('stopMode', on);
   }
@@ -426,7 +365,7 @@ function maybeJump() {
   $('jumpDown').hidden = chatNearBottom() || el.scrollHeight <= el.clientHeight + 20;
 }
 function project() { return state.projects.find((p) => p.id === state.projectId) || null; }
-function actionText(action) { return ({ build:'Build the app', run:'Run the app', improve:'Improve the app', edit:'Edit the app', analyze:'Check the app', diagnose:'Diagnose the app', upgrade:'Inspect & upgrade', publish:'Prepare the release', sandbox:'Test the sandbox' })[action] || action; }
+function actionText(action) { return ({ build:'Build the app', run:'Run the app', improve:'Improve the app', edit:'Edit the app', analyze:'Check the app', diagnose:'Diagnose the app', advisor:'Review Builder advice', upgrade:'Inspect & upgrade', publish:'Prepare the release', sandbox:'Test the sandbox' })[action] || action; }
 
 async function loadStatus() {
   try {
@@ -495,6 +434,29 @@ function renderModelSelectors(hub) {
     if (all.some((x) => x.value === current)) input.value = current;
   }
 }
+async function loadActivityLog() {
+  const out = $('logOut');
+  if (!out) return;
+  out.textContent = 'Loading…';
+  try {
+    const scope = $('logScope')?.value || 'global';
+    const q = scope === 'project' && state.projectId
+      ? `?projectId=${encodeURIComponent(state.projectId)}&limit=80`
+      : '?limit=80';
+    const data = await api('/api/activity/global' + q);
+    const lines = [];
+    for (const j of (data.jobs || []).slice(0, 40)) {
+      lines.push(`${j.created_at || ''} · ${j.type || 'job'} · ${j.status || ''} · ${j.stage || ''} ${j.error ? '· ' + String(j.error).slice(0, 160) : ''}`.trim());
+    }
+    for (const a of (data.activity || []).slice(-40)) {
+      lines.push(`${a.t || ''} · ${a.action || ''} · ${a.status || ''} · ${String(a.detail || '').slice(0, 200)}`.trim());
+    }
+    out.textContent = lines.length ? lines.join('\n') : 'No activity yet.';
+  } catch (e) {
+    out.textContent = e?.message || 'Could not load activity.';
+  }
+}
+
 async function loadHub() {
   try {
     const hub = await api('/api/ai/hub');
@@ -678,8 +640,7 @@ function parseGithubInput(text) {
 }
 async function startUpgrade() {
   if (!state.projectId) {
-    const request = add('ai', 'Dán link GitHub vào ô chat / Paste a GitHub URL in the chat box.');
-    return;
+    const request = await askSafeAction('UPGRADE FROM GITHUB', 'Paste a public GitHub repository URL.');
     if (!request) return;
     const url = parseGithubInput(request.text) || request.text.trim();
     setBusy(true, 'Importing public GitHub source…');
@@ -695,8 +656,7 @@ async function startUpgrade() {
   } catch (e) { handleJobActionError(e); }
 }
 async function askUpgradeRequest() {
-  add('ai', 'Mô tả nâng cấp trong ô chat, hoặc đính kèm Rule / Describe the upgrade in chat or attach a Rule file.');
-  return;
+  const request = await askSafeAction('UPGRADE WORKSHOP', 'Describe the upgrade, or attach a Rule file (.rule .yaml .json .md).');
   if (!request) return;
   setBusy(true, 'Loading the Rule and inspecting the app…');
   try {
@@ -741,6 +701,13 @@ async function startDiagnose() {
   try { const r = await api(`/api/projects/${state.projectId}/diagnose`, { method: 'POST', body: '{}' }); add('ai', '🩺 I will inspect the project, evidence, runtime configuration, and recent repair history before suggesting any change.'); watch(r.jobId); }
   catch (e) { handleJobActionError(e); }
 }
+async function startAdvisor() {
+  if (!state.projectId) { add('ai', '🧭 Open or create an app first.'); return; }
+  setBusy(true, 'Reviewing Builder history…');
+  try { const r = await api(`/api/projects/${state.projectId}/advisor`, { method: 'POST', body: '{}' }); watch(r.jobId); }
+  catch (e) { handleJobActionError(e); }
+}
+
 async function startSandboxDemo() {
   setBusy(true, 'Testing sandbox…');
   try {
@@ -750,16 +717,9 @@ async function startSandboxDemo() {
   } catch (e) { handleJobActionError(e); }
 }
 async function quick(action, extraPayload = {}) {
-  // Donate / undo always available (F4)
+  if (state.busy) return;
   if (action === 'support') return openSupport();
-  if (action === 'rollback' || action === 'undo') return rollbackLast();
-  if (state.busy) {
-    if (action === 'run' || action === 'publish' || action === 'release') {
-      add('system', uiT('msg.busy', 'Wait for the current step to finish…'), { force: true });
-    }
-    return;
-  }
-  state.lastNotice = '';
+  if (action === 'feedback') return openFeedback();
   if (action === 'script-run') return downloadScript('run');
   if (action === 'script-github') return downloadScript('github');
   if (action === 'docker') return inspectDocker();
@@ -770,23 +730,22 @@ async function quick(action, extraPayload = {}) {
     try {
       const probe = await api('/api/sandbox-status');
       if (!probe?.ok) {
-        add('ai', uiT('msg.runTip', 'Tip: open ⋯ and choose Sandbox if preview fails — that separates Builder/preview issues from your app.'), { force: true });
+        add('ai', 'Tip: tap 🧪 Sandbox first. If that preview fails, the problem is Builder/preview — not your app. If it works, then ▶ Run tests the product.');
       }
     } catch {}
   }
   if (action === 'export') {
-    if (!state.projectId) { add('ai', uiT('msg.zipNeedApp', 'Create an app first, then download ZIP.'), { force: true }); return; }
-    add('ai', uiT('msg.zipPrep', 'Preparing a ZIP of your app…'), { force: true });
+    if (!state.projectId) { add('ai', 'Create an app first, then tap Zip.'); return; }
+    add('ai', 'Preparing a ZIP of your app…');
     try { await downloadZip(state.projectId, extraPayload.kind || 'project'); }
     catch (e) { add('ai', e.message); }
     return;
   }
-  if (!state.projectId) { add('ai', uiT('msg.startIdea', 'Start with your app idea in the chat. I will create the project first.')); return; }
+  if (!state.projectId) { add('ai', 'Start with your app idea in the chat. I’ll create the project first.'); return; }
   setBusy(true, `${actionText(action)}…`);
   try {
     let r;
-    if (action === 'release') action = 'publish';
-  if (action === 'publish') {
+    if (action === 'publish') {
       const checkOnly = extraPayload.verifyImage === true || extraPayload.recheck === true;
       r = await api(`/api/projects/${state.projectId}/release`, { method: 'POST', body: JSON.stringify({
         approved: true,
@@ -798,21 +757,37 @@ async function quick(action, extraPayload = {}) {
       }) });
     }
     else if (action === 'improve' || action === 'edit') {
-      setBusy(false);
-      add('ai', uiT('msg.typeRequest', 'Type your request in the chat box. AI key required in Settings (Gemini default).'), { force: true });
-      return;
+      const kind = action === 'edit' ? 'SAFE EDIT' : 'SAFE UPGRADE';
+      const request = await askSafeAction(kind);
+      if (!request) { setBusy(false); return; }
+      const form = new FormData();
+      form.append('feedback', `${kind}\nUSER REQUEST: ${request.text}`);
+      for (const f of request.files || []) form.append('files', f);
+      const response = await fetch(`/api/projects/${state.projectId}/improve`, { method: 'POST', body: form });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.error || 'AI improvement could not start.');
+      r = data;
     }
     else r = await api(`/api/projects/${state.projectId}/${action}`, { method: 'POST', body: '{}' });
-    if (r.needsConfirmation || r.repoExists || r.requiresOverwrite) {
-      setBusy(false);
-      renderOverwriteConfirm(r);
-      return;
-    }
+    if (r.needsConfirmation) { setBusy(false); add('ai', `I need your approval before ${actionText(action).toLowerCase()}.`); return; }
     watch(r.jobId);
   } catch (e) { handleJobActionError(e); }
 }
 async function askSafeAction(kind, initial = '') {
-  return { text: initial || '', files: [] };
+  return new Promise((resolve) => {
+    const wrap = document.createElement('div'); wrap.className = 'modal';
+    wrap.innerHTML = `<div class="sheet"><div class="sheetHead"><h2>${kind}</h2><button class="iconBtn" type="button">✕</button></div><p class="info">What do you want to change?</p><textarea rows="4" style="width:100%;box-sizing:border-box" placeholder="What do you want to change?"></textarea><div class="inputRow" style="margin-top:10px"><button type="button" class="attach modalAttach" title="Attach files">📎</button><input class="modalFiles" type="file" multiple hidden accept=".zip,.pdf,.txt,.md,.json,.yaml,.yml,.rule,.js,.ts,.jsx,.tsx,.html,.css,.py,.go,.rs,.java,.php,.sql,.csv,.png,.jpg,.jpeg,.gif,.webp"><span class="modalFileNames muted">No files</span></div><div class="actionCard"><button class="primary wide" type="button">Send</button></div></div>`;
+    document.body.appendChild(wrap); wrap.hidden = false;
+    const input = wrap.querySelector('textarea'); const fileInput = wrap.querySelector('.modalFiles'); const names = wrap.querySelector('.modalFileNames');
+    input.value = initial;
+    const close = () => { wrap.remove(); resolve(null); };
+    wrap.querySelector('.iconBtn').onclick = close;
+    wrap.querySelector('.modalAttach').onclick = () => fileInput.click();
+    fileInput.onchange = () => { const files = Array.from(fileInput.files || []); names.textContent = files.length ? files.map(f => `📎 ${f.name}`).join(' · ') : 'No files'; };
+    wrap.querySelector('.primary').onclick = () => { const textValue = input.value.trim(); const files = Array.from(fileInput.files || []); if (!textValue && !files.length) { input.focus(); return; } wrap.remove(); resolve({ text: textValue || 'Inspect the attached files and apply the requested safe change.', files }); };
+    input.addEventListener('keydown', (e) => { if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') wrap.querySelector('.primary').click(); });
+    input.focus();
+  });
 }
 
 function stopJobWatch() {
@@ -872,10 +847,6 @@ async function watch(jobId, { preserveEvents = false, resetFailures = true } = {
   }
   if (!preserveEvents && state.seenEvents) state.seenEvents = 0;
   setBusy(true, state.pollFailures ? 'Still working…' : 'Working…');
-    if (state.jobStartedAt) {
-      const secs = Math.round((Date.now() - state.jobStartedAt) / 1000);
-      if (secs >= 15) showSlowWaitCard(secs, ($('hubModel')?.value || $('aiSelect')?.value || 'AI'));
-    }
 
   // Multiple UI paths can attach to the same job (for example a duplicate Publish
   // request receiving the existing jobId). Never issue overlapping GETs for the same
@@ -961,6 +932,9 @@ async function watch(jobId, { preserveEvents = false, resetFailures = true } = {
       if (result.status === 'github_actions_failed' && result.diagnosis) {
         renderRepairAction(result.diagnosis);
       }
+      if (job.type === 'builder_advisor' && $('advisorOut')) {
+        $('advisorOut').textContent = result.brief || 'Advisor finished.';
+      }
       if (result.brief) add('ai', result.brief);
       else if (result.reply) add('ai', result.reply);
       else if (state.projectId) { await loadProjects(); }
@@ -1027,25 +1001,16 @@ function renderRepairAction(errorText) {
     if (state.busy) return;
     setBusy(true, isSecurity ? 'Fixing security…' : 'Diagnosing & fixing…');
     try {
-      const feedback = (isSecurity ? 'SAFE REPAIR\n' : 'DIAGNOSE_AND_FIX\n')
-        + 'USER REQUEST: diagnose and fix the problem\n\nEVIDENCE REPORT:\n' + String(errorText || '').slice(0, 8000);
+      const request = await askSafeAction('SAFE REPAIR', isSecurity ? 'Fix the reported security issue.' : 'Fix the reported problem.');
+      if (!request) { setBusy(false); return; }
       const form = new FormData();
-      form.append('feedback', feedback);
-      const response = await fetch('/api/projects/' + state.projectId + '/improve', { method: 'POST', body: form });
+      form.append('feedback', `SAFE REPAIR\nUSER REQUEST: ${request.text}\n\nEVIDENCE REPORT:\n${errorText}`);
+      for (const f of request.files || []) form.append('files', f);
+      const response = await fetch(`/api/projects/${state.projectId}/improve`, { method: 'POST', body: form });
       const r = await response.json().catch(() => ({}));
-      if (!response.ok) {
-        setBusy(false);
-        const needsKey = /AI key|not configured|AI_UNAVAILABLE|No active AI/i.test(String(r.error || ''));
-        add('ai', needsKey
-          ? (uiT('msg.needsAiKey', 'Deterministic checks only — add an AI key in ⚙ Settings (Gemini recommended) to let AI repair this.') + '\n' + (r.error || ''))
-          : (r.error || 'Diagnose could not start.'), { force: true });
-        return;
-      }
-      if (r.jobId) watch(r.jobId);
-      else setBusy(false);
-    } catch (e) {
-      handleJobActionError(e);
-    }
+      if (!response.ok) throw new Error(r.error || 'Repair could not start.');
+      watch(r.jobId);
+    } catch (e) { handleJobActionError(e); }
   };
   row.appendChild(b); box.appendChild(row);
   $('chat').appendChild(box); $('chat').scrollTop = $('chat').scrollHeight;
@@ -1053,13 +1018,8 @@ function renderRepairAction(errorText) {
 
 function summarizeResult(result, status) {
   const runtime = extractRuntime(result);
-  if (result?.provider || result?.model) { /* attribution shown on brief */ }
   if (status === 'failed' && !result.brief) {
-    if (/JOB_TIMEOUT/i.test(String(result.error || ''))) {
-      add('ai', 'Timed out — the AI or network took too long. Tap Cancel if still busy, or Switch model in Settings, then try again.');
-    } else {
-      add('ai', result.error || 'RESULT: Not ready.\nNEXT: Use Diagnose & Fix above, or tell me what you want changed.');
-    }
+    add('ai', result.error || 'RESULT: Not ready.\nNEXT: Use Diagnose & Fix above, or tell me what you want changed.');
     return;
   }
   if (runtime?.status === 'passed' && (runtime.previewPath || runtime.url || runtime.publicUiUrl)) {
@@ -1318,123 +1278,34 @@ function renderGuide(guide) {
   $('chat').appendChild(box); maybeJump();
 }
 function renderWelcome() {
-  const chat = $('chat');
-  if (!chat) return;
-  chat.innerHTML = '';
-  const box = document.createElement('div');
-  box.className = 'msg ai welcomeCard';
-  const title = uiT('welcome.title', 'App Builder — Pi SoloHost');
-  const body = uiT('welcome.body', 'Type an idea, paste a GitHub link to upgrade, attach a ZIP, or ask to change a feature. One chat — I route the rest.');
-  const ideaLabel = uiT('welcome.idea', '💡 Sample idea');
-  const ghLabel = uiT('welcome.github', '🔗 Paste GitHub link');
-  const setLabel = uiT('welcome.settings', '⚙ Connect AI');
-  box.innerHTML = `
-    <h2>${title}</h2>
-    <p>${body}</p>
-    <div class="welcomeActions">
-      <button type="button" class="primary" data-welcome="idea">${ideaLabel}</button>
-      <button type="button" data-welcome="github">${ghLabel}</button>
-      <button type="button" data-welcome="settings">${setLabel}</button>
-    </div>`;
-  chat.appendChild(box);
-  const bindWelcome = (sel, fn) => { const b = box.querySelector(sel); if (b) b.onclick = fn; };
-  bindWelcome('[data-welcome="idea"]', () => {
-    if ($('message')) { $('message').value = uiT('welcome.ideaText', 'Create a simple sales app for a small shop'); $('message').focus(); }
-  });
-  bindWelcome('[data-welcome="github"]', () => {
-    if ($('message')) { $('message').value = 'https://github.com/'; $('message').focus(); }
-  });
-  bindWelcome('[data-welcome="settings"]', () => {
-    if (typeof openSettings === 'function') openSettings();
-    else $('settings')?.removeAttribute('hidden');
-  });
-  const chip = $('contextChip');
-  if (chip) {
-    chip.hidden = false;
-    chip.textContent = uiT('welcome.chip', '💡 Try: milk-tea shop app');
-    chip.onclick = () => {
-      $('message').value = uiT('welcome.chipText', 'Create a milk-tea shop app with menu and cart');
-      $('message').focus();
-    };
-  }
+  $('chat').innerHTML = '';
+  add('ai', 'I will take you to a published SoloHost app in three taps:\n1) Tell me the idea\n2) I Build + Run and give you a test link\n3) You tap Publish');
+  renderGuide({ step: 1, title: 'Send your idea', action: null, label: '', detail: 'Example: “Build a snake game that saves high scores.”' });
 }
-
 $('sendBtn').onclick = () => { if (state.busy) return cancelCurrentJob(); return handleTextCommand($('message').value.trim()); };
-
-// UI_SIMPLE more menu
-$('moreBtn')?.addEventListener('click', (e) => {
-  e.stopPropagation();
-  const menu = $('moreMenu');
-  if (!menu) return;
-  menu.hidden = !menu.hidden;
-});
-document.addEventListener('click', () => { const m = $('moreMenu'); if (m) m.hidden = true; });
-$('moreMenu')?.addEventListener('click', (e) => e.stopPropagation());
-document.querySelectorAll('#moreMenu [data-more]').forEach((btn) => {
-  btn.addEventListener('click', async (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    const act = btn.dataset.more;
-    const menu = $('moreMenu');
-    if (menu) menu.hidden = true;
-    try {
-      // Same actions as v1.7.4 data-action buttons (via quick)
-      if (act === 'export') return quick('export');
-      if (act === 'import') return quick('import');
-      if (act === 'sandbox') return quick('sandbox');
-      if (act === 'script-run') return quick('script-run');
-      if (act === 'script-github') return quick('script-github');
-      if (act === 'rollback') return quick('rollback');
-      if (act === 'support') return quick('support');
-    } catch (err) {
-      add('ai', err.message || String(err));
-    }
-  });
-});
-
 $('message').addEventListener('keydown', (e) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); handleTextCommand($('message').value.trim()); } });
-document.querySelectorAll('[data-action]').forEach((b) => {
-  b.onclick = (e) => {
-    // quickActions handles its own buttons
-    if (b.closest('#quickActions')) return;
-    e.preventDefault();
-    const a = b.dataset.action;
-    if (a === 'publish') quick('publish', { approved: true, confirm: true, push: true });
-    else quick(a);
-  };
-});
+document.querySelectorAll('[data-action]').forEach((b) => b.onclick = () => quick(b.dataset.action));
 if ($('liveBtn')) $('liveBtn').onclick = () => stopLive();
 $('attachBtn').onclick = () => $('fileInput').click();
 $('fileInput').onchange = () => { state.files.push(...Array.from($('fileInput').files || [])); renderFiles(); $('fileInput').value = ''; };
 $('attachments').onclick = (e) => { const b = e.target.closest('[data-remove]'); if (b) { state.files.splice(Number(b.dataset.remove),1); renderFiles(); } };
-$('settingsBtn').onclick = () => { loadSettings(); $('settings').hidden = false; };
+$('settingsBtn').onclick = () => { loadSettings(); $('settings').hidden = false; loadActivityLog(); };
+$('advisorRun') && ($('advisorRun').onclick = runAdvisorFromSettings);
+async function runAdvisorFromSettings() {
+  const out = $('advisorOut');
+  if (out) out.textContent = 'Analyzing history…';
+  try {
+    const body = JSON.stringify({ scope: $('advisorScope')?.value || '30d', projectId: state.projectId || null });
+    const r = await api('/api/advisor/analyze', { method: 'POST', body });
+    if (r.jobId) watch(r.jobId);
+    else if (out) out.textContent = r.brief || JSON.stringify(r, null, 2);
+  } catch (e) {
+    if (out) out.textContent = e.message || 'Advisor could not run.';
+  }
+}
 $('closeSettings').onclick = () => $('settings').hidden = true;
 $('saveSettings').onclick = saveSettings;
 if ($('hubAdd')) $('hubAdd').onclick = addHubProvider;
-
-function renderModelBadges(models) {
-  const box = $('hubModelBadges');
-  if (!box) return;
-  box.innerHTML = '';
-  (models || []).slice(0, 24).forEach((m) => {
-    const id = m.id || m;
-    const verified = m.verified === true;
-    const failed = m.verified === false && m.lastError;
-    const icon = verified ? '✅' : (failed ? '⚠' : '⚪');
-    const span = document.createElement('button');
-    span.type = 'button';
-    span.className = 'ws-btn';
-    span.style.cssText = 'font-size:12px;padding:2px 8px';
-    span.textContent = `${icon} ${id}`;
-    span.title = failed ? String(m.lastError || 'failed') : (verified ? 'verified' : 'untested');
-    span.onclick = () => {
-      if ($('hubModel')) $('hubModel').value = String(id).includes(':') ? id : `${($('hubProvider')?.value || 'gemini')}:${id}`;
-      if ($('routingSelected')) $('routingSelected').checked = true;
-    };
-    box.appendChild(span);
-  });
-}
-
 if ($('hubLoadModels')) $('hubLoadModels').onclick = async () => {
   const b = $('hubLoadModels'); const old = b.textContent;
   b.disabled = true; b.textContent = 'Loading…';
@@ -1459,8 +1330,10 @@ if ($('hubLoadModels')) $('hubLoadModels').onclick = async () => {
       renderModelSelectors(r.hub);
     }
     const n = (r.models || []).length;
-    // v2.1: Load models lists only — does not auto-fill model box or preferredModels
-    if (typeof renderModelBadges === 'function') renderModelBadges(r.models || r || []);
+    if (n && $('hubModel') && !$('hubModel').value) {
+      const id = r.verifiedModel || r.models[0]?.id || r.models[0];
+      if (id) $('hubModel').value = String(id).includes(':') ? id : `${provider}:${id}`;
+    }
     $('settingsState').textContent = n
       ? `Loaded ${n} model(s) from ${provider}. Type or pick a model, then ＋ Add.`
       : (r.warning || `No models returned for ${provider}. You can still type a model id manually.`);
@@ -1472,6 +1345,8 @@ if ($('hubLoadModels')) $('hubLoadModels').onclick = async () => {
 };
 if ($('hubRefresh')) $('hubRefresh').onclick = async () => { const rows = await api('/api/ai/hub'); for (const c of (rows.connections || [])) await refreshHub(c.id); };
 $('hubList').addEventListener('click', (e) => { const r=e.target.closest('[data-hub-refresh]'); const x=e.target.closest('[data-hub-remove]'); if(r) refreshHub(r.dataset.hubRefresh); if(x) removeHub(x.dataset.hubRemove); });
+if ($('logRefresh')) $('logRefresh').onclick = () => loadActivityLog();
+if ($('logScope')) $('logScope').onchange = () => loadActivityLog();
 if ($('hubProvider')) $('hubProvider').onchange = () => {
   if ($('hubBaseWrap')) $('hubBaseWrap').hidden = $('hubProvider').value !== 'custom';
 };
@@ -1532,40 +1407,9 @@ $('chat').addEventListener('scroll', maybeJump);
 setBusy(false, 'Ready');
 $('chat').addEventListener('click', (e) => { const b = e.target.closest('[data-container]'); if (b) inspectNamedContainer(b.dataset.container); });
 
-
-function renderOverwriteConfirm(result = {}) {
-  const chat = $('chat');
-  if (!chat) return;
-  const box = document.createElement('div');
-  box.className = 'msg ai';
-  const msg = result.message || result.error || uiT('msg.repoExists', 'This GitHub repository already has content. Overwrite or cancel?');
-  box.textContent = String(msg);
-  const row = document.createElement('div');
-  row.className = 'actionCard';
-  const over = document.createElement('button');
-  over.textContent = uiT('msg.overwrite', 'Overwrite');
-  over.onclick = () => {
-    box.remove();
-    quick('publish', { approved: true, confirm: true, push: true, existingAction: 'overwrite', forcePublish: true });
-  };
-  const cancel = document.createElement('button');
-  cancel.textContent = uiT('msg.cancel', 'Cancel');
-  cancel.onclick = () => box.remove();
-  row.appendChild(over);
-  row.appendChild(cancel);
-  box.appendChild(row);
-  chat.appendChild(box);
-  $('chat').scrollTop = $('chat').scrollHeight;
-}
-
 function openSupport() {
-  const modal = $('supportModal');
-  if (modal) modal.hidden = false;
-  const title = modal?.querySelector('h2');
-  if (title) title.textContent = uiT('support.title', '💛 Support this project');
-  const info = modal?.querySelector('.info');
-  if (info) info.textContent = uiT('support.body', 'Thank you for supporting App Builder — Pi SoloHost. Choose Pi Wallet or MB Bank, copy the details, and send what you can.');
-  add('ai', uiT('support.body', 'Thank you for supporting App Builder — Pi SoloHost. Choose Pi Wallet or MB Bank, copy the details, and send what you can.'), { force: true });
+  $('supportModal').hidden = false;
+  add('ai', 'Thank you for supporting App Builder — Pi SoloHost. Choose Pi Wallet or MB Bank, copy the details, and send what you can.');
 }
 function bindSupport() {
   const modal = $('supportModal');
@@ -1585,105 +1429,11 @@ function bindSupport() {
     };
   });
 }
-/* Quick actions — data-action → quick() (must run even if later init fails) */
-(function wireQuickActions() {
-  const root = document.getElementById('quickActions');
-  if (!root) return;
-  root.addEventListener('click', (e) => {
-    const btn = e.target.closest('button[data-action]');
-    if (!btn || !root.contains(btn)) return;
-    e.preventDefault();
-    e.stopPropagation();
-    const action = btn.getAttribute('data-action');
-    if (!action) return;
-    if (action === 'support') {
-      quick('support');
-      return;
-    }
-    if (state.busy && (action === 'run' || action === 'publish')) {
-      const bar = document.getElementById('busyBar');
-      if (bar && bar.hidden) state.busy = false;
-    }
-    if (state.busy) {
-      add('system', uiT('msg.busy', 'Wait for the current step to finish…'), { force: true });
-      return;
-    }
-    if (action === 'publish') {
-      if (!state.projectId) { add('ai', uiT('msg.needApp', 'Open or create an app first.'), { force: true }); return; }
-      quick('publish', { approved: true, confirm: true, push: true });
-      return;
-    }
-    if (action === 'run') {
-      if (!state.projectId) { add('ai', uiT('msg.needApp', 'Open or create an app first.'), { force: true }); return; }
-      quick('run');
-      return;
-    }
-    quick(action);
-  });
-})();
-
-window.addEventListener('paf-locale', () => {
-  try {
-    if (!state.projectId) renderWelcome();
-    if (window.pafI18n && typeof window.pafI18n.apply === 'function') window.pafI18n.apply();
-  } catch {}
-});
-
 bindSupport();
-async function init() {
-  try {
-    await Promise.all([loadStatus(), loadProjects(), loadSettings()]);
-    const id = savedProjectId();
-    if (id && state.projects.some((p) => p.id === id)) await openProject(id, false);
-    else {
-      state.projectId = null;
-      rememberProject(null);
-      if ($('projectSelect')) $('projectSelect').value = '';
-      renderWelcome();
-    }
-  } catch (err) {
-    console.error('init failed', err);
-    try { renderWelcome(); } catch (e2) { console.error(e2); }
-  }
-}
-init();
-
-/* Language: #langToggle wired in public/i18n.js */
-
-
-
-
-// Routing mode Auto / Choose
-async function applyRoutingModeFromUi() {
-  const mode = $('routingSelected')?.checked ? 'SELECTED' : 'AUTO';
-  const model = ($('hubModel')?.value || '').trim();
-  const provider = ($('hubProvider')?.value || $('aiSelect')?.value || '').trim();
-  const body = { mode };
-  if (mode === 'SELECTED' && model) {
-    body.preferredModels = [model.includes(':') ? model : `${provider}:${model}`];
-    body.preferredProvider = provider;
-  } else {
-    body.preferredModels = [];
-  }
-  try {
-    await api('/api/ai/hub/routing', { method: 'POST', body: JSON.stringify(body) });
-  } catch (e) {
-    if ($('settingsState')) $('settingsState').textContent = e.message || 'Routing update failed';
-  }
-}
-if ($('routingAuto')) $('routingAuto').onchange = applyRoutingModeFromUi;
-if ($('routingSelected')) $('routingSelected').onchange = applyRoutingModeFromUi;
-
-async function runAiDoctor() {
-  try {
-    if ($('settingsState')) $('settingsState').textContent = 'Running AI check…';
-    const r = await api('/api/ai/doctor');
-    const lines = (r.steps || []).map((s) => `${s.ok ? '✅' : '✖'} ${s.id}: ${s.detail || ''}`);
-    const msg = [`AI Doctor: ${r.status || (r.ok ? 'healthy' : 'degraded')}`, ...lines].join('\n');
-    if ($('settingsState')) $('settingsState').textContent = msg;
-    add('system', msg, { force: true });
-  } catch (e) {
-    if ($('settingsState')) $('settingsState').textContent = e.message || 'AI check failed';
-  }
-}
-if ($('aiDoctorBtn')) $('aiDoctorBtn').onclick = () => runAiDoctor();
+Promise.all([loadStatus(), loadProjects(), loadSettings(), loadFeedbackConfig()]).then(async () => {
+  await initFeedbackHub();
+  const id = savedProjectId();
+  if (id && state.projects.some((p) => p.id === id)) await openProject(id, false);
+  else if (state.projects[0]?.id) await openProject(state.projects[0].id, false);
+  else renderWelcome();
+}).catch(() => renderWelcome());

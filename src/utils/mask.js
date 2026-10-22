@@ -12,8 +12,7 @@ export function maskSecrets(text) {
   if (text == null) return text;
   return String(text)
     .replace(SECRET_RE, (_, name, val) => `${name}=${maskKey(val)}`)
-    .replace(KEYISH_RE, (m) => maskKey(m))
-    .replace(/cannoi_[A-Za-z0-9]+/g, 'cannoi_***');
+    .replace(KEYISH_RE, (m) => maskKey(m));
 }
 
 export function looksLikeSecret(text) {

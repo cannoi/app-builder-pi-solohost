@@ -29,23 +29,11 @@ export function isAccessAuthorized(req, cfg) {
   if (!accessPasswordConfigured(cfg)) return true;
   const expected = tokenFor(cfg.accessPassword);
   const cookies = parseCookies(req.headers?.cookie);
-  if (cookies[COOKIE]) {
-    try {
-      const a = Buffer.from(String(cookies[COOKIE]));
-      const b = Buffer.from(String(expected));
-      if (a.length === b.length && crypto.timingSafeEqual(a, b)) return true;
-    } catch { /* fall through */ }
-  }
+  if (cookies[COOKIE] && cookies[COOKIE] === expected) return true;
   const auth = String(req.headers?.authorization || '');
   if (auth.toLowerCase().startsWith('bearer ') && auth.slice(7).trim() === expected) return true;
   const hdr = req.headers?.['x-builder-access'];
-  if (hdr) {
-    try {
-      const a = Buffer.from(String(hdr));
-      const b = Buffer.from(String(expected));
-      if (a.length === b.length && crypto.timingSafeEqual(a, b)) return true;
-    } catch { /* fall through */ }
-  }
+  if (hdr && String(hdr) === expected) return true;
   return false;
 }
 
@@ -62,13 +50,10 @@ export function accessCookieHeader(token) {
 export function createAccessAuthMiddleware(cfg) {
   return function accessAuth(req, res, next) {
     const path = req.path || req.url || '';
-    // Health must stay open for Docker/SoloHost/GitHub smoke tests even when a password is set.
-    const bare = String(path).split('?')[0];
     if (
-      bare === '/health' || bare === '/ready'
-      || bare === '/api/access/status' || bare === '/api/access/login' || bare === '/api/access/logout'
-      || bare === '/login.html' || bare === '/favicon.ico' || bare === '/app-logo.jpg'
-      || bare === '/made-by.png' || bare === '/styles.css'
+      path === '/api/access/status' || path === '/api/access/login' || path === '/api/access/logout'
+      || path === '/login.html' || path === '/favicon.ico' || path === '/app-logo.jpg'
+      || path === '/made-by.png' || path === '/styles.css'
     ) return next();
     if (isAccessAuthorized(req, cfg)) return next();
     if (String(path).startsWith('/api/')) {

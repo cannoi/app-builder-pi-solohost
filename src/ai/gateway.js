@@ -1,9 +1,6 @@
-import { createDeadline, BUDGET_MS, mergeSignals } from '../core/budget.js';
 import { GeminiProvider } from './providers/gemini.js';
 import { DeepSeekProvider } from './providers/deepseek.js';
 import { extractJson, normalizeAIResponse, normalizeArray } from '../utils/validate.js';
-import { parseAiOutput, doctorCompleteFiles } from './response-doctor.js';
-import { completeViaLiteLLMProxy, normalizeAiResult, litellmEnabled, toLiteLLMModelId } from './litellm-layer.js';
 import { uuid } from '../utils/ids.js';
 import { pickRoles, recordTrust, reviewPrompt, scoreOf } from './council.js';
 import { AIProviderHub } from './hub/hub.js';
@@ -52,7 +49,6 @@ export class AIGateway {
       configured: this.gemini.configured() || this.deepseek.configured() || (hub.connections || []).some((c) => c.status !== 'INVALID'),
       geminiModel: this.gemini.getStickyModel() || this.cfg.ai.geminiModel || null,
       hub,
-      litellmLayer: { enabled: litellmEnabled(), mode: litellmEnabled() ? 'proxy' : 'normalize' },
       trust: {
         deepseek: scoreOf(roles.trust.deepseek),
         gemini: scoreOf(roles.trust.gemini),
@@ -70,35 +66,19 @@ export class AIGateway {
 
   pickOrder(images = []) {
     if (images?.length && this.gemini.configured()) return ['gemini', 'deepseek'];
-    return this.cfg.ai.provider === 'deepseek' ? ['deepseek', 'gemini'] : ['gemini', 'deepseek'];
+    return this.cfg.ai.provider === 'gemini' ? ['gemini', 'deepseek'] : ['deepseek', 'gemini'];
   }
 
   providerByName(name) { return name === 'deepseek' ? this.deepseek : this.gemini; }
 
-  async complete({ task, prompt, system, json = false, projectId = null, images = [], modelRef = '', signal = null }) {
+  async complete({ task, prompt, system, json = false, projectId = null, images = [], modelRef = '' }) {
     const rule = actionRule(task);
     const safeSystem = rule ? `${system || ''}\n\n${rule}`.trim() : (system || '').trim();
     const safePrompt = rule ? `${prompt || ''}\n\n${rule}`.trim() : (prompt || '').trim();
-    // LiteLLM layer (always-on normalization; external proxy when LITELLM_BASE_URL is set)
-    if (litellmEnabled()) {
-      try {
-        const model = modelRef && !modelRef.includes('__') ? modelRef.split(':').pop() : undefined;
-        const via = await completeViaLiteLLMProxy({
-          prompt: safePrompt, system: safeSystem, json, model, images, signal,
-        });
-        if (via) {
-          this.record({ projectId, task, provider: via.provider, model: via.model, success: 1, durationMs: via.durationMs, tokens: via.tokens, error: null });
-          return via;
-        }
-      } catch (err) {
-        this.log.warn('LiteLLM proxy failed; falling back to direct providers', { error: err.message });
-      }
-    }
     try {
-      const routed = await this.hub.execute({ task, prompt: safePrompt, system: safeSystem, json, images, modelRef, signal });
-      const normalized = normalizeAiResult(routed, routed.provider || 'hub');
-      this.record({ projectId, task, provider: normalized.provider, model: normalized.model, success: 1, durationMs: normalized.durationMs, tokens: normalized.tokens, error: null });
-      return normalized;
+      const routed = await this.hub.execute({ task, prompt: safePrompt, system: safeSystem, json, images, modelRef });
+      this.record({ projectId, task, provider: routed.provider, model: routed.model, success: 1, durationMs: routed.durationMs, tokens: routed.tokens, error: null });
+      return routed;
     } catch (err) {
       // A provider/model selection is normally respected. Only fall back when
       // the hub supplies concrete provider-level evidence (for example 402
@@ -114,10 +94,9 @@ export class AIGateway {
       const provider = this.providerByName(name);
       if (!provider.configured()) continue;
       try {
-        const result = await provider.complete({ prompt: safePrompt, system: safeSystem, json, images, signal });
-        const normalized = normalizeAiResult(result, name);
-        this.record({ projectId, task, provider: normalized.provider, model: normalized.model, success: 1, durationMs: normalized.durationMs, tokens: normalized.tokens, error: null });
-        return normalized;
+        const result = await provider.complete({ prompt: safePrompt, system: safeSystem, json, images });
+        this.record({ projectId, task, provider: result.provider, model: result.model, success: 1, durationMs: result.durationMs, tokens: result.tokens, error: null });
+        return result;
       } catch (err) {
         errors.push(`${name}: ${String(err.message || err).slice(0, 240)}`);
       }
@@ -126,13 +105,6 @@ export class AIGateway {
   }
 
   async completeJson(opts) {
-    const coding = ['CODING', 'DEBUGGING'].includes(opts.task);
-    // Total logical budget — hub.execute applies per-attempt caps so one hang cannot burn the ladder
-    const totalMs = coding ? 180_000 : 120_000;
-    const parent = opts.signal ? { signal: opts.signal, remaining: () => totalMs } : null;
-    const deadline = createDeadline({ ms: totalMs, parent, label: 'ai-request' });
-    opts = { ...opts, signal: mergeSignals(opts.signal, deadline.signal) };
-
     const pair = this.hub.selectedModels?.() || [];
     const pairTask = ['CODING', 'DEBUGGING', 'CODE_REVIEW'].includes(opts.task);
     if (pair.length >= 2 && pairTask) return this.completeSelectedPair(opts, pair);
@@ -142,14 +114,6 @@ export class AIGateway {
     const first = await this.complete({ ...opts, json: true });
     let norm = normalizeAIResponse(first.text);
     let parsed = norm.ok ? norm.value : null;
-    if (!parsed) {
-      const doc = parseAiOutput(first.text, { expect: opts.expectFiles ? 'files' : 'json' });
-      if (doc.ok) {
-        parsed = doc.value;
-        first.parseTrace = doc.parseTrace;
-        first.repaired = doc.repaired;
-      }
-    }
     if (parsed && (!opts.validateJson || opts.validateJson(parsed))) return { ...first, json: parsed };
 
     // Recovery 1: strict structured retry on the same provider path
@@ -162,18 +126,22 @@ export class AIGateway {
         return { ...retry, json: parsed, fallbackFrom: first.provider };
       }
     } catch (err) {
-      // B3: never swallow TIMEOUT as format
-      const msg = String(err.message || err);
-      if (/timed out|deadline|AbortError|STALLED|TIMEOUT/i.test(msg) || err.name === 'AbortError') {
-        throw Object.assign(new Error(msg), {
-          code: 'TIMEOUT',
-          classify: { code: 'TIMEOUT', user: 'AI request timed out.' },
-          cause: err,
-        });
-      }
       this.log.warn('AI JSON retry failed', { error: err.message });
     }
 
+    // Recovery 2: try alternate provider once when available (hub already may have, but ensure)
+    try {
+      const alt = await this.complete({ ...opts, json: true, prompt: strictPrompt, modelRef: '' });
+      if (alt?.provider && alt.provider !== first.provider) {
+        norm = normalizeAIResponse(alt.text);
+        parsed = norm.ok ? norm.value : null;
+        if (parsed && (!opts.validateJson || opts.validateJson(parsed))) {
+          return { ...alt, json: parsed, fallbackFrom: first.provider };
+        }
+      }
+    } catch (err) {
+      this.log.warn('AI JSON alternate provider failed', { error: err.message });
+    }
 
     // AI_RESPONSE_MALFORMED is a provider failure, not an application failure.
     // Callers must not rollback verified work solely because of this code.

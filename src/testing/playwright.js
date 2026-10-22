@@ -28,10 +28,6 @@ export async function runPlaywrightE2E({ uiUrl, screenshotPath = null, timeoutMs
   } catch (err) {
     result.test_metrics.load_time_ms = Date.now() - started;
     result.error = String(err?.message || err).slice(0, 2000);
-    if (/Executable doesn|playwright install|browserType\.launch/i.test(result.error)) {
-      result.status = 'skipped';
-      return result;
-    }
     return result;
   } finally {
     await page?.close?.().catch(() => {});

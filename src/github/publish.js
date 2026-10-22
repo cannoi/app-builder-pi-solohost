@@ -74,7 +74,7 @@ export function fixFor(code, message = '') {
     rate_limit: 'Wait one minute, then tap Publish once.',
     PROJECT_INVALID: 'Tap Check, then Improve.',
     BUILD_REQUIRED: 'Tap Run first.',
-    secret: 'A secret was found. Describe it in chat, then Publish.',
+    secret: 'A secret was found. Tap Improve, then Publish.',
     git_push: 'GitHub upload failed. I will explain the likely cause and give the exact setup steps instead of showing only the raw error.',
     not_found: 'The repository was missing. App Builder will create it when the token allows.',
   };

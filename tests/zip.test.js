@@ -37,9 +37,9 @@ test('generated apps include a GitHub Actions image workflow', async () => {
   await writeGithubWorkflow(dir, { slug: 'demo-app' });
   const yml = fs.readFileSync(path.join(dir, '.github/workflows/docker.yml'), 'utf8');
   assert.match(yml, /ghcr.io/);
-  assert.match(yml, /docker build/);
+  assert.match(yml, /docker\/build-push-action/);
   assert.match(yml, /packages:\s*write/);
-  assert.match(yml, /actions\/checkout@v5/);
+  assert.match(yml, /actions\/checkout@v6/);
 });
 
 test('generated GitHub workflow publishes the exact SoloHost version tag', async () => {
@@ -49,8 +49,7 @@ test('generated GitHub workflow publishes the exact SoloHost version tag', async
   const dir = await fs.mkdtemp(`${os.tmpdir()}/paf-workflow-version-`);
   await writeGithubWorkflow(dir, { slug: 'demo-app', version: '0.1.7' });
   const yml = await fs.readFile(`${dir}/.github/workflows/docker.yml`, 'utf8');
-  assert.match(yml, /tag_version=\$\{REPO\}:0\.1\.7/);
-  assert.match(yml, /steps\.image\.outputs\.tag_version/);
+  assert.match(yml, /type=raw,value=0\.1\.7/);
   assert.match(yml, /packages:\s*write/);
 });
 
@@ -86,12 +85,9 @@ test('generated workflow builds, smoke-tests, then pushes the exact version imag
   await writeGithubWorkflow(dir, { slug: 'demo-app', version: '1.4.22' });
   const yml = fs.readFileSync(path.join(dir, '.github/workflows/docker.yml'), 'utf8');
   assert.match(yml, /name: Smoke test image/);
-  assert.match(yml, /docker build/);
-  assert.match(yml, /docker exec/);
-  // load:true removed — native docker build tags images reliably
+  assert.match(yml, /load: true/);
   assert.match(yml, /docker run -d/);
-  assert.match(yml, /ghcr\.io\/\$\{\{ github\.repository \}\}/);
-  assert.match(yml, /docker exec|http_up|in-container/);
+  assert.match(yml, /REPO=\"ghcr\.io\/\$\{\{ github\.repository \}\}\"/);
   assert.match(yml, /1\.4\.22/);
   assert.match(yml, /name: Push tested image/);
 });

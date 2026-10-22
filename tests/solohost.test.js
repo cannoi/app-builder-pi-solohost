@@ -62,8 +62,7 @@ test('top-level Builder compose keeps SoloHost-compatible runtime environment', 
   const fs = await import('node:fs/promises');
   const yml = await fs.readFile(new URL('../docker-compose.yml', import.meta.url), 'utf8');
   const cfg = await fs.readFile(new URL('../config_options.yml', import.meta.url), 'utf8');
-  const pkg = JSON.parse(await fs.readFile(new URL('../package.json', import.meta.url), 'utf8'));
-  assert.match(yml, new RegExp('image:\\s*ghcr\\.io/cannoi/app-builder-pi-solohost:' + pkg.version.replace(/\\./g, '\\.')));
+  assert.match(yml, /image:\s*ghcr\.io\/cannoi\/app-builder-pi-solohost:1\.7\.0/);
   assert.match(yml, /127\.0\.0\.1:18781:8080/);
   assert.match(yml, /builder_data:\/app\/data/);
   assert.doesNotMatch(yml, /PREVIEW_REQUIRE_INTERNET/);

@@ -1,4 +1,3 @@
-import * as hubConfig from '../feedback/hub-config.js';
 /**
  * Mount Universal AI + Feedback.
  * Panel AI routes delegate to Builder AIGateway (single AI plane).
@@ -62,13 +61,13 @@ export function mountUniversalModules(app, { cfg, log, builderAI = null } = {}) 
   mountAIRoutes(app, ai, { builderAI, adapter });
 
   const fbOpts = {
-    appId: process.env.SHFH_APP_ID || process.env.FEEDBACK_APP_ID || cfg?.feedbackHub?.appId || hubConfig.appId,
-    appName: process.env.SHFH_APP_NAME || cfg?.feedbackHub?.appName || hubConfig.appName || SHFH_DEFAULTS.appName,
-    version: process.env.SHFH_APP_VERSION || cfg?.version || hubConfig.version,
-    hubId: process.env.SHFH_HUB_ID || cfg?.feedbackHub?.hubId || hubConfig.hubId || SHFH_DEFAULTS.hubId,
-    baseUrl: process.env.SHFH_HUB_URL || cfg?.feedbackHub?.url || hubConfig.baseUrl || SHFH_DEFAULTS.baseUrl,
-    // Token only from env or hub-config (never from browser)
-    ingestToken: process.env.SHFH_INGEST_TOKEN || hubConfig.ingestToken,
+    appId: cfg?.feedbackHub?.appId || process.env.FEEDBACK_APP_ID || SHFH_DEFAULTS.appId,
+    appName: cfg?.feedbackHub?.appName || SHFH_DEFAULTS.appName,
+    version: cfg?.version || '1.4.77',
+    hubId: process.env.SHFH_HUB_ID || cfg?.feedbackHub?.hubId || SHFH_DEFAULTS.hubId,
+    baseUrl: process.env.SHFH_HUB_URL || cfg?.feedbackHub?.url || SHFH_DEFAULTS.baseUrl,
+    ingestToken: process.env.SHFH_INGEST_TOKEN || cfg?.feedbackHub?.ingestToken || '',
+    dataDir,
   };
   const fb = createFeedbackService(fbOpts);
   mountFeedbackRoutes(app, fb);

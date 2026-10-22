@@ -101,6 +101,58 @@ export async function diagnoseProject({ project, projects, db = null, ai = null,
   return report;
 }
 
+export async function buildAdvisorReport({ project = null, projects, db = null, scope = '30d' } = {}) {
+  const list = typeof projects.list === 'function' ? projects.list() : (project ? [project] : []);
+  const cutoff = scope === '7d' ? Date.now() - 7 * 86400000 : scope === 'all' ? 0 : Date.now() - 30 * 86400000;
+  const appImprovements = [];
+  const builderInsights = [];
+  const patterns = [];
+  let failedJobs = 0;
+  let nativeFails = 0;
+  let previewPassBuildFail = 0;
+  for (const item of list) {
+    const repairs = await projects.readMetadata(item, 'upgrade-repair-history.json', []).catch(() => []);
+    const diagnosis = await projects.readMetadata(item, 'project-diagnosis.json', null).catch(() => null);
+    const runtime = await projects.readMetadata(item, 'runtime.json', {}).catch(() => ({}));
+    const pending = await projects.readMetadata(item, 'release-pending.json', null).catch(() => null);
+    const jobs = db ? db.all('SELECT type,status,error,created_at FROM jobs WHERE project_id = ? ORDER BY created_at DESC LIMIT 40', item.id) : [];
+    const recent = jobs.filter((j) => !cutoff || Date.parse(j.created_at || '') >= cutoff);
+    failedJobs += recent.filter((j) => j.status === 'failed').length;
+    if (String(diagnosis?.rootCause || '').includes('NATIVE') || recent.some((j) => /node-gyp|better-sqlite3|gyp ERR/i.test(j.error || ''))) {
+      nativeFails += 1;
+      appImprovements.push({ app: item.slug || item.id, what: 'Native dependency build risk', recommendation: 'Verify compile compatibility before Publish.', confidence: 'high' });
+    }
+    if (runtime.status === 'passed' && pending && ['workflow_failed', 'waiting_image'].includes(pending.status)) {
+      previewPassBuildFail += 1;
+      appImprovements.push({ app: item.slug || item.id, what: 'Preview passed but production image is not ready', recommendation: 'Treat GHCR/Actions as a separate stage from Preview.', confidence: 'high' });
+    }
+    if ((repairs || []).length > 2) {
+      builderInsights.push({ what: 'Repeated repairs on one app', why: `${item.slug || item.id} has ${repairs.length} repair records`, recommendation: 'Stop repeating an ineffective patch without new evidence.', confidence: 'medium' });
+    }
+  }
+  if (nativeFails >= 2) patterns.push({ what: 'Recurring native dependency build failures', why: `${nativeFails} apps`, recommendation: 'Add a pre-publish native compatibility check. Advisor will not change Builder itself.', confidence: 'high' });
+  if (previewPassBuildFail >= 1) patterns.push({ what: 'Preview success used as production success', why: `${previewPassBuildFail} apps`, recommendation: 'Keep Preview, GitHub, GHCR, and SoloHost as separate gates.', confidence: 'high' });
+  const report = {
+    generatedAt: new Date().toISOString(),
+    scope,
+    overview: { appsAnalyzed: list.length, failedJobs, recurringNativeFailures: nativeFails, previewVsProductionGaps: previewPassBuildFail },
+    patterns,
+    appImprovements: appImprovements.slice(0, 12),
+    builderInsights: builderInsights.slice(0, 8),
+    findings: [...patterns, ...builderInsights, ...appImprovements].slice(0, 20).map((row) => ({
+      problem: row.what,
+      evidence: row.why || row.app || '',
+      recommendation: row.recommendation,
+      impact: row.what,
+    })),
+    expectedImprovement: 'Fewer repeated repairs and clearer Preview vs production gates.',
+    mutatesCode: false,
+  };
+  if (project?.id) await projects.saveMetadata(project, 'builder-advisor.json', report);
+  if (db) db.setSetting('advisor:last', { generatedAt: report.generatedAt, scope, apps: list.length });
+  return report;
+}
+
 async function readImportant(sourceDir, files) {
   const chunks = [];
   for (const rel of files) {

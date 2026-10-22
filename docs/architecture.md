@@ -20,10 +20,3 @@ The visible Builder UI remains concise English. Dynamic AI responses use the lan
 
 ## User exports
 Users can request a project ZIP or a SoloHost install-kit ZIP from chat. ZIP generation excludes `.env`, `.git`, and `node_modules` and exposes a direct download link in chat.
-
-## Change Engine V2
-- Flag: `CHANGE_ENGINE_V2=true` (default off → identical to 1.8.2).
-- Modules: `src/engine/edits.js`, `prompts.js`, `agent-loop.js`, `checklist.js`, `visual-check.js`, `modify-engine.js`.
-- Entry: `improveProject` when intent=MODIFY; optional `plan.edits` in `applyUpgrade`.
-- Does not modify `patchPrompt` or `applySafeAiPatch`.
-- Verification reuses static/node/security + checklist; vision is advisory only.

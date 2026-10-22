@@ -15,8 +15,6 @@ import { writeSoloHostPackage } from '../release/solohost.js';
 import { formatSoloHostErrors } from '../release/manager.js';
 import { inferAction, extractGhcrImage, guessSoloHostPorts, classifyLogs, classifyFailureLayer, formatLayerDiagnosis, describeFailure, diagnoseSource, nextStep, guideCard, isHostDockerCommand, isNpmOnEmptyRisk, splitUserSteps, parseGithubRepoUrl } from '../scripts/ops.js';
 import { stampMadeBy } from '../projects/badge.js';
-import { isChangeEngineV2Enabled, runModifyEngine, verifyModifyResult } from '../engine/modify-engine.js';
-import { isOrchestratorV3Enabled, classifyComplexity, runOrchestrator } from '../orchestrator/index.js';
 import { createProjectZip } from '../projects/exporter.js';
 import { gcDocker } from '../docker/cleanup.js';
 import { detectUserLanguage, languageInstruction, languageInstructionFor } from '../ai/language.js';
@@ -27,7 +25,7 @@ import { shouldBlockRepeatedAction, nextRepeatState, repairFingerprint } from '.
 import { mergeVerificationState } from './verification.js';
 import { maskSecrets } from '../utils/mask.js';
 import { inspectUpgrade, diagnoseUpgradeRequest, applyUpgrade, runRuleUpgrade, beginUpgradeSession, resumeUpgrade, isUpgradePauseError, resolveEmptyUpgradePlan, planHasFileChanges } from '../upgrade/engine.js';
-import { diagnoseProject } from '../diagnose/project.js';
+import { diagnoseProject, buildAdvisorReport } from '../diagnose/project.js';
 import { refreshProjectBrain, rememberFailedRepair, wasRepairTried } from '../diagnose/brain.js';
 
 // Safety net only — does not change what inspectUpgrade does on the happy path.
@@ -42,30 +40,6 @@ function withTimeout(promise, ms, message) {
     timer = setTimeout(() => reject(new Error(message)), ms);
   });
   return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
-}
-
-
-
-function aiPreflightOrThrow(ai, emit, lang = 'en') {
-  const pf = typeof ai?.hub?.preflight === 'function' ? ai.hub.preflight({}) : { ready: true };
-  if (pf?.ready) return pf;
-  const vi = String(lang).toLowerCase().startsWith('vi');
-  const msg = pf?.status === 'needs_key'
-    ? (vi ? 'Chưa có API key. Mở ⚙ Settings → thêm Gemini → Test → Save.' : 'No AI key. Open ⚙ Settings → add Gemini → Test → Save.')
-    : (pf?.message || (vi ? 'Cần tải lại danh sách model.' : 'Reload models in Settings.'));
-  emit('preflight', 'failed', msg);
-  const err = new Error(msg);
-  err.code = pf?.status === 'needs_key' ? 'AI_NEEDS_KEY' : 'AI_NOT_READY';
-  err.preflight = pf;
-  throw err;
-}
-
-async function fetchWithTimeout(url, opts = {}, ms = 30000, maxBytes = 80 * 1024 * 1024) {
-  const res = await fetch(url, { ...opts, signal: opts.signal || AbortSignal.timeout(ms) });
-  if (!res.ok) return res;
-  const len = Number(res.headers.get('content-length') || 0);
-  if (len && len > maxBytes) throw Object.assign(new Error(`Download too large (${len} bytes)`), { code: 'SIZE_LIMIT' });
-  return res;
 }
 
 export function registerPipeline(app) {
@@ -84,6 +58,14 @@ export function registerPipeline(app) {
     return { projectId: project.id, diagnosis: report, status: 'DIAGNOSED', brief: formatProjectDiagnosis(report) };
   });
 
+  jobs.on('builder_advisor', async (job, { emit }) => {
+    const project = job.payload.projectId ? projects.get(job.payload.projectId) : (projects.list()[0] || null);
+    emit('advisor', 'running', '🧭 Reviewing session history. No files will be changed.');
+    const report = await buildAdvisorReport({ project, projects, db: app.db, scope: job.payload.scope || '30d' });
+    if (project) await refreshProjectBrain({ project, projects, db: app.db });
+    emit('advisor', 'done', formatAdvisor(report));
+    return { projectId: project?.id || null, advisor: report, status: 'ADVISOR_READY', brief: formatAdvisor(report) };
+  });
 
   jobs.on('upgrade_github_import', async (job, { emit }) => {
     const parsed = parseGithubRepoUrl(job.payload.url);
@@ -93,12 +75,12 @@ export function registerPipeline(app) {
     const url = parsed.url;
     const archiveUrl = `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/zipball/HEAD`;
     emit('import', 'running', `Fetching public GitHub source: ${owner}/${repo}…`);
-    const response = await fetchWithTimeout(archiveUrl, { headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'pi-app-factory-upgrade' } });
+    const response = await fetch(archiveUrl, { headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'pi-app-factory-upgrade' } });
     if (!response.ok) throw new Error(`GitHub public repository could not be downloaded (HTTP ${response.status}).`);
     const buffer = Buffer.from(await response.arrayBuffer());
     let sourceCommit = 'HEAD';
     try {
-      const commitResponse = await fetchWithTimeout(`https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/commits/HEAD`, { headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'pi-app-factory-upgrade' } });
+      const commitResponse = await fetch(`https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/commits/HEAD`, { headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'pi-app-factory-upgrade' } });
       if (commitResponse.ok) sourceCommit = String((await commitResponse.json())?.sha || 'HEAD');
     } catch {}
     const project = await projects.create({ idea: `Upgrade existing GitHub app: ${owner}/${repo}`, name: repo, analysis: { name: repo, slug: repo, recommended_stack: {} }, plan: { mode: 'upgrade-existing' } });
@@ -355,81 +337,28 @@ export function registerPipeline(app) {
     if (!idea) throw new Error('Describe your idea first.');
     const userLanguage = detectUserLanguage(idea);
 
-    const incomingFiles = Array.isArray(job._files) ? job._files : [];
-    const attachmentSummary = incomingFiles.map((f) => ({ name: f.originalname, type: f.mimetype, bytes: f.buffer?.length || 0 }));
-    const simpleIdea = idea.length < 400 && incomingFiles.length === 0 && !/\b(multiplayer|oauth|database|migrate|docker)\b/i.test(idea);
-    const t0 = Date.now();
+    emit('analyze', 'running', 'Understanding your idea…');
     let analysis;
-    let plan;
-    let usedLocalTemplate = false;
+    const incomingFiles = Array.isArray(job._files) ? job._files : [];
     try {
-      aiPreflightOrThrow(ai, emit, userLanguage);
-    } catch (preErr) {
-      // Honest template path — never silent
-      usedLocalTemplate = true;
-      emit('preflight', 'failed', preErr.message || 'No AI available');
+      const attachmentSummary = incomingFiles.map((f) => ({ name: f.originalname, type: f.mimetype, bytes: f.buffer?.length || 0 }));
+      const r = await ai.completeJson({ task: 'IDEA_ANALYSIS', system: SYSTEM, prompt: ideaPrompt(idea, attachmentSummary), images: imageInputs(incomingFiles) });
+      analysis = r.json;
+    } catch (err) {
+      log.warn('Idea analysis fell back to local defaults', { error: err.message });
       analysis = localAnalysis(idea);
-      analysis.fallbackReason = preErr.message;
-      plan = localPlan(idea, analysis);
-      plan.fallbackReason = preErr.message;
-      emit('plan', 'done', String(userLanguage).startsWith('vi')
-        ? 'Không có AI — đã tạo bản mẫu cơ bản (local template). Thêm API key trong Settings để AI xây app thật.'
-        : 'No AI available — created a basic local template. Add an API key in Settings for a real AI build.');
+      analysis.fallbackReason = friendlyAiError(err);
     }
-    if (!usedLocalTemplate && simpleIdea) {
-      emit('analyze', 'running', 'Understanding idea + plan (one step)…');
-      try {
-        const mergedPrompt = `${ideaPrompt(idea, attachmentSummary)}\n\nAlso return product plan fields in the same JSON: name, summary, pages (array), features (array), stack (short).`;
-        const r = await ai.completeJson({
-          task: 'IDEA_ANALYSIS',
-          system: SYSTEM,
-          prompt: mergedPrompt,
-          images: imageInputs(incomingFiles),
-          signal: job._signal,
-        });
-        analysis = r.json || localAnalysis(idea);
-        plan = {
-          name: analysis.name,
-          summary: analysis.summary || analysis.description || idea.slice(0, 160),
-          pages: analysis.pages || ['Home'],
-          features: analysis.features || [],
-          stack: analysis.stack || 'static',
-          ...(typeof localPlan === 'function' ? {} : {}),
-        };
-        // fill plan via localPlan if missing fields
-        try {
-          const lp = localPlan(idea, analysis);
-          plan = { ...lp, ...plan, name: plan.name || lp.name };
-        } catch { /* */ }
-        emit('plan', 'done', `Plan ready in ${Date.now() - t0}ms`);
-      } catch (err) {
-        log.warn('Merged analyze+plan fell back', { error: err.message });
-        analysis = localAnalysis(idea);
-        analysis.fallbackReason = friendlyAiError(err);
-        plan = localPlan(idea, analysis);
-        plan.fallbackReason = analysis.fallbackReason;
-      }
-    } else if (!usedLocalTemplate) {
-      emit('analyze', 'running', 'Understanding your idea…');
-      try {
-        const r = await ai.completeJson({ task: 'IDEA_ANALYSIS', system: SYSTEM, prompt: ideaPrompt(idea, attachmentSummary), images: imageInputs(incomingFiles), signal: job._signal });
-        analysis = r.json;
-        emit('analyze', 'done', `Analyze ${Date.now() - t0}ms`);
-      } catch (err) {
-        log.warn('Idea analysis fell back to local defaults', { error: err.message });
-        analysis = localAnalysis(idea);
-        analysis.fallbackReason = friendlyAiError(err);
-      }
-      const t1 = Date.now();
-      emit('plan', 'running', 'Preparing a simple plan…');
-      try {
-        const r = await ai.completeJson({ task: 'PRODUCT_PLANNING', system: SYSTEM, prompt: planPrompt(idea, analysis, JSON.stringify(attachmentSummary)), images: imageInputs(incomingFiles), signal: job._signal });
-        plan = r.json;
-        emit('plan', 'done', `Plan ${Date.now() - t1}ms`);
-      } catch (err) {
-        plan = localPlan(idea, analysis);
-        plan.fallbackReason = friendlyAiError(err);
-      }
+
+    emit('plan', 'running', 'Preparing a simple plan…');
+    let plan;
+    try {
+      const attachmentSummary = incomingFiles.map((f) => ({ name: f.originalname, type: f.mimetype, bytes: f.buffer?.length || 0 }));
+      const r = await ai.completeJson({ task: 'PRODUCT_PLANNING', system: SYSTEM, prompt: planPrompt(idea, analysis, JSON.stringify(attachmentSummary)), images: imageInputs(incomingFiles) });
+      plan = r.json;
+    } catch (err) {
+      plan = localPlan(idea, analysis);
+      plan.fallbackReason = friendlyAiError(err);
     }
 
     const project = await projects.create({
@@ -463,21 +392,12 @@ export function registerPipeline(app) {
     await projects.updateWorkPlan(project, { stepId: initialPlan.steps[1].id, step: { status: 'done', result: 'Architecture and product plan saved.' } });
     emit('plan', 'done', 'Job plan saved. Every build step will report what changed and what remains.');
 
-    // Build first: only pause for questions when idea is complex AND questions are required.
-    // Simple ideas go straight to code generation so users get a working preview sooner.
-    const complexIdea = !simpleIdea;
-    const mustAsk = complexIdea && analysis.questions.length >= 2 && job.payload.requireQuestions === true;
-    if (job.payload.autoBuild && mustAsk && !job.payload.demo) {
+    if (job.payload.autoBuild && analysis.questions.length && !job.payload.demo) {
       projects.setStatus(project, 'WAITING_INPUT');
       await projects.chat(project, 'I need a few quick choices before I build this.', 'assistant', { questions: analysis.questions, fixedTemplate: true });
       await projects.finishWorkPlan(project, 'waiting_input', 'Waiting for the user choices before build can continue.');
       emit('questions', 'done', 'I need a few quick choices before I build this.');
       return { projectId: project.id, analysis, plan, needsInput: true, questions: analysis.questions };
-    }
-    if (analysis.questions?.length && !mustAsk) {
-      // Keep questions for later polish; do not block the first build
-      emit('questions', 'skipped', 'Building first version now; optional choices can come after preview.');
-      analysis.questions = [];
     }
 
     projects.setStatus(project, 'READY_TO_BUILD');
@@ -580,7 +500,7 @@ export function registerPipeline(app) {
         action: 'analyze',
         ok: false,
         diagnosis,
-        brief: 'Check is locked. There is no app yet. Type your idea in chat or say "continue" to generate files.',
+        brief: 'Check is locked. There is no app yet. Tap Build first.',
         next: 'Tap ✨ Build, then Check again.',
       };
     }
@@ -598,7 +518,7 @@ export function registerPipeline(app) {
       tested,
       diagnosis,
       brief,
-      next: tested.scan?.critical ? 'Describe the unsafe setting in chat so I can remove it.' : (runtime.status === 'passed' ? 'If the preview looks right, tap 🚀 Publish or type "publish".' : 'Type "run" or tap ▶ Run next.'),
+      next: tested.scan?.critical ? 'Tap Improve so I can remove the unsafe setting.' : (runtime.status === 'passed' ? 'If the preview looks right, tap Publish.' : 'Tap ▶ Run next.'),
     };
   });
 
@@ -684,23 +604,6 @@ export function registerPipeline(app) {
     return { ...runtime, downloads: [], ui_url: publicUiUrl, next: 'Open the test link, improve if needed, then Publish.' };
   });
 
-  jobs.on('export_zip', async (job, { emit }) => {
-    const project = mustProject(job.payload.projectId);
-    const kind = job.payload.kind === 'solohost' ? 'solohost' : 'project';
-    emit('export', 'running', kind === 'solohost' ? 'Packing SoloHost install kit…' : 'Packing project ZIP…');
-    const artifact = await createProjectZip({
-      sourceDir: projects.sourceDir(project.slug),
-      outputDir: path.join(projects.projectDir(project), 'artifacts'),
-      slug: project.slug,
-      kind,
-    });
-    emit('export', 'done', `ZIP ready: ${artifact.filename}`);
-    return {
-      downloads: [{ kind, filename: artifact.filename, url: `/api/projects/${project.id}/download?kind=${kind}` }],
-      next: 'Download the ZIP from the link below.',
-    };
-  });
-
   jobs.on('stop', async (job, { emit }) => {
     const project = mustProject(job.payload.projectId);
     emit('stop', 'running', 'Stopping the preview…');
@@ -714,29 +617,6 @@ export function registerPipeline(app) {
     const project = mustProject(job.payload.projectId);
     const feedback = String(job.payload.feedback || '').trim();
     if (!feedback) throw new Error('Tell AI what to improve.');
-    // Preflight / no AI key: deterministic path only, finish fast (no hang)
-    try {
-      const pf = typeof ai?.hub?.preflight === 'function' ? ai.hub.preflight({}) : null;
-      const st = ai?.status?.() || {};
-      const hubOk = ai?.hub?.state?.()?.connections?.some((c) => c.status !== 'INVALID');
-      const configured = (pf ? pf.ready : null) ?? (st.configured || hubOk || cfg?.ai?.geminiKey || cfg?.ai?.deepseekKey);
-      if (!configured) {
-        emit('diagnose', 'running', 'No AI key — running deterministic checks only…');
-        let findings = [];
-        try {
-          const source = projects.sourceDir(project.slug);
-          const scan = await scanProject?.(source).catch?.(() => null) || null;
-          if (scan) findings.push(`scan critical=${scan.critical || 0} warning=${scan.warning || 0}`);
-        } catch { /* */ }
-        const msg = [
-          'RESULT: Needs AI key for automatic repair.',
-          findings.length ? `Deterministic: ${findings.join('; ')}` : 'Deterministic: no local scanner findings.',
-          'NEXT: Open ⚙ Settings → add Gemini (recommended) or another provider → Save → try Diagnose & Fix again.',
-        ].join('\n');
-        emit('diagnose', 'done', msg);
-        return { brief: msg, needsKey: true, deterministic: true };
-      }
-    } catch { /* continue with AI path */ }
     const incomingFiles = Array.isArray(job._files) ? job._files : [];
     for (const file of incomingFiles.slice(0, 8)) {
       if (file?.buffer) await saveAttachment(projects.projectDir(project), file);
@@ -758,7 +638,7 @@ export function registerPipeline(app) {
     await projects.updateWorkPlan(project, { stepId: plan.steps[0].id, step: { status: 'running' } });
     emit('ai', 'running', 'AI is turning your feedback into a change…');
     try {
-      const result = await improveProject(project, feedback, emit, { intent: job.payload.intent, risk: job.payload.risk });
+      const result = await improveProject(project, feedback, emit);
       if (result.tested) {
         const previousTests = await projects.readMetadata(project, 'test-plan.json', {});
         await projects.saveMetadata(project, 'test-plan.json', mergeVerificationState(previousTests, result.tested));
@@ -850,7 +730,7 @@ export function registerPipeline(app) {
       if (security.critical > 0) {
         const report = security.copy_for_ai || 'APP BUILDER SECURITY REPORT\nNo detailed report was generated.';
         emit('security', 'failed', `${security.summary}\n\n${report}`);
-        throw new Error(`RELEASE_SECURITY_BLOCKED\n${security.summary}\n\n${report}\n\nNEXT: Describe the issue in chat so AI can apply the smallest security fix, then Run and Publish again.`);
+        throw new Error(`RELEASE_SECURITY_BLOCKED\n${security.summary}\n\n${report}\n\nNEXT: Tap Improve and let the AI apply the smallest targeted security fix, then Run and Publish again.`);
       }
       if (runtime.status !== 'passed' || runtime.health !== true) throw new Error('Release blocked: run the app successfully before publishing. Tap Run first.');
     } else {
@@ -1617,49 +1497,6 @@ export function registerPipeline(app) {
         planned.push({ action: String(step.action || inferAction(step.goal || '') || action), goal: String(step.goal || message) });
       }
     } else {
-      // Complex multi-file requests: one orchestrator job (not regex step-split)
-      try {
-        if (isOrchestratorV3Enabled && isOrchestratorV3Enabled()) {
-          const { classifyComplexity, runOrchestrator } = await import('../orchestrator/index.js');
-          const cx = classifyComplexity({ request: message });
-          if (cx.level === 'complex' && project) {
-            emit('orchestrator', 'running', 'Complex chat → orchestrator');
-            const source = projects.sourceDir(project.slug);
-            const editsMod = await import('../engine/edits.js');
-            const fsP = await import('node:fs/promises');
-            const pathMod = await import('node:path');
-            const applyEdits = async (edits) => {
-              const paths = [...new Set((edits || []).map((e) => e.path).filter(Boolean))];
-              const beforeMap = await editsMod.loadFiles((rel) => fsP.readFile(pathMod.join(source, rel), 'utf8'), paths);
-              const { afterMap, touched, errors } = editsMod.applyEditsInMemory(beforeMap, edits || []);
-              if (errors?.length) throw new Error(errors.map((e) => e.message || e).join('; '));
-              await editsMod.commitFiles({
-                readFile: (rel) => fsP.readFile(pathMod.join(source, rel), 'utf8'),
-                writeFile: (rel, text) => fsP.writeFile(pathMod.join(source, rel), text),
-                unlink: (rel) => fsP.unlink(pathMod.join(source, rel)),
-                beforeMap, afterMap, touched,
-              });
-              return { touched };
-            };
-            const orch = await runOrchestrator({
-              ai, projectDir: source, request: message,
-              lang: detectUserLanguage(message) || 'en',
-              applyEdits, emit,
-              provider: job.payload?.provider || '',
-              model: job.payload?.model || '',
-              resume: Boolean(job.payload?.resumeOrchestrator),
-            });
-            if (orch?.used) {
-              payload.result = orch;
-              if (orch.planCard) emit('orchestrator', 'plan', orch.planCard);
-              emit('builder_chat', 'done', orch.brief || orch.planCard || 'Orchestrator finished');
-              return orch;
-            }
-          }
-        }
-      } catch (err) {
-        emit('orchestrator', 'failed', `Falling back to step split: ${String(err?.message || err).slice(0, 160)}`);
-      }
       const pieces = splitUserSteps(message);
       if (pieces.length > 1) planned.push(...pieces.map((goal) => ({ action: inferAction(goal) || action, goal })));
       else planned.push({ action, goal: String(r.json?.feedback || message) });
@@ -2051,66 +1888,29 @@ export function registerPipeline(app) {
     };
   });
 
-  async function generateCode({ project, analysis, plan, emit, allowFallback = false, signal = null }) {
+  async function generateCode({ project, analysis, plan, emit, allowFallback = false }) {
     projects.setStatus(project, 'BUILDING');
     const dest = projects.sourceDir(project.slug);
     let written = [];
     let usedFallback = false;
     try {
       emit('code', 'running', 'AI is writing the application files…');
-      const { doctorCompleteFiles, parseAiOutput } = await import('../ai/response-doctor.js');
-      let r;
-      const runCoding = async (extra = {}) => ai.completeJson({
+      const r = await ai.completeJson({
         task: 'CODING',
         system: SYSTEM,
         prompt: codePrompt(project, plan),
         projectId: project.id,
-        signal,
-        expectFiles: true,
-        ...extra,
       });
-      try {
-        r = await runCoding();
-      } catch (firstErr) {
-        const msg = String(firstErr?.message || firstErr);
-        const cls = firstErr?.classify?.code || firstErr?.code || '';
-        const retryable = /503|UNAVAILABLE|high demand|OVERLOADED|rate.?limit|429|TIMEOUT|STALLED|timed out|deadline|invalid format|AI_RESPONSE_MALFORMED|FORMAT/i.test(msg)
-          || ['TIMEOUT', 'STALLED', 'OVERLOADED', 'RATE_LIMITED', 'FORMAT', 'TRUNCATED'].includes(cls);
-        if (retryable) {
-          emit('code', 'running', /TIMEOUT|timed out|STALLED/i.test(msg)
-            ? 'Model timed out — trying next model…'
-            : 'Retrying code generation with next model…');
-          r = await runCoding({ modelRef: '__next__' });
-        } else {
-          throw firstErr;
-        }
-      }
-      // Doctor: salvage file-blocks or repaired JSON
-      let files = r.json?.files;
-      if (!files?.length && r.text) {
-        const doc = doctorCompleteFiles(r.text);
-        if (doc.ok && doc.value?.files?.length) {
-          files = doc.value.files;
-          emit('code', 'running', `Repaired AI output (${(doc.repaired || []).join(',') || 'ok'})…`);
-        }
-      }
-      if (!files?.length) throw new Error('AI did not return files');
-      written = await writeGeneratedFiles(dest, files);
-      if (r.provider || r.model) {
-        emit('code', 'done', `Files written · ${[r.provider, r.model].filter(Boolean).join(' · ')}`);
-      }
+      if (!r.json?.files?.length) throw new Error('AI did not return files');
+      written = await writeGeneratedFiles(dest, r.json.files);
     } catch (err) {
-      // Always leave something useful (partial starter) — B8
+      if (!allowFallback) throw new Error(`AI code generation failed: ${friendlyAiError(err)}`);
       usedFallback = true;
-      emit('code', 'running', 'AI could not finish — installing a starter so you can preview, then Continue.');
+      emit('code', 'running', 'Loading the optional demo starter…');
       written = await scaffoldFromTemplate(cfg.templatesDir, dest, {
         name: project.name, slug: project.slug, summary: analysis.summary || project.idea, idea: project.idea,
       });
-      log.warn('Code generation used starter fallback', { error: err.message });
-      emit('code', 'partial', `Starter ready. AI issue: ${friendlyAiError(err)}`);
-      if (!allowFallback && !written?.length) {
-        throw new Error(`AI code generation failed: ${friendlyAiError(err)}`);
-      }
+      log.warn('Code generation used template', { error: err.message });
     }
     await stampMadeBy(dest, cfg);
     await ensureMissingDependencies(dest).catch(() => ({ changed: false }));
@@ -2310,25 +2110,6 @@ export function registerPipeline(app) {
 
   async function runProject(project, emit) {
     const source = projects.sourceDir(project.slug);
-    // Empty / unfinished project: guide via chat, do not diagnose
-    try {
-      const hasIndex = await fs.access(path.join(source, 'index.html')).then(() => true).catch(() => false)
-        || await fs.access(path.join(source, 'public', 'index.html')).then(() => true).catch(() => false);
-      let hasStart = false;
-      try {
-        const pkg = JSON.parse(await fs.readFile(path.join(source, 'package.json'), 'utf8'));
-        hasStart = Boolean(pkg?.scripts?.start || pkg?.scripts?.dev);
-      } catch {}
-      if (!hasIndex && !hasStart) {
-        const lang = detectUserLanguage('') || 'en';
-        const vi = String(lang).startsWith('vi');
-        const msg = vi
-          ? 'App chưa được tạo xong. Gõ "tiếp tục" để mình viết lại các file.'
-          : 'The app is not finished yet. Type "continue" and I will write the files again.';
-        emit('run', 'failed', msg);
-        return { status: 'failed', error: msg, brief: msg, emptyProject: true, health: false };
-      }
-    } catch {}
     const runtime = await runner.runApp({ sourcePath: source, projectSlug: project.slug, timeout: cfg.limits.sandboxTimeoutSec, keepRunning: true });
     await projects.saveMetadata(project, 'runtime.json', { ...runtime, image: runtime.image || null, lastSeenAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
     const tests = await projects.readMetadata(project, 'test-plan.json', {});
@@ -2356,39 +2137,7 @@ export function registerPipeline(app) {
     return { staticResult, nodeResult, scan, diagnosis, inspectOnly: true };
   }
 
-
-  function formatChangeReport({ lang = 'en', files = [], tested = null, runtime = null, scopeLabel = '', canUndo = true } = {}) {
-    const vi = String(lang || '').toLowerCase().startsWith('vi');
-    const paths = (files || []).map((f) => (typeof f === 'string' ? f : f?.path)).filter(Boolean).slice(0, 3);
-    const changed = paths.length
-      ? (vi ? `Đã đổi: ${paths.join(', ')}` : `Changed: ${paths.join(', ')}`)
-      : (vi ? 'Đã đổi: không có file (không thay đổi mã).' : 'Changed: no files (no code change).');
-    const checks = [];
-    if (tested?.staticResult) checks.push('static');
-    if (tested?.nodeResult) checks.push('node');
-    if (tested?.scan) checks.push('scan');
-    if (runtime?.status === 'passed' || tested?.e2e?.status === 'passed') checks.push('preview');
-    const verified = checks.length
-      ? (vi ? `Đã kiểm chứng: ${checks.join(', ')}` : `Verified: ${checks.join(', ')}`)
-      : (vi ? 'Đã kiểm chứng: chưa có kiểm chứng tự động.' : 'Verified: no automated checks ran.');
-    const touchedDocker = paths.some((x) => /Dockerfile/i.test(x));
-    const unverified = touchedDocker
-      ? (vi
-        ? 'Dockerfile đã đổi, chưa build thử Docker; image sẽ được kiểm tra khi Publish.'
-        : 'Dockerfile changed; Docker image not built yet — it will be checked at Publish.')
-      : (vi
-        ? 'Chưa kiểm chứng: Docker image build (sẽ kiểm khi Publish).'
-        : 'Not verified: Docker image build (checked at Publish).');
-    const undo = canUndo
-      ? (vi ? 'Bạn có thể gõ "hoàn tác" hoặc mở ⋯ → Undo nếu cần.' : 'You can type "undo" or open ⋯ → Undo if needed.')
-      : '';
-    const scope = scopeLabel
-      ? (vi ? `Phạm vi: ${scopeLabel}` : `Scope: ${scopeLabel}`)
-      : '';
-    return [scope, changed, verified, unverified, undo].filter(Boolean).join('\n');
-  }
-
-  async function improveProject(project, feedback, emit, options = {}) {
+  async function improveProject(project, feedback, emit) {
     const source = projects.sourceDir(project.slug);
 
     const networkRequest = /\b(internet|offline|online|network|dns|proxy|gateway|browse|browsing|fetch|connection|kết nối|mạng|internet|truy cập web)\b/i.test(String(feedback || ''));
@@ -2469,171 +2218,6 @@ export function registerPipeline(app) {
     const recentContext = `\nRECENT ACTIVITY (use as evidence; do not repeat a failed identical action):\n${JSON.stringify(Array.isArray(activity) ? activity.slice(-40) : [])}\nRECENT JOBS: ${JSON.stringify(recentJobs)}\n`;
     const networkContext = networkPreflight ? `\nBUILDER NETWORK PREFLIGHT:\n${JSON.stringify(networkPreflight)}\n` : '';
     const securityContext = security.findings?.length ? `\nSECURITY FINDINGS (treat as concrete repair requirements):\n${security.copy_for_ai}\n` : '';
-
-    // —— Change Engine V2 (flagged; MODIFY only) ——
-
-    // Orchestrator V3 for complex multi-file requests (flag ORCHESTRATOR_V3, default on)
-    try {
-      if (isOrchestratorV3Enabled()) {
-        const cx = classifyComplexity({ request: String(feedback || '') });
-        if (cx.level === 'complex') {
-          emit('orchestrator', 'running', `Complex request → orchestrator (${cx.signals.slice(0, 3).join(', ')})`);
-          const editsMod = await import('../engine/edits.js');
-          const fsP = await import('node:fs/promises');
-          const pathMod = await import('node:path');
-          const applyEdits = async (edits) => {
-            const paths = [...new Set((edits || []).map((e) => e.path).filter(Boolean))];
-            const beforeMap = await editsMod.loadFiles((rel) => fsP.readFile(pathMod.join(source, rel), 'utf8'), paths);
-            const { afterMap, touched, errors } = editsMod.applyEditsInMemory(beforeMap, edits || []);
-            if (errors?.length) throw new Error(errors.map((e) => e.message || e).join('; '));
-            await editsMod.commitFiles({
-              readFile: (rel) => fsP.readFile(pathMod.join(source, rel), 'utf8'),
-              writeFile: (rel, text) => fsP.writeFile(pathMod.join(source, rel), text),
-              unlink: (rel) => fsP.unlink(pathMod.join(source, rel)),
-              beforeMap,
-              afterMap,
-              touched,
-            });
-            return { touched };
-          };
-          const orch = await runOrchestrator({
-            ai,
-            projectDir: source,
-            request: String(feedback || ''),
-            lang: detectUserLanguage(String(feedback || '')) || 'en',
-            applyEdits,
-            emit,
-            scanBefore: security,
-            scanProject: (dir) => scanProject(dir),
-          });
-          if (orch?.needsUser) {
-            const q = orch.question;
-            const msg = typeof q === 'object'
-              ? `NEEDS_USER_ACTION: ${q.what || q.en || q.vi || JSON.stringify(q)}`
-              : `NEEDS_USER_ACTION: ${q}`;
-            emit('orchestrator', 'paused', msg);
-            return {
-              feedback,
-              rootCause: 'feasibility',
-              explanation: msg,
-              files: [],
-              tested: { staticResult: baselineStatic, nodeResult: baselineNode, scan: security },
-              runtime: null,
-              needsUser: true,
-              orchestrator: orch,
-              brief: msg,
-            };
-          }
-          if (orch?.used) {
-            emit('orchestrator', 'done', orch.brief || 'Orchestrator finished');
-            return {
-              feedback,
-              rootCause: '',
-              explanation: orch.brief || 'Orchestrator completed',
-              files: orch.files || [],
-              tested: { staticResult: baselineStatic, nodeResult: baselineNode, scan: security },
-              runtime: null,
-              orchestrator: orch,
-              brief: orch.brief,
-              next: orch.brief,
-            };
-          }
-        }
-      }
-    } catch (err) {
-      emit('orchestrator', 'failed', `Orchestrator fallback to legacy: ${String(err?.message || err).slice(0, 200)}`);
-    }
-
-    const useCE = isChangeEngineV2Enabled() && (String(options.intent || '').toUpperCase() === 'MODIFY' || String(options.forceChangeEngine || '') === '1');
-    if (useCE) {
-      emit('ai', 'running', 'Change Engine V2 — search/replace edits…');
-      const ceCheckpoint = await snapshots.create(project, 'before-change-engine-v2').catch(() => null);
-      try {
-        const mod = await runModifyEngine({
-          sourceDir: source,
-          project,
-          feedback,
-          ai,
-          emit,
-          language: detectUserLanguage(feedback),
-          context: relevant + recentContext + networkContext + securityContext,
-          runStaticTests,
-          runNodeTests,
-          scanProject,
-        });
-        if (!mod.ok) {
-          if (ceCheckpoint?.id || ceCheckpoint?.snapshot?.id) {
-            const id = ceCheckpoint.id || ceCheckpoint.snapshot?.id;
-            await snapshots.restore(project, id).catch(() => {});
-          }
-          throw Object.assign(new Error(mod.error || 'Change Engine failed'), { code: 'CHANGE_ENGINE_FAILED', recoverable: true });
-        }
-        if (mod.noChange) {
-          emit('repair', 'done', mod.explanation || 'No code change needed.');
-          return { feedback, rootCause: '', explanation: mod.explanation, files: [], tested: { staticResult: baselineStatic, nodeResult: baselineNode, scan: security }, runtime: null, noChange: true, engine: 'v2' };
-        }
-        if (String(mod.risk || '').toLowerCase() === 'high' && !/\bconfirm\s+high\s*risk\b/i.test(String(feedback || ''))) {
-          if (ceCheckpoint?.id || ceCheckpoint?.snapshot?.id) {
-            const id = ceCheckpoint.id || ceCheckpoint.snapshot?.id;
-            await snapshots.restore(project, id).catch(() => {});
-          }
-          throw Object.assign(
-            new Error('NEEDS_USER_ACTION: This change is marked high risk. Reply "confirm high risk" once to apply with checkpoint.'),
-            { code: 'HIGH_RISK_CONFIRM', risk: 'high', recoverable: true },
-          );
-        }
-        const verified = await verifyModifyResult({
-          sourceDir: source,
-          baseline: { staticResult: baselineStatic, nodeResult: baselineNode, scan: security },
-          runStaticTests,
-          runNodeTests,
-          scanProject,
-          checklist: mod.checklist,
-          fileContents: mod.fileContents,
-          emit,
-        });
-        if (!verified.ok) {
-          if (ceCheckpoint?.id || ceCheckpoint?.snapshot?.id) {
-            const id = ceCheckpoint.id || ceCheckpoint.snapshot?.id;
-            await snapshots.restore(project, id).catch(() => {});
-          }
-          emit('rollback', 'done', 'Change Engine V2 rolled back after verification regression.');
-          return {
-            feedback,
-            rootCause: '',
-            explanation: 'Change Engine V2 rolled back: ' + (verified.report || 'verification failed'),
-            files: [],
-            tested: verified.tested,
-            runtime: null,
-            engine: 'v2',
-            rolledBack: true,
-          };
-        }
-        await stampMadeBy(source, cfg);
-        let runtime = null;
-        if (verified.tested.staticResult.status === 'passed' && verified.tested.nodeResult.status !== 'failed' && verified.tested.scan.critical === 0) {
-          runtime = await runProject(projects.get(project.id), emit);
-        }
-        return {
-          feedback,
-          rootCause: '',
-          explanation: mod.explanation,
-          files: mod.files,
-          tested: verified.tested,
-          runtime,
-          engine: 'v2',
-          checklist: verified.checklistResults,
-        };
-      } catch (err) {
-        if (ceCheckpoint?.id || ceCheckpoint?.snapshot?.id) {
-          const id = ceCheckpoint.id || ceCheckpoint.snapshot?.id;
-          await snapshots.restore(project, id).catch(() => {});
-        }
-        throw err;
-      }
-    }
-    // —— end Change Engine V2 ——
-
     const r = await ai.completeJson({ task: 'DEBUGGING', system: SYSTEM, prompt: patchPrompt(project, '', relevant + recentContext + networkContext + securityContext + `\nATTACHMENTS (canonical project storage):\n${attachContext}\nATTACHMENT INDEX:\n${JSON.stringify(attachList)}`, feedback), projectId: project.id, images: await imageInputsFromAttachments(projects.projectDir(project)) });
     if (!r.json?.files?.length) {
       const evidenceFail = (baselineScore > 0) || (security?.critical > 0) || (baselineStatic?.status === 'failed') || (baselineNode?.status === 'failed');
@@ -2644,12 +2228,7 @@ export function registerPipeline(app) {
       throw Object.assign(new Error('AI did not propose a code change while evidence still shows failures. Provide new runtime evidence or try another provider.'), { code: 'AI_NO_CHANGE', recoverable: true });
     }
     const declaredRisk = String(r.json.risk || 'medium').toLowerCase();
-    if (declaredRisk === 'high' && !/\bconfirm\s+high\s*risk\b/i.test(String(feedback || ''))) {
-      throw Object.assign(
-        new Error('NEEDS_USER_ACTION: This change is marked high risk (data, auth, wallet, or architecture). Reply "confirm high risk" once to apply with checkpoint.'),
-        { code: 'HIGH_RISK_CONFIRM', risk: 'high', recoverable: true },
-      );
-    }
+    if (declaredRisk !== 'low') throw new Error('NEEDS_USER_ACTION: AI marked this change as medium/high risk. No files were changed; review and confirm the requested change before applying it.');
     const patchCheckpoint = await applySafeAiPatch({ sourceDir: source, files: r.json.files, project, snapshots, reason: 'ai-improve' });
     await stampMadeBy(source, cfg);
     // First verify the proposed patch WITHOUT another mutating auto-fix. A later
@@ -2659,7 +2238,7 @@ export function registerPipeline(app) {
     const afterScan = await scanProject(source);
     const afterScore = failureScore(afterStatic, afterNode);
     let runtime = null;
-    const changedSecurity = afterScan.critical > security.critical; // P4: warnings do not force rollback
+    const changedSecurity = afterScan.critical > security.critical || afterScan.warning > security.warning;
     if (afterScore > baselineScore || afterScan.critical > 0 || changedSecurity) {
       const latest = patchCheckpoint?.snapshot || snapshots.list(project.id)[0];
       if (latest?.id) {
@@ -2689,17 +2268,7 @@ export function registerPipeline(app) {
       runtime.brief = briefFail(runtime.error);
       emit('run', 'failed', runtime.error);
     }
-    const changeFiles = r.json.files.map((f) => f.path);
-    const scopeLabel = changeFiles.length > 3 ? (options?.intent === 'improve' ? 'multi-file change' : 'broad change') : (changeFiles.length ? 'focused change' : 'no change');
-    const brief = formatChangeReport({
-      lang: options?.lang || detectUserLanguage?.(String(feedback || '')) || 'en',
-      files: changeFiles,
-      tested,
-      runtime,
-      scopeLabel,
-      canUndo: true,
-    });
-    return { feedback, rootCause: r.json.root_cause || '', explanation: r.json.explanation || '', files: changeFiles, tested, runtime, brief, next: brief };
+    return { feedback, rootCause: r.json.root_cause || '', explanation: r.json.explanation || '', files: r.json.files.map((f) => f.path), tested, runtime };
   }
 
   function imageInputs(files) {
@@ -2968,9 +2537,7 @@ function friendlyAiError(err) {
   const m = String(err?.message || err);
   const providers = Array.isArray(err?.providerErrors) ? err.providerErrors.map((x) => String(x).replace(/\s+/g, ' ').slice(0, 260)) : [];
   const detail = providers.join(' | ');
-  if (/No AI provider is configured|API key is not configured|AI_NEEDS_KEY|needs_key/i.test(m)) return 'No active AI key is available. Open ⚙ Settings → add Gemini → Test → Save.';
-  if (/no longer available|MODEL_UNAVAILABLE|404/i.test(m)) return 'A model name is no longer available. Open Settings → ↻ Load models → choose Auto (or a current model) → Save.';
-  if (/503|high demand|UNAVAILABLE|OVERLOADED/i.test(m)) return 'The AI model is busy (high demand). Builder will try another model automatically — tap Retry or wait a few seconds.';
+  if (/No AI provider is configured|API key is not configured/i.test(m)) return 'No active AI key is available. Builder can use DeepSeek or Gemini; save a valid key in Settings.';
   if (/HTTP 401|HTTP 403|bad credentials|invalid api key/i.test(m)) return `AI authentication failed. ${detail || 'The selected key was rejected.'} Check the provider key, then Save Settings.`;
   if (/HTTP 404|model.*not found|invalid.*model/i.test(m)) return `AI model is unavailable. ${detail || 'Builder will rotate to a supported model automatically.'} Save Settings to reset model selection.`;
   if (/HTTP 429|quota|rate limit|resource exhausted/i.test(m)) return `AI quota/rate limit was reached. ${detail || 'The request was throttled.'} Builder will try another configured provider when available.`;
@@ -3020,6 +2587,19 @@ function formatProjectDiagnosis(report) {
   return lines.join('\n');
 }
 
+function formatAdvisor(report) {
+  const o = report.overview || {};
+  const lines = [
+    '🧭 AI ADVISOR',
+    `Apps analyzed: ${o.appsAnalyzed || 0}`,
+    `Failed jobs: ${o.failedJobs || 0}`,
+    'Advisor does not edit apps or Builder.',
+  ];
+  for (const row of (report.patterns || []).slice(0, 4)) lines.push('', `Pattern: ${row.what}`, `Why: ${row.why || ''}`, `Recommendation: ${row.recommendation}`);
+  for (const row of (report.appImprovements || []).slice(0, 4)) lines.push('', `App: ${row.app}`, `What: ${row.what}`, `Recommendation: ${row.recommendation}`);
+  if (!report.patterns?.length && !report.appImprovements?.length) lines.push('', 'No recurring problems in the selected scope.');
+  return lines.join('\n');
+}
 
 function formatUserDiagnosis(report) {
   return [
