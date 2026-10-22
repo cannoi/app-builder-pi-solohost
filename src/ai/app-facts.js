@@ -31,7 +31,8 @@ export const APP_FACTS = {
 };
 
 /** Core panel knowledge always sent (<700 chars). */
-export function coreKnowledge(lang = 'en') {
+export function /* v2.2 fault-tolerant AI ladder + Response Doctor */
+coreKnowledge(lang = 'en') {
   if (lang === 'vi') {
     return 'App Builder — Pi SoloHost: một ô chat tạo/sửa/chạy/xuất bản app SoloHost. AI: Gemini mặc định; hỗ trợ DeepSeek/Custom/Personal AI Hub. Chọn model hoặc để auto. Nút ▶ Chạy thử, 🚀 Xuất bản, 💛 Ủng hộ. Menu ⋯: ZIP, nhập ZIP, Sandbox, hoàn tác. Mặc định New app + hướng dẫn. AI trả lời theo ngôn ngữ tin nhắn. Publish cần GitHub token; AI cần key trong Settings.';
   }

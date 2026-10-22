@@ -2,6 +2,7 @@ import { createDeadline, BUDGET_MS, mergeSignals } from '../core/budget.js';
 import { GeminiProvider } from './providers/gemini.js';
 import { DeepSeekProvider } from './providers/deepseek.js';
 import { extractJson, normalizeAIResponse, normalizeArray } from '../utils/validate.js';
+import { parseAiOutput, doctorCompleteFiles } from './response-doctor.js';
 import { uuid } from '../utils/ids.js';
 import { pickRoles, recordTrust, reviewPrompt, scoreOf } from './council.js';
 import { AIProviderHub } from './hub/hub.js';
@@ -107,10 +108,10 @@ export class AIGateway {
 
   async completeJson(opts) {
     const coding = ['CODING', 'DEBUGGING'].includes(opts.task);
-    const totalMs = BUDGET_MS.AI_REQUEST_TOTAL;
-    const callMs = coding ? BUDGET_MS.AI_CODING : BUDGET_MS.AI_SIMPLE;
-    const parent = opts.signal ? { signal: opts.signal, remaining: () => BUDGET_MS.AI_REQUEST_TOTAL } : null;
-    const deadline = createDeadline({ ms: Math.min(totalMs, callMs * 2), parent, label: 'ai-request' });
+    // Total logical budget — hub.execute applies per-attempt caps so one hang cannot burn the ladder
+    const totalMs = coding ? 180_000 : 120_000;
+    const parent = opts.signal ? { signal: opts.signal, remaining: () => totalMs } : null;
+    const deadline = createDeadline({ ms: totalMs, parent, label: 'ai-request' });
     opts = { ...opts, signal: mergeSignals(opts.signal, deadline.signal) };
 
     const pair = this.hub.selectedModels?.() || [];
@@ -122,6 +123,14 @@ export class AIGateway {
     const first = await this.complete({ ...opts, json: true });
     let norm = normalizeAIResponse(first.text);
     let parsed = norm.ok ? norm.value : null;
+    if (!parsed) {
+      const doc = parseAiOutput(first.text, { expect: opts.expectFiles ? 'files' : 'json' });
+      if (doc.ok) {
+        parsed = doc.value;
+        first.parseTrace = doc.parseTrace;
+        first.repaired = doc.repaired;
+      }
+    }
     if (parsed && (!opts.validateJson || opts.validateJson(parsed))) return { ...first, json: parsed };
 
     // Recovery 1: strict structured retry on the same provider path
@@ -134,10 +143,18 @@ export class AIGateway {
         return { ...retry, json: parsed, fallbackFrom: first.provider };
       }
     } catch (err) {
+      // B3: never swallow TIMEOUT as format
+      const msg = String(err.message || err);
+      if (/timed out|deadline|AbortError|STALLED|TIMEOUT/i.test(msg) || err.name === 'AbortError') {
+        throw Object.assign(new Error(msg), {
+          code: 'TIMEOUT',
+          classify: { code: 'TIMEOUT', user: 'AI request timed out.' },
+          cause: err,
+        });
+      }
       this.log.warn('AI JSON retry failed', { error: err.message });
     }
 
-    // Recovery 2 removed (v2.0): alternate provider call discarded same-provider results — waste.
 
     // AI_RESPONSE_MALFORMED is a provider failure, not an application failure.
     // Callers must not rollback verified work solely because of this code.

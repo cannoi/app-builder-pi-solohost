@@ -74,7 +74,16 @@ export function classifyProviderError(err, status = 0) {
     return { code: 'OVERLOADED', class: 'OVERLOADED', user: 'Provider temporarily overloaded.', hint, http, raw: message.slice(0, 240) };
   }
 
-  if (/timeout|ETIMEDOUT|AbortError|DEADLINE/i.test(message) || err?.code === 'DEADLINE') {
+  if (/MAX_TOKENS|finishReason.?LENGTH|output.?limit/i.test(message) || (/truncated/i.test(message) && !/timed out/i.test(message))) {
+    return { code: 'TRUNCATED', class: 'TRUNCATED', user: 'AI response was truncated.', hint, http, raw: message.slice(0, 240) };
+  }
+  if (/SAFETY|blockReason|blocked|content.?filter/i.test(message)) {
+    return { code: 'BLOCKED', class: 'BLOCKED', user: 'AI refused the request (safety/policy).', hint, http, raw: message.slice(0, 240) };
+  }
+  if (/stall|idle.?timeout|first.?token/i.test(message)) {
+    return { code: 'STALLED', class: 'STALLED', user: 'AI model stopped responding.', hint, http, raw: message.slice(0, 240) };
+  }
+  if (/timeout|timed out|ETIMEDOUT|AbortError|DEADLINE/i.test(message) || err?.code === 'DEADLINE') {
     return { code: 'TIMEOUT', class: 'TIMEOUT', user: 'AI request timed out.', hint, http, raw: message.slice(0, 240) };
   }
 
@@ -104,7 +113,7 @@ export function isAuthError(cls) {
 }
 
 export function isTransient(code) {
-  return ['RATE_LIMITED', 'OVERLOADED', 'NETWORK', 'TIMEOUT', 'PROVIDER_TEMPORARY_ERROR', 'NETWORK_ERROR'].includes(code);
+  return ['RATE_LIMITED', 'OVERLOADED', 'NETWORK', 'TIMEOUT', 'STALLED', 'TRUNCATED', 'PROVIDER_TEMPORARY_ERROR', 'NETWORK_ERROR'].includes(code);
 }
 
 export function isModelUnavailable(code) {
@@ -125,6 +134,11 @@ export function friendlyClassMessage(cls, lang = 'en') {
     QUOTA_EXHAUSTED: vi ? 'Hết hạn mức API.' : 'Quota exhausted for this key.',
     OVERLOADED: vi ? 'Nhà cung cấp đang quá tải.' : 'Provider temporarily overloaded.',
     TIMEOUT: vi ? 'Hết thời gian chờ AI.' : 'AI request timed out.',
+    STALLED: vi ? 'Model không phản hồi.' : 'AI model stopped responding.',
+    TRUNCATED: vi ? 'Phản hồi AI bị cắt ngắn.' : 'AI response was truncated.',
+    BLOCKED: vi ? 'AI từ chối yêu cầu (an toàn).' : 'AI refused the request (safety/policy).',
+    EMPTY: vi ? 'AI trả về rỗng.' : 'AI returned an empty response.',
+    FORMAT: vi ? 'AI trả về định dạng không hợp lệ.' : 'AI response format was invalid.',
     NETWORK: vi ? 'Lỗi mạng tới nhà cung cấp AI.' : 'Network error reaching the AI provider.',
     BAD_REQUEST: vi ? 'Yêu cầu gửi AI không hợp lệ.' : 'Bad request to the AI provider.',
     FORMAT: vi ? 'AI trả về định dạng không hợp lệ.' : 'AI response format was invalid.',

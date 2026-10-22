@@ -2058,48 +2058,59 @@ export function registerPipeline(app) {
     let usedFallback = false;
     try {
       emit('code', 'running', 'AI is writing the application files…');
+      const { doctorCompleteFiles, parseAiOutput } = await import('../ai/response-doctor.js');
       let r;
+      const runCoding = async (extra = {}) => ai.completeJson({
+        task: 'CODING',
+        system: SYSTEM,
+        prompt: codePrompt(project, plan),
+        projectId: project.id,
+        signal,
+        expectFiles: true,
+        ...extra,
+      });
       try {
-        r = await ai.completeJson({
-          task: 'CODING',
-          system: SYSTEM,
-          prompt: codePrompt(project, plan),
-          projectId: project.id,
-          signal,
-        });
+        r = await runCoding();
       } catch (firstErr) {
         const msg = String(firstErr?.message || firstErr);
-        const overloaded = /503|UNAVAILABLE|high demand|OVERLOADED|rate.?limit|429/i.test(msg);
-        const format = /invalid format|AI_RESPONSE_MALFORMED|did not return valid JSON/i.test(msg);
-        if (overloaded || format) {
-          emit('code', 'running', overloaded
-            ? 'Model busy (503) — retrying with next model…'
-            : 'Invalid AI format — one strict retry…');
-          r = await ai.completeJson({
-            task: 'CODING',
-            system: SYSTEM,
-            prompt: codePrompt(project, plan),
-            projectId: project.id,
-            signal,
-            modelRef: '', // force hub to pick next ladder entry
-          });
+        const cls = firstErr?.classify?.code || firstErr?.code || '';
+        const retryable = /503|UNAVAILABLE|high demand|OVERLOADED|rate.?limit|429|TIMEOUT|STALLED|timed out|deadline|invalid format|AI_RESPONSE_MALFORMED|FORMAT/i.test(msg)
+          || ['TIMEOUT', 'STALLED', 'OVERLOADED', 'RATE_LIMITED', 'FORMAT', 'TRUNCATED'].includes(cls);
+        if (retryable) {
+          emit('code', 'running', /TIMEOUT|timed out|STALLED/i.test(msg)
+            ? 'Model timed out — trying next model…'
+            : 'Retrying code generation with next model…');
+          r = await runCoding({ modelRef: '__next__' });
         } else {
           throw firstErr;
         }
       }
-      if (!r.json?.files?.length) throw new Error('AI did not return files');
-      written = await writeGeneratedFiles(dest, r.json.files);
+      // Doctor: salvage file-blocks or repaired JSON
+      let files = r.json?.files;
+      if (!files?.length && r.text) {
+        const doc = doctorCompleteFiles(r.text);
+        if (doc.ok && doc.value?.files?.length) {
+          files = doc.value.files;
+          emit('code', 'running', `Repaired AI output (${(doc.repaired || []).join(',') || 'ok'})…`);
+        }
+      }
+      if (!files?.length) throw new Error('AI did not return files');
+      written = await writeGeneratedFiles(dest, files);
       if (r.provider || r.model) {
         emit('code', 'done', `Files written · ${[r.provider, r.model].filter(Boolean).join(' · ')}`);
       }
     } catch (err) {
-      if (!allowFallback) throw new Error(`AI code generation failed: ${friendlyAiError(err)}`);
+      // Always leave something useful (partial starter) — B8
       usedFallback = true;
-      emit('code', 'running', 'Loading the optional demo starter…');
+      emit('code', 'running', 'AI could not finish — installing a starter so you can preview, then Continue.');
       written = await scaffoldFromTemplate(cfg.templatesDir, dest, {
         name: project.name, slug: project.slug, summary: analysis.summary || project.idea, idea: project.idea,
       });
-      log.warn('Code generation used template', { error: err.message });
+      log.warn('Code generation used starter fallback', { error: err.message });
+      emit('code', 'partial', `Starter ready. AI issue: ${friendlyAiError(err)}`);
+      if (!allowFallback && !written?.length) {
+        throw new Error(`AI code generation failed: ${friendlyAiError(err)}`);
+      }
     }
     await stampMadeBy(dest, cfg);
     await ensureMissingDependencies(dest).catch(() => ({ changed: false }));

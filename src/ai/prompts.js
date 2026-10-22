@@ -149,29 +149,38 @@ Return JSON with name, summary, user_flow, features, architecture, data_model, s
 
 export function codePrompt(project, plan, attachmentContext = '') {
   const _nativeBan = NATIVE_MODULE_BAN;
-  return `${languageInstruction(project.idea)}\n\nGenerate a complete small production-ready application.\nProject: ${project.name}
+  return `${languageInstruction(project.idea)}
+
+Generate APP-SPECIFIC files for a small SoloHost app (Builder adds Dockerfile, docker-compose.yml, config_options.yml, .gitignore, README skeleton automatically).
+
+Project: ${project.name}
 Idea: ${project.idea}
 Plan: ${JSON.stringify(plan, null, 2)}
 Attachments: ${attachmentContext}
 
-Return JSON:
-{"files":[{"path":"relative/path","content":"..."}],"notes":"short notes"}
+${_nativeBan}
 
-Required baseline:
-- package.json with start/test scripts
-- server and frontend appropriate to the chosen stack
-- health/readiness endpoint
-- Dockerfile
-- docker-compose.yml (127.0.0.1 host bind, label pi.ui.primary: "true")
-- config_options.yml (SoloHost operator form). Put API keys, access tokens, IDs, passwords, and other operator-specific settings here instead of hard-coding them. Use password fields for secrets and simple text/select fields for IDs/options; do not expose unnecessary internal metrics or technical numbers.
-- .env.example
-- .gitignore
-- README.md
-- INSTALL.md
-- tests
-- CHANGELOG.md
+Output protocol (preferred — raw file content, no JSON escaping):
+<<<FILE path="package.json">>>
+{ ... }
+<<<END FILE>>>
+<<<FILE path="server.js">>>
+...
+<<<END FILE>>>
+<<<NOTES>>>
+short notes
+<<<END NOTES>>>
 
-Do not include .env, credentials, node_modules, or host Docker socket mounts.`;
+You may instead return JSON: {"files":[{"path":"...","content":"..."}],"notes":"..."}
+
+Required app files (≤12, keep each file modest):
+- package.json with start script
+- main server (listen 0.0.0.0, PORT env, /health)
+- frontend (public/index.html + minimal CSS/JS if needed)
+- optional tests
+
+Do NOT emit: Dockerfile, docker-compose.yml, config_options.yml, .env, credentials, node_modules, docker.sock mounts.
+Do not put secrets in source.`;
 }
 
 export function patchPrompt(project, error, files, feedback = '') {

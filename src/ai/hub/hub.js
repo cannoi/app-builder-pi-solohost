@@ -1,3 +1,5 @@
+import { createDeadline, mergeSignals } from '../core/budget.js';
+import { modelKey, isCooling, recordSuccess, recordFailure, rankByHealth } from './circuit.js';
 import { PROVIDER_CATALOG, catalogEntry, taskComplexity } from './catalog.js';
 import { buildAttemptPlan, normalizeRoutingMode, ROUTING_MODE, isRoutingLocked as routingLocked, DEFAULT_PROVIDER_PRIORITY } from './routing.js';
 import { filterAndRankListed, isChatCapable, OFFLINE_GEMINI_FALLBACK } from './model-registry.js';
@@ -314,48 +316,99 @@ export class AIProviderHub {
 
   async execute({ task, prompt, system, json = false, images = [], modelRef = '', signal = null }) {
     const st = this.state();
+    const health = st.health || {};
     const conns = (st.connections || []).map((c) => ({ ...c, hasKey: Boolean(this.key(c)) }));
     let picks = buildAttemptPlan({
       connections: conns,
-      preferredModels: modelRef ? [modelRef] : (st.preferredModels || []),
+      preferredModels: (modelRef && modelRef !== '__next__' && modelRef !== '') ? [modelRef] : (st.preferredModels || []),
       preferredProvider: st.preferredProvider || '',
       mode: st.mode,
-      task,
+      task: task || '',
       maxAttempts: 6,
     });
-    if (!picks.length) picks = this.candidates(task, modelRef).slice(0, 3);
+    // Rank: skip cooling models first, prefer healthy+fast
+    picks = rankByHealth(picks, health);
+    const coolingOnly = picks.filter((p) => isCooling(health[modelKey(p.conn.provider, p.model)]));
+    const warm = picks.filter((p) => !isCooling(health[modelKey(p.conn.provider, p.model)]));
+    picks = warm.length ? warm.concat(coolingOnly) : picks;
     if (!picks.length) throw Object.assign(new Error('No verified AI model is available for this task. Connect a provider or refresh its models.'), { code: 'AI_UNAVAILABLE' });
-    const errors = []; let tries = 0;
+
+    // Per-attempt budgets leave room for next ladder entries (B1)
+    const totalMs = Number(process.env.AI_TOTAL_BUDGET_MS) || (String(task || '').toUpperCase().includes('CODING') ? 180_000 : 120_000);
+    const perAttemptCap = Number(process.env.AI_ATTEMPT_BUDGET_MS) || (String(task || '').toUpperCase().includes('CODING') ? 75_000 : 40_000);
+    const startedAll = Date.now();
+    const errors = [];
+    let tries = 0;
     for (const pick of picks) {
       if (tries >= 6) break;
+      const remaining = totalMs - (Date.now() - startedAll);
+      // Reserve time for at least one more attempt when possible
+      const reserve = tries < picks.length - 1 ? Math.min(perAttemptCap, 15_000) : 0;
+      const attemptMs = Math.min(perAttemptCap, Math.max(8_000, remaining - reserve));
+      if (attemptMs < 8_000) {
+        errors.push('budget-exhausted');
+        break;
+      }
       tries += 1;
+      const attemptDeadline = createDeadline({ ms: attemptMs, parent: signal, label: `ai-attempt-${pick.model}` });
       try {
         const adapter = this.adapter({ ...pick.conn, models: [{ id: pick.model }] });
-        const result = await adapter.complete({ prompt, system, json, model: pick.model, images, signal });
+        const result = await adapter.complete({
+          prompt, system, json, model: pick.model, images,
+          signal: mergeSignals(signal, attemptDeadline.signal),
+        });
         this.markModelVerified(pick.conn.id, pick.model, result);
-        return result;
+        // health success
+        const st2 = this.state();
+        st2.health = st2.health || {};
+        st2.health[modelKey(pick.conn.provider, pick.model)] = recordSuccess(
+          st2.health[modelKey(pick.conn.provider, pick.model)],
+          result.durationMs || 0,
+        );
+        this.save(st2);
+        return {
+          ...result,
+          provider: pick.conn.provider,
+          model: result.model || pick.model,
+          attempt: tries,
+        };
       } catch (err) {
         const cls = err.classify || classifyProviderError(err, err.status || 0);
-        errors.push(`${pick.conn.provider}/${pick.model}: ${cls.user}`);
-        const auth = isAuthError(cls) || cls.code === 'INVALID_CREDENTIAL' || cls.code === 'AUTH_INVALID';
-        if (isModelUnavailable(cls.code) || cls.code === 'MODEL_OR_ENDPOINT_UNAVAILABLE') {
+        // Map abort/deadline to STALLED/TIMEOUT — never FORMAT
+        let code = cls.code;
+        if (err.name === 'AbortError' || /timed out|deadline|ai-attempt|ai-request/i.test(String(err.message || ''))) {
+          code = 'TIMEOUT';
+          err.classify = { code: 'TIMEOUT', class: 'TIMEOUT', user: 'AI attempt timed out — trying next model.' };
+        }
+        errors.push(`${pick.conn.provider}/${pick.model}: ${err.classify?.user || cls.user}`);
+        const st2 = this.state();
+        st2.health = st2.health || {};
+        st2.health[modelKey(pick.conn.provider, pick.model)] = recordFailure(
+          st2.health[modelKey(pick.conn.provider, pick.model)],
+          code,
+        );
+        this.save(st2);
+
+        const auth = isAuthError(cls) || code === 'AUTH_INVALID' || code === 'INVALID_CREDENTIAL';
+        if (isModelUnavailable(code) || code === 'MODEL_OR_ENDPOINT_UNAVAILABLE') {
           this.markModelState(pick.conn.id, pick.model, 'unavailable', cls.user);
-          this.log?.warn?.('Model unavailable — trying next', { model: pick.model, provider: pick.conn.provider });
           continue;
         }
-        if (cls.code === 'RATE_LIMITED' || cls.code === 'OVERLOADED') {
-          this.markModelState(pick.conn.id, pick.model, cls.code === 'RATE_LIMITED' ? 'rate_limited' : 'overloaded', cls.user);
-          // short jitter then next model (do not mark connection INVALID)
-          await new Promise((r) => setTimeout(r, cls.code === 'OVERLOADED' ? 400 : 200));
-          this.log?.warn?.('Provider overloaded/rate-limited — trying next model', { model: pick.model, code: cls.code });
+        if (code === 'RATE_LIMITED' || code === 'OVERLOADED' || code === 'TIMEOUT' || code === 'STALLED') {
+          this.markModelState(pick.conn.id, pick.model, code === 'RATE_LIMITED' ? 'rate_limited' : 'overloaded', cls.user);
+          await new Promise((r) => setTimeout(r, code === 'OVERLOADED' ? 300 : 100));
           continue;
         }
         this.markError(pick.conn.id, cls.user, auth ? 'INVALID' : 'ERROR');
         if (auth) break;
-        continue; // always try next ladder entry for unknown/network unless auth
+        continue;
       }
     }
-    throw Object.assign(new Error(errors.join(' | ') || 'No verified AI model is available'), { code: 'AI_UNAVAILABLE', providerErrors: errors });
+    const e = new Error(errors.join(' | ') || 'No verified AI model is available');
+    e.code = 'AI_UNAVAILABLE';
+    e.providerErrors = errors;
+    e.classify = { code: 'TIMEOUT', user: errors.join(' | ') };
+    throw e;
   }
 
   markModelVerified(connectionId, modelId, result) {
