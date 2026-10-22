@@ -1,0 +1,27 @@
+# Optional LiteLLM Proxy for App Builder — Pi SoloHost
+# Enable only when you want a unified multi-provider gateway.
+# App Builder connects as provider "LiteLLM Proxy" with:
+#   Base URL: http://litellm:4000/v1   (same Docker network)
+#             or http://127.0.0.1:4000/v1 (host)
+#   API Key:  the LITELLM_MASTER_KEY below (or a virtual key you create)
+#
+# Does NOT replace direct Gemini/DeepSeek/Custom connections.
+
+services:
+  litellm:
+    image: ghcr.io/berriai/litellm:main-latest
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:4000:4000"
+    environment:
+      LITELLM_MASTER_KEY: "${LITELLM_MASTER_KEY:-sk-litellm-change-me}"
+      # Example: map Gemini through LiteLLM (set real key in env / secrets)
+      # GEMINI_API_KEY: "${GEMINI_API_KEY}"
+    # Prefer a config file for production model lists — see https://docs.litellm.ai/
+    command: ["--port", "4000", "--host", "0.0.0.0"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:4000/health/liveliness')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s

@@ -6,6 +6,7 @@ export const ROUTING_MODE = Object.freeze({ AUTO: 'AUTO', SELECTED: 'SELECTED' }
 export const DEFAULT_PROVIDER_PRIORITY = [
   'gemini',
   'custom',
+  'litellm',
   'openai',
   'openrouter',
   'groq',

@@ -8,6 +8,9 @@ export const PROVIDER_CATALOG = [
   { id: 'mistral', name: 'Mistral', kind: 'openai', baseUrl: 'https://api.mistral.ai/v1', discover: true },
   { id: 'xai', name: 'xAI', kind: 'openai', baseUrl: 'https://api.x.ai/v1', discover: true },
   { id: 'custom', name: 'Custom OpenAI-compatible', kind: 'openai', baseUrl: '', discover: true, fallbackModels: ['auto'] },
+  // Optional LiteLLM Proxy (OpenAI-compatible). Default local/docker hostname; override base URL in Settings.
+  // Internal only — not shown in Settings. Use env LITELLM_BASE_URL for external proxy.
+  { id: 'litellm', name: 'LiteLLM', kind: 'openai', baseUrl: 'http://litellm:4000/v1', discover: false, fallbackModels: ['auto'], optional: true, internal: true },
 ];
 
 export function catalogEntry(id) { return PROVIDER_CATALOG.find((p) => p.id === id) || null; }

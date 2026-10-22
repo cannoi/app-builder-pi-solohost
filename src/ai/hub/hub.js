@@ -1,3 +1,4 @@
+import { normalizeAiResult } from '../litellm-layer.js';
 import { createDeadline, mergeSignals } from '../../core/budget.js';
 import { modelKey, isCooling, recordSuccess, recordFailure, rankByHealth } from './circuit.js';
 import { PROVIDER_CATALOG, catalogEntry, taskComplexity } from './catalog.js';
@@ -67,7 +68,7 @@ export class AIProviderHub {
         credentialRef: c.credentialRef, masked: maskKey(this.key(c)), status: c.status || 'UNVERIFIED',
         models: normalizeModelsState(c.models).map((m) => ({ id: m.id || m, verified: m.verified === true, capabilities: m.capabilities || {}, contextWindow: m.contextWindow || null, lastVerified: m.lastVerified || null })),
         verifiedCount: normalizeModelsState(c.models).filter((m) => m.verified === true).length,
-        lastError: c.lastError || null, lastVerified: c.lastVerified || null, baseUrl: c.provider === 'custom' ? c.baseUrl : undefined,
+        lastError: c.lastError || null, lastVerified: c.lastVerified || null, baseUrl: (c.provider === 'custom' || c.provider === 'litellm') ? c.baseUrl : undefined,
       })),
     };
   }
@@ -99,7 +100,7 @@ export class AIProviderHub {
       if (!discovered.length && model) discovered.push({ id: model, displayName: model, available: true, verified: false, capabilities: normalizeCaps({}, model, provider), source: 'manual' });
       if (!discovered.length) discovered = fallback;
       // Custom / Personal AI Hub: if discovery returned nothing but endpoint is reachable intent, seed "auto"
-      if (!discovered.length && (provider === 'custom' || /personal-ai|ollama|localhost|127\.0\.0\.1/i.test(String(baseUrl || '')))) {
+      if (!discovered.length && (provider === 'custom' || provider === 'litellm' || /personal-ai|ollama|localhost|127\.0\.0\.1|litellm/i.test(String(baseUrl || '')))) {
         discovered = [{ id: 'auto', displayName: 'auto', available: true, verified: false, capabilities: normalizeCaps({}, 'auto', provider), source: 'auto-default' }];
       }
       if (!discovered.length) throw Object.assign(new Error('No usable model is known for this provider. Paste the key and try again, or set Base URL for Custom (e.g. http://personal-ai-hub:8080/v1).'), { code: 'MODEL_OR_ENDPOINT_UNAVAILABLE', classify: { code: 'MODEL_OR_ENDPOINT_UNAVAILABLE', user: 'No usable model is known for this provider.' } });
@@ -366,12 +367,12 @@ export class AIProviderHub {
           result.durationMs || 0,
         );
         this.save(st2);
-        return {
+        return normalizeAiResult({
           ...result,
           provider: pick.conn.provider,
           model: result.model || pick.model,
           attempt: tries,
-        };
+        }, pick.conn.provider);
       } catch (err) {
         const cls = err.classify || classifyProviderError(err, err.status || 0);
         // Map abort/deadline to STALLED/TIMEOUT — never FORMAT

@@ -3,6 +3,7 @@ import { GeminiProvider } from './providers/gemini.js';
 import { DeepSeekProvider } from './providers/deepseek.js';
 import { extractJson, normalizeAIResponse, normalizeArray } from '../utils/validate.js';
 import { parseAiOutput, doctorCompleteFiles } from './response-doctor.js';
+import { completeViaLiteLLMProxy, normalizeAiResult, litellmEnabled, toLiteLLMModelId } from './litellm-layer.js';
 import { uuid } from '../utils/ids.js';
 import { pickRoles, recordTrust, reviewPrompt, scoreOf } from './council.js';
 import { AIProviderHub } from './hub/hub.js';
@@ -51,6 +52,7 @@ export class AIGateway {
       configured: this.gemini.configured() || this.deepseek.configured() || (hub.connections || []).some((c) => c.status !== 'INVALID'),
       geminiModel: this.gemini.getStickyModel() || this.cfg.ai.geminiModel || null,
       hub,
+      litellmLayer: { enabled: litellmEnabled(), mode: litellmEnabled() ? 'proxy' : 'normalize' },
       trust: {
         deepseek: scoreOf(roles.trust.deepseek),
         gemini: scoreOf(roles.trust.gemini),
@@ -77,10 +79,26 @@ export class AIGateway {
     const rule = actionRule(task);
     const safeSystem = rule ? `${system || ''}\n\n${rule}`.trim() : (system || '').trim();
     const safePrompt = rule ? `${prompt || ''}\n\n${rule}`.trim() : (prompt || '').trim();
+    // LiteLLM layer (always-on normalization; external proxy when LITELLM_BASE_URL is set)
+    if (litellmEnabled()) {
+      try {
+        const model = modelRef && !modelRef.includes('__') ? modelRef.split(':').pop() : undefined;
+        const via = await completeViaLiteLLMProxy({
+          prompt: safePrompt, system: safeSystem, json, model, images, signal,
+        });
+        if (via) {
+          this.record({ projectId, task, provider: via.provider, model: via.model, success: 1, durationMs: via.durationMs, tokens: via.tokens, error: null });
+          return via;
+        }
+      } catch (err) {
+        this.log.warn('LiteLLM proxy failed; falling back to direct providers', { error: err.message });
+      }
+    }
     try {
       const routed = await this.hub.execute({ task, prompt: safePrompt, system: safeSystem, json, images, modelRef, signal });
-      this.record({ projectId, task, provider: routed.provider, model: routed.model, success: 1, durationMs: routed.durationMs, tokens: routed.tokens, error: null });
-      return routed;
+      const normalized = normalizeAiResult(routed, routed.provider || 'hub');
+      this.record({ projectId, task, provider: normalized.provider, model: normalized.model, success: 1, durationMs: normalized.durationMs, tokens: normalized.tokens, error: null });
+      return normalized;
     } catch (err) {
       // A provider/model selection is normally respected. Only fall back when
       // the hub supplies concrete provider-level evidence (for example 402
@@ -97,8 +115,9 @@ export class AIGateway {
       if (!provider.configured()) continue;
       try {
         const result = await provider.complete({ prompt: safePrompt, system: safeSystem, json, images, signal });
-        this.record({ projectId, task, provider: result.provider, model: result.model, success: 1, durationMs: result.durationMs, tokens: result.tokens, error: null });
-        return result;
+        const normalized = normalizeAiResult(result, name);
+        this.record({ projectId, task, provider: normalized.provider, model: normalized.model, success: 1, durationMs: normalized.durationMs, tokens: normalized.tokens, error: null });
+        return normalized;
       } catch (err) {
         errors.push(`${name}: ${String(err.message || err).slice(0, 240)}`);
       }

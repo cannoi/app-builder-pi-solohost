@@ -1,3 +1,4 @@
+import { litellmEnabled, litellmBaseUrl } from '../ai/litellm-layer.js';
 import { verifyAccessPassword, accessCookieHeader, accessPasswordConfigured } from '../http-access-auth.js';
 import path from 'node:path';
 import fs from 'node:fs/promises';
