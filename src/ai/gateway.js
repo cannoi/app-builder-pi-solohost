@@ -66,7 +66,7 @@ export class AIGateway {
 
   pickOrder(images = []) {
     if (images?.length && this.gemini.configured()) return ['gemini', 'deepseek'];
-    return this.cfg.ai.provider === 'gemini' ? ['gemini', 'deepseek'] : ['deepseek', 'gemini'];
+    return this.cfg.ai.provider === 'deepseek' ? ['deepseek', 'gemini'] : ['gemini', 'deepseek'];
   }
 
   providerByName(name) { return name === 'deepseek' ? this.deepseek : this.gemini; }

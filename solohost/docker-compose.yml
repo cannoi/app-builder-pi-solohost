@@ -1,6 +1,6 @@
 services:
   app-builder:
-    image: ghcr.io/cannoi/app-builder-pi-solohost:1.9.2
+    image: ghcr.io/cannoi/app-builder-pi-solohost:1.9.3
     restart: unless-stopped
     labels:
       pi.ui.primary: "true"

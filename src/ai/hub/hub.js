@@ -194,7 +194,7 @@ export class AIProviderHub {
     if (dsModels.find((m) => m.verified)?.id) this.cfg.ai.deepseekModel = dsModels.find((m) => m.verified).id;
     if (gmModels.find((m) => m.verified)?.id) this.cfg.ai.geminiModel = gmModels.find((m) => m.verified).id;
     const preferred = st.preferredProvider || '';
-    this.cfg.ai.provider = preferred || ds?.provider || gm?.provider || st.connections?.[0]?.provider || 'deepseek';
+    this.cfg.ai.provider = preferred || gm?.provider || ds?.provider || st.connections?.[0]?.provider || 'gemini';
   }
 
   candidates(task, modelRef = '') {
@@ -213,7 +213,12 @@ export class AIProviderHub {
       let models = normalizeModelsState(conn.models);
       if (!models.length) models = (catalogEntry(conn.provider)?.fallbackModels || []).map((id) => ({ id, verified: true }));
       const verified = models.filter((m) => m.verified === true);
-      const usable = verified.length ? verified : models;
+      // User selection wins via preferredModels filter below; if none selected, prefer "auto" then verified.
+      let usable = verified.length ? verified : models;
+      if (!selected.length) {
+        const auto = models.find((m) => String(m.id || '').toLowerCase() === 'auto');
+        if (auto) usable = [auto, ...usable.filter((m) => m.id !== auto.id)];
+      }
       for (const model of usable) {
         if (!model?.id) continue;
         const ref = `${conn.provider}:${model.id}`;

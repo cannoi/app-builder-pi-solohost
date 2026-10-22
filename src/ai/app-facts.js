@@ -33,9 +33,9 @@ export const APP_FACTS = {
 /** Core panel knowledge always sent (<700 chars). */
 export function coreKnowledge(lang = 'en') {
   if (lang === 'vi') {
-    return 'App Builder — Pi SoloHost: một ô chat tạo/sửa/chạy/xuất bản app SoloHost. Nút ▶ Chạy thử, 🚀 Xuất bản, 💛 Ủng hộ. Menu ⋯: ZIP, nhập ZIP, Sandbox, hoàn tác. Mặc định New app + hướng dẫn. AI trả lời theo ngôn ngữ tin nhắn. Publish cần GitHub token; AI cần key trong Settings.';
+    return 'App Builder — Pi SoloHost: một ô chat tạo/sửa/chạy/xuất bản app SoloHost. AI: Gemini mặc định; hỗ trợ DeepSeek/Custom/Personal AI Hub. Chọn model hoặc để auto. Nút ▶ Chạy thử, 🚀 Xuất bản, 💛 Ủng hộ. Menu ⋯: ZIP, nhập ZIP, Sandbox, hoàn tác. Mặc định New app + hướng dẫn. AI trả lời theo ngôn ngữ tin nhắn. Publish cần GitHub token; AI cần key trong Settings.';
   }
-  return 'App Builder — Pi SoloHost: one chat to create, fix, run, and publish SoloHost apps. Buttons: ▶ Run, 🚀 Publish, 💛 Donate. Menu ⋯: ZIP, import, Sandbox, undo. Default New app + welcome. AI replies in the user message language. Publish needs a GitHub token; AI needs a provider key in Settings.';
+  return 'App Builder — Pi SoloHost: one chat to create, fix, run, and publish SoloHost apps. AI: Gemini default; DeepSeek/Custom/Personal AI Hub also supported. Pick a model or leave auto. Buttons: ▶ Run, 🚀 Publish, 💛 Donate. Menu ⋯: ZIP, import, Sandbox, undo. Default New app + welcome. AI replies in the user message language. Publish needs a GitHub token; AI needs a provider key in Settings.';
 }
 
 

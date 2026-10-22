@@ -2822,7 +2822,7 @@ function friendlyAiError(err) {
   const m = String(err?.message || err);
   const providers = Array.isArray(err?.providerErrors) ? err.providerErrors.map((x) => String(x).replace(/\s+/g, ' ').slice(0, 260)) : [];
   const detail = providers.join(' | ');
-  if (/No AI provider is configured|API key is not configured/i.test(m)) return 'No active AI key is available. Builder can use DeepSeek or Gemini; save a valid key in Settings.';
+  if (/No AI provider is configured|API key is not configured/i.test(m)) return 'No active AI key is available. Add Gemini (default), DeepSeek, or Custom in Settings, then Save.';
   if (/HTTP 401|HTTP 403|bad credentials|invalid api key/i.test(m)) return `AI authentication failed. ${detail || 'The selected key was rejected.'} Check the provider key, then Save Settings.`;
   if (/HTTP 404|model.*not found|invalid.*model/i.test(m)) return `AI model is unavailable. ${detail || 'Builder will rotate to a supported model automatically.'} Save Settings to reset model selection.`;
   if (/HTTP 429|quota|rate limit|resource exhausted/i.test(m)) return `AI quota/rate limit was reached. ${detail || 'The request was throttled.'} Builder will try another configured provider when available.`;

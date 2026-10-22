@@ -772,7 +772,8 @@ async function quick(action, extraPayload = {}) {
       }) });
     }
     else if (action === 'improve' || action === 'edit') {
-      add('ai', uiT('msg.typeRequest', 'Type your request in the chat box.'), { force: true });
+      setBusy(false);
+      add('ai', uiT('msg.typeRequest', 'Type your request in the chat box. AI key required in Settings (Gemini default).'), { force: true });
       return;
     }
     else r = await api(`/api/projects/${state.projectId}/${action}`, { method: 'POST', body: '{}' });
@@ -994,19 +995,22 @@ function renderRepairAction(errorText) {
   const b = document.createElement('button'); b.textContent = isSecurity ? '🛡️ Fix security issue' : '🛠️ Diagnose & Fix';
   b.onclick = async () => {
     if (state.busy) return;
-    setBusy(true, isSecurity ? 'Fixing security…' : 'Diagnosing & fixing…');
+    // Guide user into chat — do not spin busy forever (no job started here).
+    setBusy(false);
+    const guide = isSecurity
+      ? 'Type in chat: fix the security issue — or paste the Actions error. Need an AI key in ⚙ Settings (Gemini recommended).'
+      : 'Describe the bug in chat, or paste the error log. Need an AI key in ⚙ Settings (Gemini recommended) before Diagnose can run.';
+    add('ai', guide, { force: true });
     try {
-      add('ai', isSecurity ? 'Gõ: sửa lỗi bảo mật / Type: fix the security issue' : 'Gõ mô tả lỗi vào ô chat / Describe the bug in chat');
-      return;
-      if (!request) { setBusy(false); return; }
-      const form = new FormData();
-      form.append('feedback', `SAFE REPAIR\nUSER REQUEST: ${request.text}\n\nEVIDENCE REPORT:\n${errorText}`);
-      for (const f of request.files || []) form.append('files', f);
-      const response = await fetch(`/api/projects/${state.projectId}/improve`, { method: 'POST', body: form });
-      const r = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(r.error || 'Repair could not start.');
-      watch(r.jobId);
-    } catch (e) { handleJobActionError(e); }
+      const input = $('message') || document.getElementById('message');
+      if (input) {
+        input.focus();
+        if (!String(input.value || '').trim()) {
+          input.value = isSecurity ? 'fix the security issue' : 'diagnose and fix the problem above';
+          input.dispatchEvent(new Event('input', { bubbles: true }));
+        }
+      }
+    } catch (_) {}
   };
   row.appendChild(b); box.appendChild(row);
   $('chat').appendChild(box); $('chat').scrollTop = $('chat').scrollHeight;

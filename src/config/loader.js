@@ -41,7 +41,7 @@ export function loadConfig() {
       requireBrowserTest: String(process.env.PREVIEW_REQUIRE_BROWSER_TEST || 'true').toLowerCase() === 'true',
     },
     ai: {
-      provider: ['gemini', 'deepseek'].includes(String(process.env.AI_PROVIDER || 'deepseek').toLowerCase()) ? String(process.env.AI_PROVIDER || 'deepseek').toLowerCase() : 'deepseek',
+      provider: ['gemini', 'deepseek'].includes(String(process.env.AI_PROVIDER || 'gemini').toLowerCase()) ? String(process.env.AI_PROVIDER || 'gemini').toLowerCase() : 'gemini',
       mode: (process.env.AI_MODE || 'single').toLowerCase() === 'council' ? 'council' : 'single',
       geminiKey: process.env.GEMINI_API_KEY || '',
       geminiModel: process.env.GEMINI_MODEL || '',

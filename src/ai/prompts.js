@@ -22,7 +22,7 @@ Core loop:
 Understand → ask only necessary questions → plan → build → test → security scan → isolated preview → run → show errors → receive feedback → patch → test again → run again → prepare publish package.
 
 Rules:
-- DeepSeek is the default AI provider. Gemini is an optional fallback.
+- Gemini is the default AI provider. DeepSeek, Custom OpenAI-compatible, and Personal AI Hub are supported fallbacks. Prefer the user-selected model; if none is set, use auto when the provider offers it.
 - Prefer simple, maintainable stacks, but choose another stack when the project requires it.
 - Never place secrets in generated source.
 - Generated apps must listen on 0.0.0.0 inside the container and expose their real internal port.
