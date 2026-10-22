@@ -995,22 +995,27 @@ function renderRepairAction(errorText) {
   const b = document.createElement('button'); b.textContent = isSecurity ? '🛡️ Fix security issue' : '🛠️ Diagnose & Fix';
   b.onclick = async () => {
     if (state.busy) return;
-    // Guide user into chat — do not spin busy forever (no job started here).
-    setBusy(false);
-    const guide = isSecurity
-      ? 'Type in chat: fix the security issue — or paste the Actions error. Need an AI key in ⚙ Settings (Gemini recommended).'
-      : 'Describe the bug in chat, or paste the error log. Need an AI key in ⚙ Settings (Gemini recommended) before Diagnose can run.';
-    add('ai', guide, { force: true });
+    setBusy(true, isSecurity ? 'Fixing security…' : 'Diagnosing & fixing…');
     try {
-      const input = $('message') || document.getElementById('message');
-      if (input) {
-        input.focus();
-        if (!String(input.value || '').trim()) {
-          input.value = isSecurity ? 'fix the security issue' : 'diagnose and fix the problem above';
-          input.dispatchEvent(new Event('input', { bubbles: true }));
-        }
+      const feedback = (isSecurity ? 'SAFE REPAIR\n' : 'DIAGNOSE_AND_FIX\n')
+        + 'USER REQUEST: diagnose and fix the problem\n\nEVIDENCE REPORT:\n' + String(errorText || '').slice(0, 8000);
+      const form = new FormData();
+      form.append('feedback', feedback);
+      const response = await fetch('/api/projects/' + state.projectId + '/improve', { method: 'POST', body: form });
+      const r = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        setBusy(false);
+        const needsKey = /AI key|not configured|AI_UNAVAILABLE|No active AI/i.test(String(r.error || ''));
+        add('ai', needsKey
+          ? (uiT('msg.needsAiKey', 'Deterministic checks only — add an AI key in ⚙ Settings (Gemini recommended) to let AI repair this.') + '\n' + (r.error || ''))
+          : (r.error || 'Diagnose could not start.'), { force: true });
+        return;
       }
-    } catch (_) {}
+      if (r.jobId) watch(r.jobId);
+      else setBusy(false);
+    } catch (e) {
+      handleJobActionError(e);
+    }
   };
   row.appendChild(b); box.appendChild(row);
   $('chat').appendChild(box); $('chat').scrollTop = $('chat').scrollHeight;

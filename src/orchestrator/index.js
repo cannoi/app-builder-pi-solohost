@@ -8,6 +8,7 @@ import { executeTask, makeProjectTools } from './executor.js';
 import { verifyTask } from './verifier.js';
 import { replanAfterFailure } from './replanner.js';
 import { emptyState, saveOrchestratorState, loadOrchestratorState } from './state.js';
+import { BUDGET_MS } from '../core/budget.js';
 import { buildChecklist, evaluateChecklist } from '../engine/checklist.js';
 
 export {
@@ -101,6 +102,8 @@ export async function runOrchestrator({
   const tools = makeProjectTools(projectDir, { applyEdits });
   const completed = [];
   const failed = [];
+  let aiCalls = 0;
+  const maxAi = BUDGET_MS.MAX_ORCH_AI_CALLS || 24;
   const checklist = buildChecklist(request);
 
   for (const task of plan.tasks || []) {
@@ -123,6 +126,12 @@ export async function runOrchestrator({
     emit('orchestrator', 'running', `${taskIcon('running')} ${task.id}: ${task.title || task.goal}`);
     emit('orchestrator', 'plan', formatPlanCard(plan, state.tasks, lang));
 
+    if (aiCalls >= maxAi) {
+      emit('orchestrator', 'failed', 'AI call budget reached — finishing partial');
+      failed.push(task.id);
+      break;
+    }
+    aiCalls += 1;
     const exec = await executeTask({ ai, projectDir, task, tools, emit, allowWrite: Boolean(applyEdits) });
     const changed = (exec.final?.edits || []).map((e) => e.path).filter(Boolean);
     if (applyEdits && exec.final?.edits?.length) {

@@ -1,16 +1,6 @@
 import { maskKey } from '../../utils/mask.js';
 
-export const GEMINI_MODEL_CANDIDATES = [
-  'gemini-3.8-flash',
-  'gemini-3.7-flash',
-  'gemini-3.6-flash',
-  'gemini-3.5-flash',
-  'gemini-3.5-flash-lite',
-  'gemini-2.5-flash',
-  'gemini-3.1-flash-lite',
-  'gemini-2.5-flash-lite',
-  'gemini-3.1-pro-preview',
-];
+export const GEMINI_MODEL_CANDIDATES = ['gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-1.5-pro']; // offline fallback only, ≤3
 
 export function geminiVersion(name) {
   const n = String(name || '').toLowerCase();
@@ -119,32 +109,17 @@ export class GeminiProvider {
     }
   }
 
-  async complete({ prompt, system, json = false, model = null, images = [] }) {
+  async complete({ prompt, system, json = false, model = null, images = [], signal = null }) {
     if (!this.apiKey) throw new Error('Gemini API key is not configured');
-    await this.ensureModel();
-    const requested = model || this.model;
-    const candidates = [requested, ...GEMINI_MODEL_CANDIDATES].filter(Boolean).filter((v, i, a) => a.indexOf(v) === i);
-    let lastError = null;
-    for (const model of candidates) {
-      try {
-        const result = await this.request(model, { prompt, system, json, images });
-        this.setStickyModel(model);
-        return result;
-      } catch (err) {
-        lastError = err;
-        if (geminiShouldRotate(err)) {
-          if (this.getStickyModel() === model) this.clearStickyModel();
-          this.log?.warn?.('Gemini model busy or unusable; trying next', { model, error: err.message });
-          await new Promise((r) => setTimeout(r, /503|429|UNAVAILABLE|high demand/i.test(err.message) ? 450 : 80));
-          continue;
-        }
-        throw err;
-      }
-    }
-    throw lastError || new Error('No usable Gemini model found');
+    // Hub owns multi-model rotation (max 3 attempts). Provider tries only the requested model.
+    const requested = model || this.model || GEMINI_MODEL_CANDIDATES[0];
+    if (!requested) throw new Error('No Gemini model selected');
+    const result = await this.request(requested, { prompt, system, json, images, signal });
+    this.setStickyModel(requested);
+    return result;
   }
 
-  async request(model, { prompt, system, json, images = [] }) {
+  async request(model, { prompt, system, json, images = [], signal = null }) {
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`;
     const body = {
       contents: [{ role: 'user', parts: [{ text: prompt }, ...images.map((i) => ({ inlineData: { mimeType: i.mimeType || i.type || 'image/png', data: String(i.dataUrl || '').replace(/^data:[^;]+;base64,/, '') } }))] }],
@@ -158,7 +133,7 @@ export class GeminiProvider {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-goog-api-key': this.apiKey },
       body: JSON.stringify(body),
-      signal: AbortSignal.timeout(120000),
+      signal: signal || AbortSignal.timeout(45000),
     });
     const raw = await res.text();
     if (!res.ok) throw new Error(`Gemini HTTP ${res.status}: ${raw.slice(0, 500)}`);

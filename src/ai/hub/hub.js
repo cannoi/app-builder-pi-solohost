@@ -1,4 +1,5 @@
 import { PROVIDER_CATALOG, catalogEntry, taskComplexity } from './catalog.js';
+import { buildAttemptPlan, normalizeRoutingMode, ROUTING_MODE, isRoutingLocked as routingLocked, DEFAULT_PROVIDER_PRIORITY } from './routing.js';
 import { OpenAICompatProvider, preferAutoModel, normalizeBaseUrl } from './openai-compat.js';
 import { GeminiProvider } from '../providers/gemini.js';
 import { DeepSeekProvider } from '../providers/deepseek.js';
@@ -16,8 +17,8 @@ export class AIProviderHub {
   }
 
   state() {
-    const raw = this.db.setting('aiHub', { mode: 'SELECTED', preferredProvider: '', preferredModel: '', preferredModels: [], connections: [] })
-      || { mode: 'SELECTED', preferredProvider: '', preferredModel: '', preferredModels: [], connections: [] };
+    const raw = this.db.setting('aiHub', { mode: 'AUTO', preferredProvider: '', preferredModel: '', preferredModels: [], connections: [] })
+      || { mode: 'AUTO', preferredProvider: '', preferredModel: '', preferredModels: [], connections: [] };
     return normalizeHubState(raw);
   }
   save(next) { this.db.setSetting('aiHub', next); return next; }
@@ -55,7 +56,7 @@ export class AIProviderHub {
   publicState() {
     const st = this.state();
     return {
-      mode: 'SELECTED', preferredProvider: st.preferredProvider || '', preferredModel: st.preferredModel || '', preferredModels: normalizePreferredModels(st.preferredModels || (st.preferredModel ? [st.preferredModel] : [])),
+      mode: 'AUTO', preferredProvider: st.preferredProvider || '', preferredModel: st.preferredModel || '', preferredModels: normalizePreferredModels(st.preferredModels || (st.preferredModel ? [st.preferredModel] : [])),
       catalog: PROVIDER_CATALOG.map(({ id, name, kind }) => ({ id, name, kind })),
       connections: (st.connections || []).map((c) => ({
         id: c.id, provider: c.provider, name: catalogEntry(c.provider)?.name || c.provider,
@@ -167,7 +168,7 @@ export class AIProviderHub {
 
   setRouting({ preferredProvider, preferredModel, preferredModels }) {
     const st = this.state();
-    st.mode = 'SELECTED';
+    st.mode = normalizeRoutingMode(st.mode);
     if (preferredProvider != null) st.preferredProvider = String(preferredProvider || '');
     const pair = normalizePreferredModels(preferredModels || (preferredModel ? [preferredModel] : st.preferredModels));
     st.preferredModels = pair.slice(0, 2);
@@ -235,17 +236,31 @@ export class AIProviderHub {
         if (first?.id) out.push({ conn, model: first.id, ref: `${conn.provider}:${first.id}`, score: 1 });
       }
     }
-    const added = new Map((st.connections || []).map((c, i) => [c.id, st.connections.length - i]));
     const rank = new Map(selected.map((ref, i) => [ref, selected.length - i]));
-    return out.sort((a, b) => (rank.get(b.ref) || 0) - (rank.get(a.ref) || 0) || (added.get(b.conn.id) || 0) - (added.get(a.conn.id) || 0) || b.score - a.score);
+    // Never order by "most recently added" — Gemini-first priority from routing.js
+    return out.sort((a, b) =>
+      (rank.get(b.ref) || 0) - (rank.get(a.ref) || 0)
+      || providerPriorityIndex(a.conn.provider) - providerPriorityIndex(b.conn.provider)
+      || b.score - a.score
+    );
   }
 
-  async execute({ task, prompt, system, json = false, images = [], modelRef = '' }) {
-    const picks = this.candidates(task, modelRef);
+  async execute({ task, prompt, system, json = false, images = [], modelRef = '', signal = null }) {
+    const st = this.state();
+    const conns = (st.connections || []).map((c) => ({ ...c, hasKey: Boolean(this.key(c)) }));
+    let picks = buildAttemptPlan({
+      connections: conns,
+      preferredModels: modelRef ? [modelRef] : (st.preferredModels || []),
+      preferredProvider: st.preferredProvider || '',
+      mode: st.mode,
+      task,
+      maxAttempts: 3,
+    });
+    if (!picks.length) picks = this.candidates(task, modelRef).slice(0, 3);
     if (!picks.length) throw Object.assign(new Error('No verified AI model is available for this task. Connect a provider or refresh its models.'), { code: 'AI_UNAVAILABLE' });
     const errors = []; let tries = 0;
     for (const pick of picks) {
-      if (tries >= 4) break;
+      if (tries >= 3) break;
       tries += 1;
       try {
         const adapter = this.adapter({ ...pick.conn, models: [{ id: pick.model }] });
@@ -286,7 +301,7 @@ function normalizePreferredModels(models) {
 }
 function normalizeHubState(raw) {
   const st = { ...raw };
-  st.mode = 'SELECTED';
+  st.mode = normalizeRoutingMode(st.mode);
   st.preferredProvider = st.preferredProvider && st.preferredProvider !== 'AUTO' ? String(st.preferredProvider) : '';
   st.preferredModels = normalizePreferredModels(st.preferredModels || (st.preferredModel && st.preferredModel !== 'AUTO' ? [st.preferredModel] : []));
   st.preferredModel = st.preferredModels[0] || '';

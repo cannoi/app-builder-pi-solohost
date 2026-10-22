@@ -4,7 +4,7 @@
  * Long Agent/Upgrade docs belong in Builder coding prompts, not the robot panel.
  */
 module.exports = {
-  knowledge: `App Builder — Pi SoloHost. Multi-provider AI: Gemini (default), DeepSeek, Custom/OpenAI-compatible, Personal AI Hub. User-selected model wins; otherwise auto when available. Load models lists choices or type a model id. One chat: idea → Build → Run → Improve → Publish.
+  knowledge: `App Builder — Pi SoloHost. Default AI: gemini (Auto). Multi-provider AI: Gemini (default), DeepSeek, Custom/OpenAI-compatible, Personal AI Hub. User-selected model wins; otherwise auto when available. Load models lists choices or type a model id. One chat: idea → Build → Run → Improve → Publish.
 AI keys once in Settings; robot panel shares the same AI. Feedback tab talks to Feedback Hub (server-side token, never in browser).
 Remote QR: learn host port from request Host header; public IP via ipify; link http://IP:hostPort (not container 8080).
 Run/Publish/Donate above chat. Language EN/VI on top bar. Always reply in the user's language.`,

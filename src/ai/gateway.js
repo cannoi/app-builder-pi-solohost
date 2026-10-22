@@ -129,19 +129,7 @@ export class AIGateway {
       this.log.warn('AI JSON retry failed', { error: err.message });
     }
 
-    // Recovery 2: try alternate provider once when available (hub already may have, but ensure)
-    try {
-      const alt = await this.complete({ ...opts, json: true, prompt: strictPrompt, modelRef: '' });
-      if (alt?.provider && alt.provider !== first.provider) {
-        norm = normalizeAIResponse(alt.text);
-        parsed = norm.ok ? norm.value : null;
-        if (parsed && (!opts.validateJson || opts.validateJson(parsed))) {
-          return { ...alt, json: parsed, fallbackFrom: first.provider };
-        }
-      }
-    } catch (err) {
-      this.log.warn('AI JSON alternate provider failed', { error: err.message });
-    }
+    // Recovery 2 removed (v2.0): alternate provider call discarded same-provider results — waste.
 
     // AI_RESPONSE_MALFORMED is a provider failure, not an application failure.
     // Callers must not rollback verified work solely because of this code.

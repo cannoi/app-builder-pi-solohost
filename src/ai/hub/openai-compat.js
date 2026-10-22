@@ -74,7 +74,7 @@ export class OpenAICompatProvider {
       method: 'POST',
       headers: this.authHeaders(),
       body: JSON.stringify(body),
-      signal: AbortSignal.timeout(120000),
+      signal: AbortSignal.timeout(45000),
     });
     const raw = await res.text();
     if (!res.ok) {

@@ -13,7 +13,7 @@ test('config loads without crashing when optional keys are missing', () => {
   const pkg = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
   assert.equal(cfg.version, pkg.version);
   assert.equal(cfg.runtime.mode, 'auto');
-  assert.equal(cfg.ai.provider, 'deepseek');
+  assert.equal(cfg.ai.provider, 'gemini');
   assert.equal(cfg.ai.deepseekModel, 'deepseek-v4-flash');
   assert.equal(cfg.docker, undefined);
   assert.equal(cfg.feedbackHub.appId, 'app-builder-pi-solohost');

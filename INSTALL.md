@@ -13,7 +13,7 @@ Open `http://HOST:18795/`. Build/Run use the built-in safe preview runtime and d
 Safe preview testing is built in. No Docker socket, privileged mode, or manual engine configuration is required.
 
 
-DeepSeek is the default AI provider; Gemini is optional.
+Gemini is the default AI provider; Gemini is optional.
 
 ## 2. Build and test
 

@@ -1,13 +1,17 @@
 /**
  * Complexity router: trivial → fast path; complex → orchestrator.
+ * Signals matter more than single keywords (login alone ≠ complex).
  */
-const COMPLEX_RE = [
-  /\b(multiplayer|websocket|socket\.io|webrtc|sse)\b/i,
-  /\b(database|schema|migrate|sqlite|postgres)\b/i,
-  /\b(auth|login|oauth|jwt)\b/i,
-  /\b(docker|compose|config_options|host.?port|lan)\b/i,
-  /\b(add|thêm).{0,40}(route|api|screen|page|module|dependency|package)\b/i,
+const STRONG = [
+  /\b(multiplayer|websocket|socket\.io|webrtc)\b/i,
+  /\b(migrate|schema change|postgres|mongodb)\b/i,
+  /\b(oauth|jwt auth|sso)\b/i,
   /\b(refactor|restructure|rewrite)\b/i,
+  /\b(lan multiplayer|chơi mạng|nhiều người|đồng bộ phòng)\b/i,
+];
+const WEAK = [
+  /\b(auth|login|database|docker|lan|sse)\b/i,
+  /\b(add|thêm).{0,40}(route|api|screen|page|module|dependency|package)\b/i,
 ];
 
 export function classifyComplexity({ request = '', filesTouchedHint = 0, newDep = false, contractChange = false } = {}) {
@@ -15,21 +19,23 @@ export function classifyComplexity({ request = '', filesTouchedHint = 0, newDep 
   const signals = [];
   if (newDep) signals.push('new_dependency');
   if (contractChange) signals.push('contract_change');
-  if (filesTouchedHint > 2) signals.push('many_files');
-  for (const re of COMPLEX_RE) {
-    if (re.test(text)) signals.push(re.source.slice(0, 40));
+  if (filesTouchedHint >= 3) signals.push('many_files');
+  for (const re of STRONG) {
+    if (re.test(text)) signals.push('strong:' + re.source.slice(0, 24));
   }
-  // Vietnamese multi-word
-  if (/chơi mạng|nhiều người|phòng chờ|lobby|đồng bộ/i.test(text)) signals.push('vi_multiplayer');
-  if (/cổng|mạng lan|thiết bị khác/i.test(text)) signals.push('vi_lan');
+  let weakHits = 0;
+  for (const re of WEAK) {
+    if (re.test(text)) weakHits += 1;
+  }
+  if (weakHits >= 2) signals.push('weak_combo');
 
-  const complex = signals.length >= 1 && (
+  const complex =
     signals.includes('new_dependency') ||
     signals.includes('contract_change') ||
-    filesTouchedHint > 2 ||
-    /multiplayer|websocket|lan|lobby|đồng bộ|chơi mạng/i.test(text) ||
-    signals.length >= 2
-  );
+    filesTouchedHint >= 3 ||
+    signals.some((s) => s.startsWith('strong:')) ||
+    (weakHits >= 2 && filesTouchedHint >= 2);
+
   return {
     level: complex ? 'complex' : 'trivial',
     signals,

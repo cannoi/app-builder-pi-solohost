@@ -36,16 +36,24 @@ export function registerRoutes(r, app) {
   };
 
   r.get('/health', (_req, res) => {
+    let aiStatus = 'missing';
+    try {
+      const hub = ai?.hub?.state?.() || db.setting('aiHub', null);
+      const hasHub = (hub?.connections || []).some((c) => c && c.status !== 'INVALID');
+      const hasLegacy = Boolean(cfg.ai.geminiKey || cfg.ai.deepseekKey);
+      aiStatus = (hasLegacy || hasHub) ? 'configured' : 'missing';
+    } catch { aiStatus = (cfg.ai.geminiKey || cfg.ai.deepseekKey) ? 'configured' : 'missing'; }
     res.json({
       status: 'ok',
       version: cfg.version,
-      ai: (cfg.ai.geminiKey || cfg.ai.deepseekKey) ? 'configured' : 'missing',
+      ai: aiStatus,
       github: github.configured() ? 'configured' : 'optional',
       engine: cfg.runtime?.podman?.apiUrl ? 'podman-sandbox' : 'native-preview',
       preview: { mode: cfg.runtime?.mode || 'auto', containerSandbox: Boolean(cfg.runtime?.podman?.apiUrl), dockerSocket: false },
     });
+  });
 
-    r.get('/api/remote/info', async (req, res) => {
+  r.get('/api/remote/info', async (req, res) => {
     try {
       const { resolvePublicUrl, isLoopbackRequest, rememberPublicPort } = await import('../remote/info.js');
       rememberPublicPort(req);
@@ -83,9 +91,6 @@ export function registerRoutes(r, app) {
       res.status(500).json({ error: String(err.message || err) });
     }
   });
-
-  });
-
 
   r.post('/api/access/generate', async (req, res) => {
     try {
