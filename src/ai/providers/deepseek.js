@@ -65,7 +65,7 @@ export class DeepSeekProvider {
           { role: 'user', content: prompt },
         ],
       }),
-      signal: AbortSignal.timeout(120000),
+      signal: signal || AbortSignal.timeout(45000),
     });
     const raw = await res.text();
     if (!res.ok) throw new Error(`DeepSeek HTTP ${res.status}: ${raw.slice(0, 500)}`);

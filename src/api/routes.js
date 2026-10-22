@@ -549,6 +549,7 @@ export function registerRoutes(r, app) {
 
   r.post('/api/ai/hub/routing', (req, res) => {
     ai.hub.setRouting({
+      mode: req.body?.mode,
       preferredProvider: req.body?.preferredProvider,
       preferredModel: req.body?.preferredModel,
       preferredModels: req.body?.preferredModels,

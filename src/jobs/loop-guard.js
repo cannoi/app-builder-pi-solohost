@@ -3,6 +3,7 @@
  * Fingerprint includes provider/model + optional diff hash so a real provider switch is a new attempt (P7).
  */
 import crypto from 'node:crypto';
+import { fingerprintError as classifyRuntimeError } from '../dare/fingerprint.js';
 
 export function fingerprintError(evidence = '') {
   const s = String(evidence || '')
@@ -39,6 +40,9 @@ export function repairFingerprint({
   model = '',
   diffHash = '',
 } = {}) {
+  // Prefer concrete runtime classification so wording changes do not reset the guard
+  const semantic = classifyRuntimeError(String(runtime?.error || runtime?.logs || ''));
+  if (semantic && semantic !== 'NONE' && semantic !== 'UNKNOWN') return semantic;
   const evidence = [
     runtime?.error,
     runtime?.logs,

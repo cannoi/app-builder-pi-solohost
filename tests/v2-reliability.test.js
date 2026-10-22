@@ -98,3 +98,43 @@ test('cancel is terminal and clears active', async () => {
   assert.equal(final.status, 'cancelled');
   assert.equal(q.isBusy('p1'), false);
 });
+
+
+test('next action after cancel starts a NEW job id', async () => {
+  const rows = new Map();
+  const db = {
+    run(...args) {
+      const sql = String(args[0] || '');
+      if (sql.startsWith('INSERT INTO jobs')) {
+        rows.set(args[1], { id: args[1], status: 'queued', project_id: args[2], type: args[3] });
+      } else if (sql.startsWith('UPDATE jobs SET status')) {
+        const id = args[args.length - 1];
+        const row = rows.get(id) || { id };
+        row.status = args[1];
+        rows.set(id, row);
+      }
+    },
+    get(sql, id) { return rows.get(id) || null; },
+    all() { return []; },
+  };
+  const q = new JobQueue({ db, log: { warn() {}, info() {} } });
+  let releases = 0;
+  q.on('work', async () => {
+    await new Promise((r) => setTimeout(r, 2000));
+    releases += 1;
+    return { ok: true };
+  });
+  const j1 = q.enqueue({ type: 'work', projectId: 'p' });
+  const p1 = q.kick(j1);
+  await new Promise((r) => setTimeout(r, 20));
+  q.requestCancel(j1.id);
+  await p1.catch(() => {});
+  assert.equal(q.isBusy('p'), false);
+  const j2 = q.enqueue({ type: 'work', projectId: 'p' });
+  assert.notEqual(j1.id, j2.id);
+  const p2 = q.kick(j2);
+  // cancel quickly so test ends
+  q.requestCancel(j2.id);
+  await p2.catch(() => {});
+  assert.equal(rows.get(j2.id).status, 'cancelled');
+});

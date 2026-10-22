@@ -191,6 +191,7 @@ export class JobQueue {
     watchdog.unref?.();
 
     try {
+      job._signal = controller.signal;
       const result = await handler(job, {
         emit,
         signal: controller.signal,

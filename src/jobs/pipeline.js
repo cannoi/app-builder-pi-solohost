@@ -44,6 +44,15 @@ function withTimeout(promise, ms, message) {
   return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
 }
 
+
+async function fetchWithTimeout(url, opts = {}, ms = 30000, maxBytes = 80 * 1024 * 1024) {
+  const res = await fetch(url, { ...opts, signal: opts.signal || AbortSignal.timeout(ms) });
+  if (!res.ok) return res;
+  const len = Number(res.headers.get('content-length') || 0);
+  if (len && len > maxBytes) throw Object.assign(new Error(`Download too large (${len} bytes)`), { code: 'SIZE_LIMIT' });
+  return res;
+}
+
 export function registerPipeline(app) {
   const { jobs, ai, projects, snapshots, runner, sandbox, github, releases, cfg, log } = app;
 
@@ -69,12 +78,12 @@ export function registerPipeline(app) {
     const url = parsed.url;
     const archiveUrl = `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/zipball/HEAD`;
     emit('import', 'running', `Fetching public GitHub source: ${owner}/${repo}…`);
-    const response = await fetch(archiveUrl, { headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'pi-app-factory-upgrade' } });
+    const response = await fetchWithTimeout(archiveUrl, { headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'pi-app-factory-upgrade' } });
     if (!response.ok) throw new Error(`GitHub public repository could not be downloaded (HTTP ${response.status}).`);
     const buffer = Buffer.from(await response.arrayBuffer());
     let sourceCommit = 'HEAD';
     try {
-      const commitResponse = await fetch(`https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/commits/HEAD`, { headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'pi-app-factory-upgrade' } });
+      const commitResponse = await fetchWithTimeout(`https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/commits/HEAD`, { headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'pi-app-factory-upgrade' } });
       if (commitResponse.ok) sourceCommit = String((await commitResponse.json())?.sha || 'HEAD');
     } catch {}
     const project = await projects.create({ idea: `Upgrade existing GitHub app: ${owner}/${repo}`, name: repo, analysis: { name: repo, slug: repo, recommended_stack: {} }, plan: { mode: 'upgrade-existing' } });
@@ -331,28 +340,66 @@ export function registerPipeline(app) {
     if (!idea) throw new Error('Describe your idea first.');
     const userLanguage = detectUserLanguage(idea);
 
-    emit('analyze', 'running', 'Understanding your idea…');
-    let analysis;
     const incomingFiles = Array.isArray(job._files) ? job._files : [];
-    try {
-      const attachmentSummary = incomingFiles.map((f) => ({ name: f.originalname, type: f.mimetype, bytes: f.buffer?.length || 0 }));
-      const r = await ai.completeJson({ task: 'IDEA_ANALYSIS', system: SYSTEM, prompt: ideaPrompt(idea, attachmentSummary), images: imageInputs(incomingFiles) });
-      analysis = r.json;
-    } catch (err) {
-      log.warn('Idea analysis fell back to local defaults', { error: err.message });
-      analysis = localAnalysis(idea);
-      analysis.fallbackReason = friendlyAiError(err);
-    }
-
-    emit('plan', 'running', 'Preparing a simple plan…');
+    const attachmentSummary = incomingFiles.map((f) => ({ name: f.originalname, type: f.mimetype, bytes: f.buffer?.length || 0 }));
+    const simpleIdea = idea.length < 400 && incomingFiles.length === 0 && !/\b(multiplayer|oauth|database|migrate|docker)\b/i.test(idea);
+    const t0 = Date.now();
+    let analysis;
     let plan;
-    try {
-      const attachmentSummary = incomingFiles.map((f) => ({ name: f.originalname, type: f.mimetype, bytes: f.buffer?.length || 0 }));
-      const r = await ai.completeJson({ task: 'PRODUCT_PLANNING', system: SYSTEM, prompt: planPrompt(idea, analysis, JSON.stringify(attachmentSummary)), images: imageInputs(incomingFiles) });
-      plan = r.json;
-    } catch (err) {
-      plan = localPlan(idea, analysis);
-      plan.fallbackReason = friendlyAiError(err);
+    if (simpleIdea) {
+      emit('analyze', 'running', 'Understanding idea + plan (one step)…');
+      try {
+        const mergedPrompt = `${ideaPrompt(idea, attachmentSummary)}\n\nAlso return product plan fields in the same JSON: name, summary, pages (array), features (array), stack (short).`;
+        const r = await ai.completeJson({
+          task: 'IDEA_ANALYSIS',
+          system: SYSTEM,
+          prompt: mergedPrompt,
+          images: imageInputs(incomingFiles),
+          signal: job._signal,
+        });
+        analysis = r.json || localAnalysis(idea);
+        plan = {
+          name: analysis.name,
+          summary: analysis.summary || analysis.description || idea.slice(0, 160),
+          pages: analysis.pages || ['Home'],
+          features: analysis.features || [],
+          stack: analysis.stack || 'static',
+          ...(typeof localPlan === 'function' ? {} : {}),
+        };
+        // fill plan via localPlan if missing fields
+        try {
+          const lp = localPlan(idea, analysis);
+          plan = { ...lp, ...plan, name: plan.name || lp.name };
+        } catch { /* */ }
+        emit('plan', 'done', `Plan ready in ${Date.now() - t0}ms`);
+      } catch (err) {
+        log.warn('Merged analyze+plan fell back', { error: err.message });
+        analysis = localAnalysis(idea);
+        analysis.fallbackReason = friendlyAiError(err);
+        plan = localPlan(idea, analysis);
+        plan.fallbackReason = analysis.fallbackReason;
+      }
+    } else {
+      emit('analyze', 'running', 'Understanding your idea…');
+      try {
+        const r = await ai.completeJson({ task: 'IDEA_ANALYSIS', system: SYSTEM, prompt: ideaPrompt(idea, attachmentSummary), images: imageInputs(incomingFiles), signal: job._signal });
+        analysis = r.json;
+        emit('analyze', 'done', `Analyze ${Date.now() - t0}ms`);
+      } catch (err) {
+        log.warn('Idea analysis fell back to local defaults', { error: err.message });
+        analysis = localAnalysis(idea);
+        analysis.fallbackReason = friendlyAiError(err);
+      }
+      const t1 = Date.now();
+      emit('plan', 'running', 'Preparing a simple plan…');
+      try {
+        const r = await ai.completeJson({ task: 'PRODUCT_PLANNING', system: SYSTEM, prompt: planPrompt(idea, analysis, JSON.stringify(attachmentSummary)), images: imageInputs(incomingFiles), signal: job._signal });
+        plan = r.json;
+        emit('plan', 'done', `Plan ${Date.now() - t1}ms`);
+      } catch (err) {
+        plan = localPlan(idea, analysis);
+        plan.fallbackReason = friendlyAiError(err);
+      }
     }
 
     const project = await projects.create({
@@ -628,6 +675,28 @@ export function registerPipeline(app) {
     const project = mustProject(job.payload.projectId);
     const feedback = String(job.payload.feedback || '').trim();
     if (!feedback) throw new Error('Tell AI what to improve.');
+    // No AI key: deterministic path only, finish fast (no hang)
+    try {
+      const st = ai?.status?.() || {};
+      const hubOk = ai?.hub?.state?.()?.connections?.some((c) => c.status !== 'INVALID');
+      const configured = st.configured || hubOk || cfg?.ai?.geminiKey || cfg?.ai?.deepseekKey;
+      if (!configured) {
+        emit('diagnose', 'running', 'No AI key — running deterministic checks only…');
+        let findings = [];
+        try {
+          const source = projects.sourceDir(project.slug);
+          const scan = await scanProject?.(source).catch?.(() => null) || null;
+          if (scan) findings.push(`scan critical=${scan.critical || 0} warning=${scan.warning || 0}`);
+        } catch { /* */ }
+        const msg = [
+          'RESULT: Needs AI key for automatic repair.',
+          findings.length ? `Deterministic: ${findings.join('; ')}` : 'Deterministic: no local scanner findings.',
+          'NEXT: Open ⚙ Settings → add Gemini (recommended) or another provider → Save → try Diagnose & Fix again.',
+        ].join('\n');
+        emit('diagnose', 'done', msg);
+        return { brief: msg, needsKey: true, deterministic: true };
+      }
+    } catch { /* continue with AI path */ }
     const incomingFiles = Array.isArray(job._files) ? job._files : [];
     for (const file of incomingFiles.slice(0, 8)) {
       if (file?.buffer) await saveAttachment(projects.projectDir(project), file);

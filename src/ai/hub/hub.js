@@ -166,9 +166,10 @@ export class AIProviderHub {
     st.connections = (st.connections || []).filter((c) => c.id !== id); this.syncLegacyKeys(st); return this.save(st);
   }
 
-  setRouting({ preferredProvider, preferredModel, preferredModels }) {
+  setRouting({ preferredProvider, preferredModel, preferredModels, mode }) {
     const st = this.state();
-    st.mode = normalizeRoutingMode(st.mode);
+    if (mode != null) st.mode = normalizeRoutingMode(mode);
+    else st.mode = normalizeRoutingMode(st.mode);
     if (preferredProvider != null) st.preferredProvider = String(preferredProvider || '');
     const pair = normalizePreferredModels(preferredModels || (preferredModel ? [preferredModel] : st.preferredModels));
     st.preferredModels = pair.slice(0, 2);
@@ -178,8 +179,7 @@ export class AIProviderHub {
   }
 
   isRoutingLocked() {
-    const st = this.state();
-    return Boolean(st.preferredProvider || normalizePreferredModels(st.preferredModels).length);
+    return routingLocked(this.state());
   }
 
   selectedModels() { return normalizePreferredModels(this.state().preferredModels || []); }
@@ -264,7 +264,7 @@ export class AIProviderHub {
       tries += 1;
       try {
         const adapter = this.adapter({ ...pick.conn, models: [{ id: pick.model }] });
-        const result = await adapter.complete({ prompt, system, json, model: pick.model, images });
+        const result = await adapter.complete({ prompt, system, json, model: pick.model, images, signal });
         this.markModelVerified(pick.conn.id, pick.model, result);
         return result;
       } catch (err) {

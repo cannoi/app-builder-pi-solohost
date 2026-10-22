@@ -173,12 +173,23 @@ export async function runAgentLoop({
   }
 
   if (!final) {
-    final = { edits: [], explanation: steps.length ? 'stopped without final edits' : 'no steps', risk: 'medium' };
+    final = { edits: [], explanation: steps.length ? `stopped after ${steps.length} steps without final edits` : 'no steps', risk: 'medium' };
   }
   if (memory?.append) {
     await memory.append({ kind: 'agent-loop', steps: steps.length, edits: final.edits?.length || 0 }).catch(() => {});
   }
-  return { final, steps, pathHint: path.basename };
+  const edits = Array.isArray(final?.edits) ? final.edits : [];
+  const stoppedWithoutFinal = /stopped after .* steps without final|no steps/i.test(String(final?.explanation || ''));
+  return {
+    ok: !stoppedWithoutFinal,
+    final,
+    edits,
+    explanation: final?.explanation || '',
+    risk: final?.risk || 'medium',
+    error: stoppedWithoutFinal ? (final?.explanation || 'stopped without final edits') : null,
+    steps,
+    pathHint: path.basename,
+  };
 }
 
 export { MAX_STEPS_SOFT as MAX_STEPS, MAX_TOOLS_PER_STEP, MAX_TOOL_CHARS };

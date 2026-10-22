@@ -1,3 +1,4 @@
+import { createDeadline, BUDGET_MS, mergeSignals } from '../core/budget.js';
 import { GeminiProvider } from './providers/gemini.js';
 import { DeepSeekProvider } from './providers/deepseek.js';
 import { extractJson, normalizeAIResponse, normalizeArray } from '../utils/validate.js';
@@ -71,12 +72,12 @@ export class AIGateway {
 
   providerByName(name) { return name === 'deepseek' ? this.deepseek : this.gemini; }
 
-  async complete({ task, prompt, system, json = false, projectId = null, images = [], modelRef = '' }) {
+  async complete({ task, prompt, system, json = false, projectId = null, images = [], modelRef = '', signal = null }) {
     const rule = actionRule(task);
     const safeSystem = rule ? `${system || ''}\n\n${rule}`.trim() : (system || '').trim();
     const safePrompt = rule ? `${prompt || ''}\n\n${rule}`.trim() : (prompt || '').trim();
     try {
-      const routed = await this.hub.execute({ task, prompt: safePrompt, system: safeSystem, json, images, modelRef });
+      const routed = await this.hub.execute({ task, prompt: safePrompt, system: safeSystem, json, images, modelRef, signal });
       this.record({ projectId, task, provider: routed.provider, model: routed.model, success: 1, durationMs: routed.durationMs, tokens: routed.tokens, error: null });
       return routed;
     } catch (err) {
@@ -94,7 +95,7 @@ export class AIGateway {
       const provider = this.providerByName(name);
       if (!provider.configured()) continue;
       try {
-        const result = await provider.complete({ prompt: safePrompt, system: safeSystem, json, images });
+        const result = await provider.complete({ prompt: safePrompt, system: safeSystem, json, images, signal });
         this.record({ projectId, task, provider: result.provider, model: result.model, success: 1, durationMs: result.durationMs, tokens: result.tokens, error: null });
         return result;
       } catch (err) {
@@ -105,6 +106,13 @@ export class AIGateway {
   }
 
   async completeJson(opts) {
+    const coding = ['CODING', 'DEBUGGING'].includes(opts.task);
+    const totalMs = BUDGET_MS.AI_REQUEST_TOTAL;
+    const callMs = coding ? BUDGET_MS.AI_CODING : BUDGET_MS.AI_SIMPLE;
+    const parent = opts.signal ? { signal: opts.signal, remaining: () => BUDGET_MS.AI_REQUEST_TOTAL } : null;
+    const deadline = createDeadline({ ms: Math.min(totalMs, callMs * 2), parent, label: 'ai-request' });
+    opts = { ...opts, signal: mergeSignals(opts.signal, deadline.signal) };
+
     const pair = this.hub.selectedModels?.() || [];
     const pairTask = ['CODING', 'DEBUGGING', 'CODE_REVIEW'].includes(opts.task);
     if (pair.length >= 2 && pairTask) return this.completeSelectedPair(opts, pair);

@@ -14,7 +14,7 @@ function uiLocale() {
   return 'en';
 }
 
-const state = { projectId: null, projects: [], busy: false, jobId: null, poll: null, pollFailures: 0, seenEvents: 0, files: [], settings: null, pollInFlight: false, pollInFlightJobId: null, watchSeq: 0, lastNotice: '' };
+const state = { projectId: null, projects: [], busy: false, jobId: null, poll: null, pollFailures: 0, seenEvents: 0, files: [], settings: null, pollInFlight: false, pollInFlightJobId: null, watchSeq: 0, lastNotice: '', jobStartedAt: 0, slowOffered: false };
 
 async function api(url, options = {}) {
   const r = await fetch(url, { headers: { 'Content-Type': 'application/json', ...(options.headers || {}) }, ...options });
@@ -353,8 +353,34 @@ async function stopLive() {
     else setBusy(false);
   } catch (e) { handleJobActionError(e); }
 }
+
+function showSlowWaitCard(secs, modelHint) {
+  if (state.slowOffered) return;
+  state.slowOffered = true;
+  const box = document.createElement('div');
+  box.className = 'msg system';
+  box.id = 'slowWaitCard';
+  const m = modelHint || 'AI';
+  box.innerHTML = `<div><strong>Waiting for ${m} (${secs}s)…</strong></div>`;
+  const row = document.createElement('div');
+  row.className = 'actionCard';
+  const waitBtn = document.createElement('button');
+  waitBtn.textContent = 'Wait';
+  waitBtn.onclick = () => { state.slowOffered = false; box.remove(); };
+  const cancelBtn = document.createElement('button');
+  cancelBtn.textContent = 'Cancel';
+  cancelBtn.onclick = () => cancelCurrentJob();
+  const switchBtn = document.createElement('button');
+  switchBtn.textContent = 'Switch model';
+  switchBtn.onclick = () => { try { $('settingsBtn')?.click(); } catch {} };
+  row.append(waitBtn, cancelBtn, switchBtn);
+  box.appendChild(row);
+  $('chat')?.appendChild(box);
+}
+
 function setBusy(on, text = 'Working…') {
   state.busy = on;
+  if (on) { state.jobStartedAt = Date.now(); state.slowOffered = false; }
   $('busyBar').hidden = !on;
   $('busyText').textContent = on ? text : 'Ready';
   if ($('workPill')) { $('workPill').textContent = on ? 'Working' : 'Ready'; $('workPill').className = on ? 'pill work' : 'pill ready'; }
@@ -846,6 +872,10 @@ async function watch(jobId, { preserveEvents = false, resetFailures = true } = {
   }
   if (!preserveEvents && state.seenEvents) state.seenEvents = 0;
   setBusy(true, state.pollFailures ? 'Still working…' : 'Working…');
+    if (state.jobStartedAt) {
+      const secs = Math.round((Date.now() - state.jobStartedAt) / 1000);
+      if (secs >= 15) showSlowWaitCard(secs, ($('hubModel')?.value || $('aiSelect')?.value || 'AI'));
+    }
 
   // Multiple UI paths can attach to the same job (for example a duplicate Publish
   // request receiving the existing jobId). Never issue overlapping GETs for the same
@@ -1023,8 +1053,13 @@ function renderRepairAction(errorText) {
 
 function summarizeResult(result, status) {
   const runtime = extractRuntime(result);
+  if (result?.provider || result?.model) { /* attribution shown on brief */ }
   if (status === 'failed' && !result.brief) {
-    add('ai', result.error || 'RESULT: Not ready.\nNEXT: Use Diagnose & Fix above, or tell me what you want changed.');
+    if (/JOB_TIMEOUT/i.test(String(result.error || ''))) {
+      add('ai', 'Timed out — the AI or network took too long. Tap Cancel if still busy, or Switch model in Settings, then try again.');
+    } else {
+      add('ai', result.error || 'RESULT: Not ready.\nNEXT: Use Diagnose & Fix above, or tell me what you want changed.');
+    }
     return;
   }
   if (runtime?.status === 'passed' && (runtime.previewPath || runtime.url || runtime.publicUiUrl)) {
@@ -1376,6 +1411,30 @@ $('settingsBtn').onclick = () => { loadSettings(); $('settings').hidden = false;
 $('closeSettings').onclick = () => $('settings').hidden = true;
 $('saveSettings').onclick = saveSettings;
 if ($('hubAdd')) $('hubAdd').onclick = addHubProvider;
+
+function renderModelBadges(models) {
+  const box = $('hubModelBadges');
+  if (!box) return;
+  box.innerHTML = '';
+  (models || []).slice(0, 24).forEach((m) => {
+    const id = m.id || m;
+    const verified = m.verified === true;
+    const failed = m.verified === false && m.lastError;
+    const icon = verified ? '✅' : (failed ? '⚠' : '⚪');
+    const span = document.createElement('button');
+    span.type = 'button';
+    span.className = 'ws-btn';
+    span.style.cssText = 'font-size:12px;padding:2px 8px';
+    span.textContent = `${icon} ${id}`;
+    span.title = failed ? String(m.lastError || 'failed') : (verified ? 'verified' : 'untested');
+    span.onclick = () => {
+      if ($('hubModel')) $('hubModel').value = String(id).includes(':') ? id : `${($('hubProvider')?.value || 'gemini')}:${id}`;
+      if ($('routingSelected')) $('routingSelected').checked = true;
+    };
+    box.appendChild(span);
+  });
+}
+
 if ($('hubLoadModels')) $('hubLoadModels').onclick = async () => {
   const b = $('hubLoadModels'); const old = b.textContent;
   b.disabled = true; b.textContent = 'Loading…';
@@ -1404,6 +1463,7 @@ if ($('hubLoadModels')) $('hubLoadModels').onclick = async () => {
       const id = r.verifiedModel || r.models[0]?.id || r.models[0];
       if (id) $('hubModel').value = String(id).includes(':') ? id : `${provider}:${id}`;
     }
+    if (typeof renderModelBadges === 'function') renderModelBadges(r.models || r || []);
     $('settingsState').textContent = n
       ? `Loaded ${n} model(s) from ${provider}. Type or pick a model, then ＋ Add.`
       : (r.warning || `No models returned for ${provider}. You can still type a model id manually.`);
@@ -1595,3 +1655,24 @@ init();
 
 
 
+
+// Routing mode Auto / Choose
+async function applyRoutingModeFromUi() {
+  const mode = $('routingSelected')?.checked ? 'SELECTED' : 'AUTO';
+  const model = ($('hubModel')?.value || '').trim();
+  const provider = ($('hubProvider')?.value || $('aiSelect')?.value || '').trim();
+  const body = { mode };
+  if (mode === 'SELECTED' && model) {
+    body.preferredModels = [model.includes(':') ? model : `${provider}:${model}`];
+    body.preferredProvider = provider;
+  } else {
+    body.preferredModels = [];
+  }
+  try {
+    await api('/api/ai/hub/routing', { method: 'POST', body: JSON.stringify(body) });
+  } catch (e) {
+    if ($('settingsState')) $('settingsState').textContent = e.message || 'Routing update failed';
+  }
+}
+if ($('routingAuto')) $('routingAuto').onchange = applyRoutingModeFromUi;
+if ($('routingSelected')) $('routingSelected').onchange = applyRoutingModeFromUi;
