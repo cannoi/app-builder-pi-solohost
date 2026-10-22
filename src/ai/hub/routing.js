@@ -1,9 +1,8 @@
 /**
- * Single source of truth for AI routing: AUTO | SELECTED, Gemini-first defaults.
+ * AI routing: AUTO | SELECTED, Gemini-first, multi-model ladder per provider.
  */
 export const ROUTING_MODE = Object.freeze({ AUTO: 'AUTO', SELECTED: 'SELECTED' });
 
-/** Default connection priority when mode is AUTO (never "most recently added"). */
 export const DEFAULT_PROVIDER_PRIORITY = [
   'gemini',
   'custom',
@@ -26,9 +25,21 @@ export function providerPriorityIndex(provider) {
   return i >= 0 ? i : DEFAULT_PROVIDER_PRIORITY.length + 1;
 }
 
+function modelList(conn) {
+  const m = conn?.models;
+  if (!Array.isArray(m)) return [];
+  return m
+    .map((x) => (typeof x === 'string' ? { id: x, state: 'unknown' } : { ...x }))
+    .filter((x) => x?.id && x.state !== 'unavailable');
+}
+
+function hasKey(c) {
+  return Boolean(c?.apiKey || c?.keyRef || c?.hasKey || c?.credentialRef);
+}
+
 /**
- * Build ordered attempt plan: max 3 distinct (provider, model) pairs.
- * User-selected models first; then AUTO order by DEFAULT_PROVIDER_PRIORITY.
+ * Ladder of up to maxAttempts distinct (provider, model) pairs.
+ * User selection first; then per-provider ranked models (≤2 each before next provider).
  */
 export function buildAttemptPlan({
   connections = [],
@@ -36,7 +47,7 @@ export function buildAttemptPlan({
   preferredProvider = '',
   mode = ROUTING_MODE.AUTO,
   task = '',
-  maxAttempts = 3,
+  maxAttempts = 4,
 } = {}) {
   const selected = (preferredModels || []).map(String).filter(Boolean);
   const locked = normalizeRoutingMode(mode) === ROUTING_MODE.SELECTED && selected.length > 0;
@@ -51,20 +62,17 @@ export function buildAttemptPlan({
     out.push({ conn, model: modelId, ref: key, reason });
   };
 
-  // 1) Explicit user selections
   for (const ref of selected) {
     const [prov, ...rest] = ref.split(':');
-    const modelId = rest.join(':') || prov;
+    const modelId = rest.length ? rest.join(':') : prov;
     const conn =
       connections.find((c) => c.provider === prov && hasKey(c)) ||
       connections.find((c) => c.id === prov && hasKey(c)) ||
       connections.find((c) => hasKey(c) && modelList(c).some((m) => m.id === modelId));
-    if (conn) push(conn, modelId.includes(':') ? rest.join(':') || modelId : modelId, 'user-selected');
+    if (conn) push(conn, modelId, 'user-selected');
   }
 
-  if (locked && out.length) return out.slice(0, maxAttempts);
-
-  // 2) AUTO plan: Gemini first, never by add-order
+  // Even when locked, still add Auto ladder after user selection so 404 can fall through
   const list = connections
     .filter((c) => hasKey(c) && c.status !== 'INVALID')
     .slice()
@@ -78,24 +86,28 @@ export function buildAttemptPlan({
   }
 
   for (const conn of list) {
-    const models = modelList(conn);
-    const auto = models.find((m) => String(m.id).toLowerCase() === 'auto');
-    const verified = models.filter((m) => m.verified);
-    const pick = auto || verified[0] || models[0];
-    if (pick?.id) push(conn, pick.id, auto ? 'auto' : verified[0] ? 'verified' : 'fallback');
+    let models = modelList(conn);
+    // rank: verified first, then by id heuristically
+    models = models.slice().sort((a, b) => {
+      if (a.verified && !b.verified) return -1;
+      if (!a.verified && b.verified) return 1;
+      if (String(a.id).toLowerCase() === 'auto') return -1;
+      if (String(b.id).toLowerCase() === 'auto') return 1;
+      // newer gemini first
+      const ga = String(a.id).match(/gemini-(\d+(?:\.\d+)?)/);
+      const gb = String(b.id).match(/gemini-(\d+(?:\.\d+)?)/);
+      if (ga && gb) return parseFloat(gb[1]) - parseFloat(ga[1]);
+      return String(a.id).localeCompare(String(b.id));
+    });
+    let added = 0;
+    for (const m of models) {
+      if (added >= 2) break;
+      push(conn, m.id, m.verified ? 'verified' : 'ladder');
+      added += 1;
+    }
   }
 
   return out.slice(0, maxAttempts);
-}
-
-function hasKey(c) {
-  return Boolean(c?.apiKey || c?.keyRef || c?.hasKey);
-}
-
-function modelList(conn) {
-  const m = conn?.models;
-  if (!Array.isArray(m)) return [];
-  return m.map((x) => (typeof x === 'string' ? { id: x } : x)).filter((x) => x?.id);
 }
 
 export function isRoutingLocked(state) {

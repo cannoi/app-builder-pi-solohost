@@ -1,6 +1,6 @@
 import { maskKey } from '../../utils/mask.js';
 
-export const GEMINI_MODEL_CANDIDATES = ['gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-1.5-pro']; // offline fallback only, ≤3
+export const GEMINI_MODEL_CANDIDATES = ['gemini-2.5-flash-lite', 'gemini-flash-latest']; // offline unverified only — never retired 1.5/2.0
 
 export function geminiVersion(name) {
   const n = String(name || '').toLowerCase();

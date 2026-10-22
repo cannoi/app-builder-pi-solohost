@@ -1,5 +1,7 @@
 import { PROVIDER_CATALOG, catalogEntry, taskComplexity } from './catalog.js';
 import { buildAttemptPlan, normalizeRoutingMode, ROUTING_MODE, isRoutingLocked as routingLocked, DEFAULT_PROVIDER_PRIORITY } from './routing.js';
+import { filterAndRankListed, isChatCapable, OFFLINE_GEMINI_FALLBACK } from './model-registry.js';
+import { isAuthError, isModelUnavailable, friendlyClassMessage } from './errors.js';
 import { OpenAICompatProvider, preferAutoModel, normalizeBaseUrl } from './openai-compat.js';
 import { GeminiProvider } from '../providers/gemini.js';
 import { DeepSeekProvider } from '../providers/deepseek.js';
@@ -100,16 +102,57 @@ export class AIProviderHub {
       }
       if (!discovered.length) throw Object.assign(new Error('No usable model is known for this provider. Paste the key and try again, or set Base URL for Custom (e.g. http://personal-ai-hub:8080/v1).'), { code: 'MODEL_OR_ENDPOINT_UNAVAILABLE', classify: { code: 'MODEL_OR_ENDPOINT_UNAVAILABLE', user: 'No usable model is known for this provider.' } });
       const probeId = model || selectProbeModel(discovered) || preferAutoModel(discovered) || discovered[0].id;
-      const result = await this.probeModel(conn, probeId);
-      if (result.ok) {
-        const models = discovered.map((m) => ({ ...m, verified: m.id === probeId, lastVerified: m.id === probeId ? new Date().toISOString() : null }));
-        return { ok: true, models, verifiedModel: probeId };
+      // Rank chat-capable models; never trust API order
+      discovered = filterAndRankListed(provider, discovered);
+      if (!discovered.length && model) {
+        discovered = [{ id: model, displayName: model, available: true, verified: false, state: 'unknown', source: 'manual' }];
       }
-      const cls = result.error?.classify || classifyProviderError(result.error);
-      if (cls.code === 'INVALID_CREDENTIAL') throw result.error;
-      // Key may still work on a later request. Keep models usable so chat does not stall.
-      const models = discovered.map((m, i) => ({ ...m, verified: i === 0 || m.id === probeId, lastVerified: null }));
-      return { ok: true, models, verifiedModel: models[0]?.id || probeId, warning: cls.user };
+      // Walk up to 4 candidates until one verifies — never mark verified on failed probe
+      const rankedIds = discovered.map((m) => m.id).filter(Boolean);
+      const toTry = [];
+      if (model) toTry.push(model);
+      for (const id of rankedIds) if (!toTry.includes(id)) toTry.push(id);
+      let verifiedModel = null;
+      let lastCls = null;
+      const stateById = Object.fromEntries(discovered.map((m) => [m.id, { ...m }]));
+      for (const id of toTry.slice(0, 4)) {
+        const result = await this.probeModel(conn, id);
+        if (result.ok) {
+          verifiedModel = id;
+          stateById[id] = {
+            ...(stateById[id] || { id }),
+            verified: true,
+            state: 'verified',
+            lastVerified: new Date().toISOString(),
+            lastChecked: new Date().toISOString(),
+            lastError: null,
+          };
+          break;
+        }
+        const cls = result.error?.classify || classifyProviderError(result.error);
+        lastCls = cls;
+        if (isAuthError(cls) || cls.code === 'INVALID_CREDENTIAL' || cls.code === 'AUTH_INVALID') throw result.error;
+        const unavailable = isModelUnavailable(cls.code);
+        stateById[id] = {
+          ...(stateById[id] || { id }),
+          verified: false,
+          state: unavailable ? 'unavailable' : 'unknown',
+          lastError: cls.user || String(result.error?.message || '').slice(0, 200),
+          lastChecked: new Date().toISOString(),
+        };
+      }
+      const models = (discovered.length ? discovered.map((m) => stateById[m.id] || m) : Object.values(stateById));
+      if (verifiedModel) {
+        return { ok: true, models, verifiedModel };
+      }
+      // Key may be valid (list worked) but no model verified
+      return {
+        ok: false,
+        models,
+        verifiedModel: null,
+        warning: lastCls?.user || 'No model could be verified for this key.',
+        classify: lastCls,
+      };
     } finally {
       this.vault.remove(ref);
     }
@@ -184,6 +227,27 @@ export class AIProviderHub {
 
   selectedModels() { return normalizePreferredModels(this.state().preferredModels || []); }
 
+  /** Fast readiness check — no network when state is fresh. */
+  preflight({ task = '' } = {}) {
+    const st = this.state();
+    const conns = (st.connections || []).filter((c) => this.key(c) && c.status !== 'INVALID');
+    if (!conns.length && !this.cfg.ai?.geminiKey && !this.cfg.ai?.deepseekKey) {
+      return { ready: false, status: 'needs_key', message: 'Add an AI key in Settings (Gemini recommended).' };
+    }
+    const plan = buildAttemptPlan({
+      connections: conns.map((c) => ({ ...c, hasKey: true })),
+      preferredModels: st.preferredModels || [],
+      preferredProvider: st.preferredProvider || '',
+      mode: st.mode,
+      maxAttempts: 4,
+    });
+    if (!plan.length) {
+      return { ready: false, status: 'needs_model_refresh', message: 'Reload models or switch to Auto in Settings.' };
+    }
+    return { ready: true, status: 'ready', planPreview: plan.map((p) => p.ref) };
+  }
+
+
   syncLegacyKeys(st) {
     for (const c of st.connections || []) c.models = normalizeModelsState(c.models);
     const ds = st.connections.find((c) => c.provider === 'deepseek' && this.key(c));
@@ -192,8 +256,11 @@ export class AIProviderHub {
     this.cfg.ai.geminiKey = gm ? this.key(gm) : '';
     const dsModels = normalizeModelsState(ds?.models);
     const gmModels = normalizeModelsState(gm?.models);
-    if (dsModels.find((m) => m.verified)?.id) this.cfg.ai.deepseekModel = dsModels.find((m) => m.verified).id;
-    if (gmModels.find((m) => m.verified)?.id) this.cfg.ai.geminiModel = gmModels.find((m) => m.verified).id;
+    const dsV = dsModels.find((m) => m.verified && m.state !== 'unavailable');
+    const gmV = gmModels.find((m) => m.verified && m.state !== 'unavailable');
+    if (dsV?.id) this.cfg.ai.deepseekModel = dsV.id;
+    if (gmV?.id) this.cfg.ai.geminiModel = gmV.id;
+    else if (!gmV) this.cfg.ai.geminiModel = '';
     const preferred = st.preferredProvider || '';
     this.cfg.ai.provider = preferred || gm?.provider || ds?.provider || st.connections?.[0]?.provider || 'gemini';
   }
@@ -254,13 +321,13 @@ export class AIProviderHub {
       preferredProvider: st.preferredProvider || '',
       mode: st.mode,
       task,
-      maxAttempts: 3,
+      maxAttempts: 4,
     });
     if (!picks.length) picks = this.candidates(task, modelRef).slice(0, 3);
     if (!picks.length) throw Object.assign(new Error('No verified AI model is available for this task. Connect a provider or refresh its models.'), { code: 'AI_UNAVAILABLE' });
     const errors = []; let tries = 0;
     for (const pick of picks) {
-      if (tries >= 3) break;
+      if (tries >= 4) break;
       tries += 1;
       try {
         const adapter = this.adapter({ ...pick.conn, models: [{ id: pick.model }] });
@@ -268,10 +335,20 @@ export class AIProviderHub {
         this.markModelVerified(pick.conn.id, pick.model, result);
         return result;
       } catch (err) {
-        const cls = err.classify || classifyProviderError(err); errors.push(`${pick.conn.provider}/${pick.model}: ${cls.user}`);
-        this.markError(pick.conn.id, cls.user, cls.code === 'INVALID_CREDENTIAL' ? 'INVALID' : 'ERROR');
-        if (cls.code === 'INVALID_CREDENTIAL') break;
-        if (!isTransient(cls.code) && cls.code !== 'MODEL_OR_ENDPOINT_UNAVAILABLE') continue;
+        const cls = err.classify || classifyProviderError(err);
+        errors.push(`${pick.conn.provider}/${pick.model}: ${cls.user}`);
+        const auth = isAuthError(cls) || cls.code === 'INVALID_CREDENTIAL' || cls.code === 'AUTH_INVALID';
+        if (isModelUnavailable(cls.code) || cls.code === 'MODEL_OR_ENDPOINT_UNAVAILABLE') {
+          this.markModelState(pick.conn.id, pick.model, 'unavailable', cls.user);
+          continue; // next ladder entry
+        }
+        if (cls.code === 'RATE_LIMITED') {
+          this.markModelState(pick.conn.id, pick.model, 'rate_limited', cls.user);
+          continue;
+        }
+        this.markError(pick.conn.id, cls.user, auth ? 'INVALID' : 'ERROR');
+        if (auth) break;
+        if (!isTransient(cls.code)) continue;
       }
     }
     throw Object.assign(new Error(errors.join(' | ') || 'No verified AI model is available'), { code: 'AI_UNAVAILABLE', providerErrors: errors });
@@ -282,6 +359,27 @@ export class AIProviderHub {
     row.models = normalizeModelsState(row.models);
     const m = row.models.find((x) => (x.id || x) === modelId); if (m && typeof m === 'object') { m.verified = true; m.lastVerified = new Date().toISOString(); }
     row.status = 'VERIFIED'; row.lastVerified = new Date().toISOString(); row.lastError = null; row.cacheAt = new Date().toISOString(); this.save(st);
+  }
+
+
+  markModelState(connectionId, modelId, state, lastError = null) {
+    const st = this.state();
+    const row = st.connections.find((c) => c.id === connectionId);
+    if (!row) return;
+    row.models = normalizeModelsState(row.models);
+    let m = row.models.find((x) => (x.id || x) === modelId);
+    if (!m) {
+      m = { id: modelId };
+      row.models.push(m);
+    }
+    if (typeof m === 'object') {
+      m.state = state;
+      m.verified = state === 'verified';
+      m.lastError = lastError;
+      m.lastChecked = new Date().toISOString();
+      if (state === 'verified') m.lastVerified = m.lastChecked;
+    }
+    this.save(st);
   }
 
   markError(id, message, status = 'ERROR') {

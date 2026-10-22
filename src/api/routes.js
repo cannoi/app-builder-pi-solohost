@@ -463,19 +463,26 @@ export function registerRoutes(r, app) {
       const probed = await ai.hub.testConnection({ provider, apiKey, baseUrl, model: body.model });
       const models = Array.isArray(probed?.models) ? probed.models : [];
       const id = `${provider}-${Date.now().toString(36)}`;
+      const anyVerified = models.some((m) => m && m.verified);
       ai.hub.upsertConnection({
         id,
         provider,
         apiKey,
         baseUrl,
-        status: models.length ? 'VERIFIED' : 'READY',
+        status: anyVerified ? 'VERIFIED' : (probed?.ok === false ? 'ERROR' : 'READY'),
         models,
-        lastVerified: new Date().toISOString(),
-        lastError: null,
+        lastVerified: anyVerified ? new Date().toISOString() : null,
+        lastError: probed?.warning || null,
       });
       ai.refresh();
-      const verifiedModel = models.find((m) => m && m.verified)?.id || models[0]?.id || probed?.verifiedModel || null;
-      res.json({ ok: true, models, verifiedModel, hub: ai.hub.publicState() });
+      const verifiedModel = models.find((m) => m && m.verified)?.id || probed?.verifiedModel || null;
+      res.json({
+        ok: Boolean(probed?.ok !== false || anyVerified),
+        models,
+        verifiedModel,
+        warning: probed?.warning || null,
+        hub: ai.hub.publicState(),
+      });
     } catch (err) {
       const cls = err.classify || { user: err.message };
       res.status(400).json({ error: cls.user || err.message, code: cls.code || 'UNKNOWN_PROVIDER_ERROR' });
@@ -546,6 +553,60 @@ export function registerRoutes(r, app) {
       res.status(400).json({ error: err.message || 'Could not import model list.' });
     }
   });
+
+  
+  r.get('/api/ai/doctor', async (_req, res) => {
+    const out = {
+      ok: false,
+      steps: [],
+      version: cfg.version,
+      at: new Date().toISOString(),
+    };
+    try {
+      const hub = ai?.hub;
+      const st = hub?.state?.() || {};
+      const conns = st.connections || [];
+      const hasKey = conns.some((c) => hub.key?.(c)) || Boolean(cfg.ai?.geminiKey || cfg.ai?.deepseekKey);
+      out.steps.push({ id: 'key_present', ok: hasKey, detail: hasKey ? 'key present' : 'no key' });
+      if (!hasKey) {
+        out.status = 'needs_key';
+        out.message = 'Add an AI key in Settings (Gemini recommended).';
+        return res.json(out);
+      }
+      const pf = hub.preflight?.({}) || { ready: false };
+      out.steps.push({ id: 'preflight', ok: Boolean(pf.ready), detail: pf.status || '', plan: pf.planPreview || [] });
+      // Prefer first gemini/custom connection for list
+      const conn = conns.find((c) => hub.key?.(c) && c.status !== 'INVALID') || conns[0];
+      if (conn && hub.discover) {
+        try {
+          const models = await hub.discover(conn, { force: false });
+          out.steps.push({ id: 'models_listed', ok: Array.isArray(models) && models.length > 0, detail: `${(models || []).length} models` });
+          const chat = (models || []).filter((m) => m && m.state !== 'unavailable');
+          const candidate = chat.find((m) => m.verified)?.id || chat[0]?.id;
+          if (candidate && hub.probeModel) {
+            const probe = await hub.probeModel({ ...conn, models: [{ id: candidate }] }, candidate);
+            out.steps.push({
+              id: 'best_verified',
+              ok: Boolean(probe?.ok),
+              detail: probe?.ok ? candidate : (probe?.error?.message || 'probe failed'),
+              model: candidate,
+            });
+          }
+        } catch (err) {
+          out.steps.push({ id: 'discover', ok: false, detail: String(err.message || err).slice(0, 200) });
+        }
+      }
+      out.ok = out.steps.every((s) => s.ok !== false) || out.steps.some((s) => s.id === 'best_verified' && s.ok);
+      out.status = out.ok ? 'healthy' : 'degraded';
+      out.routingMode = st.mode || 'AUTO';
+      out.preferredModels = st.preferredModels || [];
+      res.json(out);
+    } catch (err) {
+      out.message = String(err.message || err).slice(0, 240);
+      res.status(500).json(out);
+    }
+  });
+
 
   r.post('/api/ai/hub/routing', (req, res) => {
     ai.hub.setRouting({

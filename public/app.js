@@ -1459,10 +1459,7 @@ if ($('hubLoadModels')) $('hubLoadModels').onclick = async () => {
       renderModelSelectors(r.hub);
     }
     const n = (r.models || []).length;
-    if (n && $('hubModel') && !$('hubModel').value) {
-      const id = r.verifiedModel || r.models[0]?.id || r.models[0];
-      if (id) $('hubModel').value = String(id).includes(':') ? id : `${provider}:${id}`;
-    }
+    // v2.1: Load models lists only — does not auto-fill model box or preferredModels
     if (typeof renderModelBadges === 'function') renderModelBadges(r.models || r || []);
     $('settingsState').textContent = n
       ? `Loaded ${n} model(s) from ${provider}. Type or pick a model, then ＋ Add.`
@@ -1676,3 +1673,17 @@ async function applyRoutingModeFromUi() {
 }
 if ($('routingAuto')) $('routingAuto').onchange = applyRoutingModeFromUi;
 if ($('routingSelected')) $('routingSelected').onchange = applyRoutingModeFromUi;
+
+async function runAiDoctor() {
+  try {
+    if ($('settingsState')) $('settingsState').textContent = 'Running AI check…';
+    const r = await api('/api/ai/doctor');
+    const lines = (r.steps || []).map((s) => `${s.ok ? '✅' : '✖'} ${s.id}: ${s.detail || ''}`);
+    const msg = [`AI Doctor: ${r.status || (r.ok ? 'healthy' : 'degraded')}`, ...lines].join('\n');
+    if ($('settingsState')) $('settingsState').textContent = msg;
+    add('system', msg, { force: true });
+  } catch (e) {
+    if ($('settingsState')) $('settingsState').textContent = e.message || 'AI check failed';
+  }
+}
+if ($('aiDoctorBtn')) $('aiDoctorBtn').onclick = () => runAiDoctor();

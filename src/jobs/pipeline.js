@@ -45,6 +45,21 @@ function withTimeout(promise, ms, message) {
 }
 
 
+
+function aiPreflightOrThrow(ai, emit, lang = 'en') {
+  const pf = typeof ai?.hub?.preflight === 'function' ? ai.hub.preflight({}) : { ready: true };
+  if (pf?.ready) return pf;
+  const vi = String(lang).toLowerCase().startsWith('vi');
+  const msg = pf?.status === 'needs_key'
+    ? (vi ? 'Chưa có API key. Mở ⚙ Settings → thêm Gemini → Test → Save.' : 'No AI key. Open ⚙ Settings → add Gemini → Test → Save.')
+    : (pf?.message || (vi ? 'Cần tải lại danh sách model.' : 'Reload models in Settings.'));
+  emit('preflight', 'failed', msg);
+  const err = new Error(msg);
+  err.code = pf?.status === 'needs_key' ? 'AI_NEEDS_KEY' : 'AI_NOT_READY';
+  err.preflight = pf;
+  throw err;
+}
+
 async function fetchWithTimeout(url, opts = {}, ms = 30000, maxBytes = 80 * 1024 * 1024) {
   const res = await fetch(url, { ...opts, signal: opts.signal || AbortSignal.timeout(ms) });
   if (!res.ok) return res;
@@ -346,7 +361,22 @@ export function registerPipeline(app) {
     const t0 = Date.now();
     let analysis;
     let plan;
-    if (simpleIdea) {
+    let usedLocalTemplate = false;
+    try {
+      aiPreflightOrThrow(ai, emit, userLanguage);
+    } catch (preErr) {
+      // Honest template path — never silent
+      usedLocalTemplate = true;
+      emit('preflight', 'failed', preErr.message || 'No AI available');
+      analysis = localAnalysis(idea);
+      analysis.fallbackReason = preErr.message;
+      plan = localPlan(idea, analysis);
+      plan.fallbackReason = preErr.message;
+      emit('plan', 'done', String(userLanguage).startsWith('vi')
+        ? 'Không có AI — đã tạo bản mẫu cơ bản (local template). Thêm API key trong Settings để AI xây app thật.'
+        : 'No AI available — created a basic local template. Add an API key in Settings for a real AI build.');
+    }
+    if (!usedLocalTemplate && simpleIdea) {
       emit('analyze', 'running', 'Understanding idea + plan (one step)…');
       try {
         const mergedPrompt = `${ideaPrompt(idea, attachmentSummary)}\n\nAlso return product plan fields in the same JSON: name, summary, pages (array), features (array), stack (short).`;
@@ -379,7 +409,7 @@ export function registerPipeline(app) {
         plan = localPlan(idea, analysis);
         plan.fallbackReason = analysis.fallbackReason;
       }
-    } else {
+    } else if (!usedLocalTemplate) {
       emit('analyze', 'running', 'Understanding your idea…');
       try {
         const r = await ai.completeJson({ task: 'IDEA_ANALYSIS', system: SYSTEM, prompt: ideaPrompt(idea, attachmentSummary), images: imageInputs(incomingFiles), signal: job._signal });
@@ -675,11 +705,12 @@ export function registerPipeline(app) {
     const project = mustProject(job.payload.projectId);
     const feedback = String(job.payload.feedback || '').trim();
     if (!feedback) throw new Error('Tell AI what to improve.');
-    // No AI key: deterministic path only, finish fast (no hang)
+    // Preflight / no AI key: deterministic path only, finish fast (no hang)
     try {
+      const pf = typeof ai?.hub?.preflight === 'function' ? ai.hub.preflight({}) : null;
       const st = ai?.status?.() || {};
       const hubOk = ai?.hub?.state?.()?.connections?.some((c) => c.status !== 'INVALID');
-      const configured = st.configured || hubOk || cfg?.ai?.geminiKey || cfg?.ai?.deepseekKey;
+      const configured = (pf ? pf.ready : null) ?? (st.configured || hubOk || cfg?.ai?.geminiKey || cfg?.ai?.deepseekKey);
       if (!configured) {
         emit('diagnose', 'running', 'No AI key — running deterministic checks only…');
         let findings = [];
@@ -2891,7 +2922,8 @@ function friendlyAiError(err) {
   const m = String(err?.message || err);
   const providers = Array.isArray(err?.providerErrors) ? err.providerErrors.map((x) => String(x).replace(/\s+/g, ' ').slice(0, 260)) : [];
   const detail = providers.join(' | ');
-  if (/No AI provider is configured|API key is not configured/i.test(m)) return 'No active AI key is available. Add Gemini (default), DeepSeek, or Custom in Settings, then Save.';
+  if (/No AI provider is configured|API key is not configured|AI_NEEDS_KEY|needs_key/i.test(m)) return 'No active AI key is available. Open ⚙ Settings → add Gemini → Test → Save.';
+  if (/no longer available|MODEL_UNAVAILABLE|404/i.test(m)) return 'A model name is no longer available. Open Settings → ↻ Load models → choose Auto (or a current model) → Save.';
   if (/HTTP 401|HTTP 403|bad credentials|invalid api key/i.test(m)) return `AI authentication failed. ${detail || 'The selected key was rejected.'} Check the provider key, then Save Settings.`;
   if (/HTTP 404|model.*not found|invalid.*model/i.test(m)) return `AI model is unavailable. ${detail || 'Builder will rotate to a supported model automatically.'} Save Settings to reset model selection.`;
   if (/HTTP 429|quota|rate limit|resource exhausted/i.test(m)) return `AI quota/rate limit was reached. ${detail || 'The request was throttled.'} Builder will try another configured provider when available.`;
