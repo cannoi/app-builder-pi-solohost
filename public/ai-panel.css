@@ -33,7 +33,7 @@
 .ai-fab {
   position: fixed;
   right: max(12px, calc(50% - 190px + 12px));
-  bottom: 20px;
+  bottom: 92px;
   width: 60px;
   height: 60px;
   border-radius: 50%;
@@ -359,4 +359,44 @@
 .ai-fab[hidden],
 #aiFab[hidden] {
   display: none !important;
+}
+.remote-access-card{
+  background: linear-gradient(165deg, #141b26 0%, #0f141c 100%);
+  border: 1px solid #2c3648;
+  border-radius: 14px;
+  padding: 12px 12px 14px;
+  margin: 8px 0 12px;
+}
+.remote-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px}
+.remote-title{font-weight:600;font-size:13px;color:#e8eef6}
+.remote-body{text-align:center}
+.remote-hint{font-size:12px;color:#9aa8bc;margin:4px 0;line-height:1.4}
+.remote-hint.muted{opacity:.85}
+.remote-hint.warn{color:#f0c674}
+.remote-meta{display:flex;justify-content:center;gap:14px;flex-wrap:wrap;font-size:12px;color:#c5d0de;margin:8px 0}
+.remote-meta strong{color:#7dd3fc}
+.remote-qr{display:block;margin:10px auto;background:#fff;border-radius:10px;padding:6px;box-shadow:0 4px 16px rgba(0,0,0,.25)}
+.remote-url{margin:8px 0;word-break:break-all}
+.remote-url code{font-size:12px;color:#a5f3fc;background:#0a1018;padding:6px 10px;border-radius:8px;display:inline-block;max-width:100%}
+.remote-actions{display:flex;gap:8px;justify-content:center;flex-wrap:wrap;margin-top:8px}
+.remote-btn{border:1px solid #2c3648;background:#1a2330;color:#e8eef6;border-radius:10px;padding:8px 12px;font-size:12px;cursor:pointer}
+.remote-btn.primary{background:#0e7490;border-color:#0891b2;color:#fff}
+.remote-btn.ghost{background:transparent;padding:4px 8px;font-size:11px;color:#9aa8bc}
+.remote-btn:hover{filter:brightness(1.08)}
+.remote-input{width:100%;box-sizing:border-box;margin-top:8px;padding:8px 10px;border-radius:10px;border:1px solid #2c3648;background:#0a1018;color:#e8eef6;font-size:12px}
+
+/* AI panel / FAB sit above the chat composer so menus are not covered */
+.ai-fab {
+  bottom: 92px !important;
+  right: 16px !important;
+  z-index: 420 !important;
+}
+#ai-panel, .ai-panel-root, .panel.ai-panel {
+  bottom: 92px !important;
+  max-height: min(62vh, 480px) !important;
+  z-index: 415 !important;
+}
+@media (max-width: 640px) {
+  .ai-fab { bottom: 108px !important; }
+  #ai-panel, .ai-panel-root, .panel.ai-panel { bottom: 108px !important; max-height: min(55vh, 420px) !important; }
 }
