@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { classifyProviderError, isAuthError, isModelUnavailable } from '../src/ai/hub/errors.js';
+import { classifyProviderError, isAuthError, isModelUnavailable, isTransient } from '../src/ai/hub/errors.js';
 import { filterAndRankListed, isChatCapable, compareGeminiModels } from '../src/ai/hub/model-registry.js';
 import { buildAttemptPlan, ROUTING_MODE } from '../src/ai/hub/routing.js';
 
@@ -87,4 +87,30 @@ test('user-selected still first then ladder continues', () => {
 test('isChatCapable filters', () => {
   assert.equal(isChatCapable({ id: 'gemini-3.8-flash' }), true);
   assert.equal(isChatCapable({ id: 'text-embedding-004' }), false);
+});
+
+test('503 high demand is OVERLOADED not AUTH', () => {
+  const cls = classifyProviderError(
+    new Error('Gemini HTTP 503: { "error": { "code": 503, "message": "This model is currently experiencing high demand.", "status": "UNAVAILABLE" } }'),
+    503,
+  );
+  assert.equal(cls.code, 'OVERLOADED');
+  assert.ok(isTransient(cls.code));
+});
+
+test('ladder can offer 3 models per provider for failover', () => {
+  const plan = buildAttemptPlan({
+    connections: [{
+      id: 'g', provider: 'gemini', hasKey: true, status: 'VERIFIED',
+      models: [
+        { id: 'gemini-a' },
+        { id: 'gemini-b' },
+        { id: 'gemini-c' },
+        { id: 'gemini-d' },
+      ],
+    }],
+    mode: ROUTING_MODE.AUTO,
+    maxAttempts: 6,
+  });
+  assert.ok(plan.length >= 3);
 });

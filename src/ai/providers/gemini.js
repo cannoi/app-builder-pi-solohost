@@ -1,3 +1,4 @@
+import { classifyProviderError } from '../hub/errors.js';
 import { maskKey } from '../../utils/mask.js';
 
 export const GEMINI_MODEL_CANDIDATES = ['gemini-2.5-flash-lite', 'gemini-flash-latest']; // offline unverified only — never retired 1.5/2.0
@@ -136,7 +137,12 @@ export class GeminiProvider {
       signal: signal || AbortSignal.timeout(45000),
     });
     const raw = await res.text();
-    if (!res.ok) throw new Error(`Gemini HTTP ${res.status}: ${raw.slice(0, 500)}`);
+    if (!res.ok) {
+      const err = new Error(`Gemini HTTP ${res.status}: ${raw.slice(0, 500)}`);
+      err.status = res.status;
+      err.classify = classifyProviderError(err, res.status);
+      throw err;
+    }
     let data;
     try { data = JSON.parse(raw); } catch { throw new Error('Gemini returned invalid JSON'); }
     const text = (data.candidates || []).flatMap((c) => c.content?.parts || []).map((p) => p.text || '').join('');

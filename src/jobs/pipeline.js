@@ -463,12 +463,21 @@ export function registerPipeline(app) {
     await projects.updateWorkPlan(project, { stepId: initialPlan.steps[1].id, step: { status: 'done', result: 'Architecture and product plan saved.' } });
     emit('plan', 'done', 'Job plan saved. Every build step will report what changed and what remains.');
 
-    if (job.payload.autoBuild && analysis.questions.length && !job.payload.demo) {
+    // Build first: only pause for questions when idea is complex AND questions are required.
+    // Simple ideas go straight to code generation so users get a working preview sooner.
+    const complexIdea = !simpleIdea;
+    const mustAsk = complexIdea && analysis.questions.length >= 2 && job.payload.requireQuestions === true;
+    if (job.payload.autoBuild && mustAsk && !job.payload.demo) {
       projects.setStatus(project, 'WAITING_INPUT');
       await projects.chat(project, 'I need a few quick choices before I build this.', 'assistant', { questions: analysis.questions, fixedTemplate: true });
       await projects.finishWorkPlan(project, 'waiting_input', 'Waiting for the user choices before build can continue.');
       emit('questions', 'done', 'I need a few quick choices before I build this.');
       return { projectId: project.id, analysis, plan, needsInput: true, questions: analysis.questions };
+    }
+    if (analysis.questions?.length && !mustAsk) {
+      // Keep questions for later polish; do not block the first build
+      emit('questions', 'skipped', 'Building first version now; optional choices can come after preview.');
+      analysis.questions = [];
     }
 
     projects.setStatus(project, 'READY_TO_BUILD');
@@ -2042,21 +2051,47 @@ export function registerPipeline(app) {
     };
   });
 
-  async function generateCode({ project, analysis, plan, emit, allowFallback = false }) {
+  async function generateCode({ project, analysis, plan, emit, allowFallback = false, signal = null }) {
     projects.setStatus(project, 'BUILDING');
     const dest = projects.sourceDir(project.slug);
     let written = [];
     let usedFallback = false;
     try {
       emit('code', 'running', 'AI is writing the application files…');
-      const r = await ai.completeJson({
-        task: 'CODING',
-        system: SYSTEM,
-        prompt: codePrompt(project, plan),
-        projectId: project.id,
-      });
+      let r;
+      try {
+        r = await ai.completeJson({
+          task: 'CODING',
+          system: SYSTEM,
+          prompt: codePrompt(project, plan),
+          projectId: project.id,
+          signal,
+        });
+      } catch (firstErr) {
+        const msg = String(firstErr?.message || firstErr);
+        const overloaded = /503|UNAVAILABLE|high demand|OVERLOADED|rate.?limit|429/i.test(msg);
+        const format = /invalid format|AI_RESPONSE_MALFORMED|did not return valid JSON/i.test(msg);
+        if (overloaded || format) {
+          emit('code', 'running', overloaded
+            ? 'Model busy (503) — retrying with next model…'
+            : 'Invalid AI format — one strict retry…');
+          r = await ai.completeJson({
+            task: 'CODING',
+            system: SYSTEM,
+            prompt: codePrompt(project, plan),
+            projectId: project.id,
+            signal,
+            modelRef: '', // force hub to pick next ladder entry
+          });
+        } else {
+          throw firstErr;
+        }
+      }
       if (!r.json?.files?.length) throw new Error('AI did not return files');
       written = await writeGeneratedFiles(dest, r.json.files);
+      if (r.provider || r.model) {
+        emit('code', 'done', `Files written · ${[r.provider, r.model].filter(Boolean).join(' · ')}`);
+      }
     } catch (err) {
       if (!allowFallback) throw new Error(`AI code generation failed: ${friendlyAiError(err)}`);
       usedFallback = true;
@@ -2924,6 +2959,7 @@ function friendlyAiError(err) {
   const detail = providers.join(' | ');
   if (/No AI provider is configured|API key is not configured|AI_NEEDS_KEY|needs_key/i.test(m)) return 'No active AI key is available. Open ⚙ Settings → add Gemini → Test → Save.';
   if (/no longer available|MODEL_UNAVAILABLE|404/i.test(m)) return 'A model name is no longer available. Open Settings → ↻ Load models → choose Auto (or a current model) → Save.';
+  if (/503|high demand|UNAVAILABLE|OVERLOADED/i.test(m)) return 'The AI model is busy (high demand). Builder will try another model automatically — tap Retry or wait a few seconds.';
   if (/HTTP 401|HTTP 403|bad credentials|invalid api key/i.test(m)) return `AI authentication failed. ${detail || 'The selected key was rejected.'} Check the provider key, then Save Settings.`;
   if (/HTTP 404|model.*not found|invalid.*model/i.test(m)) return `AI model is unavailable. ${detail || 'Builder will rotate to a supported model automatically.'} Save Settings to reset model selection.`;
   if (/HTTP 429|quota|rate limit|resource exhausted/i.test(m)) return `AI quota/rate limit was reached. ${detail || 'The request was throttled.'} Builder will try another configured provider when available.`;

@@ -239,7 +239,7 @@ export class AIProviderHub {
       preferredModels: st.preferredModels || [],
       preferredProvider: st.preferredProvider || '',
       mode: st.mode,
-      maxAttempts: 4,
+      maxAttempts: 6,
     });
     if (!plan.length) {
       return { ready: false, status: 'needs_model_refresh', message: 'Reload models or switch to Auto in Settings.' };
@@ -321,13 +321,13 @@ export class AIProviderHub {
       preferredProvider: st.preferredProvider || '',
       mode: st.mode,
       task,
-      maxAttempts: 4,
+      maxAttempts: 6,
     });
     if (!picks.length) picks = this.candidates(task, modelRef).slice(0, 3);
     if (!picks.length) throw Object.assign(new Error('No verified AI model is available for this task. Connect a provider or refresh its models.'), { code: 'AI_UNAVAILABLE' });
     const errors = []; let tries = 0;
     for (const pick of picks) {
-      if (tries >= 4) break;
+      if (tries >= 6) break;
       tries += 1;
       try {
         const adapter = this.adapter({ ...pick.conn, models: [{ id: pick.model }] });
@@ -335,20 +335,24 @@ export class AIProviderHub {
         this.markModelVerified(pick.conn.id, pick.model, result);
         return result;
       } catch (err) {
-        const cls = err.classify || classifyProviderError(err);
+        const cls = err.classify || classifyProviderError(err, err.status || 0);
         errors.push(`${pick.conn.provider}/${pick.model}: ${cls.user}`);
         const auth = isAuthError(cls) || cls.code === 'INVALID_CREDENTIAL' || cls.code === 'AUTH_INVALID';
         if (isModelUnavailable(cls.code) || cls.code === 'MODEL_OR_ENDPOINT_UNAVAILABLE') {
           this.markModelState(pick.conn.id, pick.model, 'unavailable', cls.user);
-          continue; // next ladder entry
+          this.log?.warn?.('Model unavailable — trying next', { model: pick.model, provider: pick.conn.provider });
+          continue;
         }
-        if (cls.code === 'RATE_LIMITED') {
-          this.markModelState(pick.conn.id, pick.model, 'rate_limited', cls.user);
+        if (cls.code === 'RATE_LIMITED' || cls.code === 'OVERLOADED') {
+          this.markModelState(pick.conn.id, pick.model, cls.code === 'RATE_LIMITED' ? 'rate_limited' : 'overloaded', cls.user);
+          // short jitter then next model (do not mark connection INVALID)
+          await new Promise((r) => setTimeout(r, cls.code === 'OVERLOADED' ? 400 : 200));
+          this.log?.warn?.('Provider overloaded/rate-limited — trying next model', { model: pick.model, code: cls.code });
           continue;
         }
         this.markError(pick.conn.id, cls.user, auth ? 'INVALID' : 'ERROR');
         if (auth) break;
-        if (!isTransient(cls.code)) continue;
+        continue; // always try next ladder entry for unknown/network unless auth
       }
     }
     throw Object.assign(new Error(errors.join(' | ') || 'No verified AI model is available'), { code: 'AI_UNAVAILABLE', providerErrors: errors });

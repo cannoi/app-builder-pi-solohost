@@ -47,7 +47,7 @@ export function buildAttemptPlan({
   preferredProvider = '',
   mode = ROUTING_MODE.AUTO,
   task = '',
-  maxAttempts = 4,
+  maxAttempts = 6,
 } = {}) {
   const selected = (preferredModels || []).map(String).filter(Boolean);
   const locked = normalizeRoutingMode(mode) === ROUTING_MODE.SELECTED && selected.length > 0;
@@ -101,7 +101,7 @@ export function buildAttemptPlan({
     });
     let added = 0;
     for (const m of models) {
-      if (added >= 2) break;
+      if (added >= 3) break;
       push(conn, m.id, m.verified ? 'verified' : 'ladder');
       added += 1;
     }
