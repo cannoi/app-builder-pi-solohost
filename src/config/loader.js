@@ -14,7 +14,7 @@ export function loadConfig() {
       appId: process.env.SHFH_APP_ID || process.env.FEEDBACK_APP_ID || 'app-builder-pi-solohost',
       appName: process.env.SHFH_APP_NAME || 'App Builder — Pi SoloHost',
       // Feedback ingest token is resolved server-side from the encrypted credential bundle.
-      ingestToken: process.env.SHFH_INGEST_TOKEN || '',
+      ingestToken: process.env.SHFH_INGEST_TOKEN || 'cannoi_7Kp9xV2mQ8rN4tY6cL3wA5zD1eF0uH9',
       enabled: process.env.SHFH_ENABLED !== '0',
     },
     version: '1.7.1',

@@ -8,7 +8,9 @@ const path=require('node:path');
 const crypto=require('node:crypto');
 const DEFAULTS={
   hubId:'SHFH-CANNOI-0905428801',
-  baseUrl:'http://14.176.78.46:8090'
+  baseUrl:'http://14.176.78.46:8090',
+  // Embedded app-client ingest token (server-only; never returned to browser)
+  ingestToken:'cannoi_7Kp9xV2mQ8rN4tY6cL3wA5zD1eF0uH9'
 };
 function bundledToken(dataDir){
   try {
@@ -22,7 +24,10 @@ function bundledToken(dataDir){
 }
 function createFeedbackService(opts={}){
   const cfg={...DEFAULTS,...opts};
-  if (!cfg.ingestToken) cfg.ingestToken=process.env.SHFH_INGEST_TOKEN || bundledToken(opts.dataDir);
+  // Priority: explicit opts → env → encrypted bundle → embedded DEFAULTS
+  if (!cfg.ingestToken) cfg.ingestToken=process.env.SHFH_INGEST_TOKEN || bundledToken(opts.dataDir) || DEFAULTS.ingestToken;
+  if (!cfg.hubId) cfg.hubId=DEFAULTS.hubId;
+  if (!cfg.baseUrl) cfg.baseUrl=DEFAULTS.baseUrl;
   const appId=opts.appId||process.env.SHFH_APP_ID||'app';
   const appName=opts.appName||process.env.SHFH_APP_NAME||'Application';
   const version=opts.version||process.env.SHFH_APP_VERSION||'1.0.0';
