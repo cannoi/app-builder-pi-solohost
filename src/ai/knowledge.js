@@ -51,10 +51,10 @@ Current Builder architecture:
 
 Troubleshooting principle:
 - When the user reports an error/problem/issue in natural language, treat it as a debugging task even if they never say the word fix. Diagnose the actual evidence, identify root cause, apply the smallest safe fix, rerun tests, and only report success when the verification really passed. If a human step is required, explain exactly where to click and why.
-`
 
-## Current build (hybrid)
-- Version focuses on a stable v1.7.1 AI/create/repair core with the full v2.4.1 user interface (EN/VI, QR, public IP detection).
+Current build (hybrid):
+- Stable v1.7.x AI/create/repair core with the full modern UI (EN/VI, QR, public IP detection).
 - SoloHost install form only asks for BUILDER_ACCESS_PASSWORD; configure AI keys and GitHub inside Builder Settings.
 - Feedback Hub is preconfigured on the server (Hub ID SHFH-CANNOI-0905428801). Users never enter an ingest token; the Feedback tab talks only to this app backend.
 - Remote QR uses auto-discovered public IP + SoloHost published host port (not container port 8080).
+`
