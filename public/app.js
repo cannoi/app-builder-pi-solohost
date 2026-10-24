@@ -641,17 +641,35 @@ async function sendMessage() {
 }
 async function downloadZip(projectId, kind) {
   const url = `/api/projects/${projectId}/download?kind=${encodeURIComponent(kind || 'project')}`;
-  const r = await fetch(url);
+  const r = await fetch(url, { method: 'GET', credentials: 'same-origin', cache: 'no-store' });
   if (!r.ok) {
-    const data = await r.json().catch(() => ({}));
-    throw new Error(data.error || 'Could not create the ZIP.');
+    let msg = 'Could not create the ZIP.';
+    try {
+      const ct = r.headers.get('content-type') || '';
+      if (ct.includes('json')) {
+        const data = await r.json();
+        msg = data.error || data.message || msg;
+      } else {
+        msg = (await r.text()).slice(0, 180) || msg;
+      }
+    } catch {}
+    throw new Error(msg);
   }
   const blob = await r.blob();
-  const name = (r.headers.get('content-disposition') || '').match(/filename="([^"]+)"/)?.[1] || `${kind}.zip`;
+  if (!blob || blob.size < 32) throw new Error('ZIP file was empty. Try again after the app finishes building.');
+  const cd = r.headers.get('content-disposition') || '';
+  const name = (cd.match(/filename\*?=(?:UTF-8''|")?([^";]+)/i) || [])[1]
+    ? decodeURIComponent((cd.match(/filename\*?=(?:UTF-8''|")?([^";]+)/i) || [])[1].replace(/"/g, ''))
+    : `${kind || 'project'}.zip`;
   const href = URL.createObjectURL(blob);
   const a = document.createElement('a');
-  a.href = href; a.download = name; document.body.appendChild(a); a.click(); a.remove();
-  setTimeout(() => URL.revokeObjectURL(href), 2000);
+  a.href = href;
+  a.download = name;
+  a.rel = 'noopener';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(href), 4000);
   add('ai', `ZIP ready: ${name}`);
 }
 function pickImportZip() {
