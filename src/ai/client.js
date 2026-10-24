@@ -1,10 +1,8 @@
 /**
- * App Builder 1.8.1 — single AI call policy.
- * Product code should use call(ai, opts). Max 2 attempts + optional 1 format repair.
+ * App Builder 1.8.2 — single AI call policy (no circular import with gateway).
+ * SAFE_CHANGE_RULES are applied inside gateway.complete — do not re-append here.
  */
-import { actionRule } from './prompts.js';
-
-const BREAKER = new Map(); // key -> { fails, openUntil }
+const BREAKER = new Map();
 const BREAKER_FAILS = 3;
 const BREAKER_MS = 60_000;
 
@@ -52,9 +50,6 @@ function classifyError(err) {
   return 'AI_UNAVAILABLE';
 }
 
-/**
- * @param {object} ai AIGateway instance
- */
 export async function call(ai, {
   task = 'USER_CHAT',
   system = '',
@@ -71,9 +66,6 @@ export async function call(ai, {
     throw e;
   }
 
-  const rule = typeof actionRule === 'function' ? actionRule(task) : '';
-  const safeSystem = rule ? `${system || ''}\n\n${rule}`.trim() : String(system || '').trim();
-  const safePrompt = String(prompt || '');
   const json = output === 'json';
   const ms = deadlineMs(output, task);
   const timeout = AbortSignal.timeout(ms);
@@ -91,8 +83,8 @@ export async function call(ai, {
     try {
       const result = await ai.complete({
         task,
-        system: safeSystem,
-        prompt: safePrompt,
+        system,
+        prompt,
         json,
         images,
         signal: combined,
@@ -100,29 +92,16 @@ export async function call(ai, {
         modelRef: attempt === 1 ? modelRef : '',
       });
       breakerOk(key);
-      return {
-        ...result,
-        text: result?.text ?? '',
-        attempts: attempt,
-        output,
-      };
+      return { ...result, text: result?.text ?? '', attempts: attempt, output };
     } catch (err) {
       lastErr = err;
       const code = classifyError(err);
       err.code = err.code || code;
-      if (code === 'AI_AUTH' || code === 'AI_NO_KEY') {
+      if (code === 'AI_AUTH' || code === 'AI_NO_KEY' || /HTTP 400/.test(String(err.message || ''))) {
         breakerFail(key);
         throw err;
       }
-      // 400-style: do not retry same body
-      if (/HTTP 400/.test(String(err.message || ''))) {
-        breakerFail(key);
-        throw err;
-      }
-      if (code === 'AI_RATE_LIMIT') {
-        const wait = Math.min(5000, 1500 * attempt);
-        await new Promise((r) => setTimeout(r, wait));
-      }
+      if (code === 'AI_RATE_LIMIT') await new Promise((r) => setTimeout(r, Math.min(5000, 1500 * attempt)));
       breakerFail(key);
       if (attempt >= 2) break;
     }
@@ -130,7 +109,6 @@ export async function call(ai, {
   throw lastErr || Object.assign(new Error('AI unavailable'), { code: 'AI_UNAVAILABLE' });
 }
 
-/** Convenience for JSON-shaped calls */
 export async function callJson(ai, opts) {
   const r = await call(ai, { ...opts, output: 'json' });
   let json = r.json;
@@ -138,7 +116,7 @@ export async function callJson(ai, opts) {
     try {
       const m = String(r.text).match(/\{[\s\S]*\}/);
       if (m) json = JSON.parse(m[0]);
-    } catch { /* format repair once */ }
+    } catch { /* one format repair */ }
     if (json == null) {
       const retry = await call(ai, {
         ...opts,

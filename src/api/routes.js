@@ -47,8 +47,6 @@ export function registerRoutes(r, app) {
     res.json({ ready: true });
   });
 
-  
-  });
   r.get('/api/activity/unified', (req, res) => {
     try {
       const limit = Math.min(Number(req.query.limit) || 100, 500);
@@ -155,12 +153,6 @@ export function registerRoutes(r, app) {
   });
 
   // legacy /api/feedback/submit removed — use Universal Feedback POST /api/feedback
-
-  r.get('/api/access/status', (_req, res) => {
-    res.json({ passwordRequired: accessPasswordConfigured(cfg) });
-  });
-
-  });
 
   r.get('/api/activity/global', async (req, res) => {
     const limit = Math.min(Number(req.query?.limit || 80), 200);
