@@ -31,12 +31,18 @@
       err.textContent = '';
       try {
         const r = await fetch('/api/access/login', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
           body: JSON.stringify({ password: document.getElementById('pw').value }),
         });
         const data = await r.json().catch(() => ({}));
         if (!r.ok) { err.textContent = data.error || 'Incorrect password.'; return; }
-        location.href = '/';
+        // Fallback when Pi Browser / gateway blocks HttpOnly cookie: keep token for API headers
+        if (data.token) {
+          try { sessionStorage.setItem('builder_access_token', data.token); } catch (_) {}
+        }
+        location.replace('/');
       } catch { err.textContent = 'Network error. Try again.'; }
     };
   </script>

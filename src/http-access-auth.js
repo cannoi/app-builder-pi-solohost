@@ -1,6 +1,12 @@
 /**
  * Optional remote access gate using BUILDER_ACCESS_PASSWORD.
  * When unset/empty, auth is disabled (local dev stays open).
+ *
+ * Pi Browser + SoloHost remote gateway:
+ * - Traffic is often HTTPS via gateway host, not the app origin.
+ * - Cookies without Secure are dropped on HTTPS.
+ * - Cross-site / embedded access needs SameSite=None; Secure.
+ * - Client may also send Bearer / X-Builder-Access when cookies are blocked.
  */
 import crypto from 'node:crypto';
 
@@ -11,7 +17,7 @@ export function accessPasswordConfigured(cfg) {
   return Boolean(cfg?.accessPassword && String(cfg.accessPassword).length > 0);
 }
 
-function tokenFor(password) {
+export function tokenFor(password) {
   return crypto.createHmac('sha256', 'builder-access-v1').update(String(password)).digest('hex');
 }
 
@@ -23,6 +29,38 @@ function parseCookies(header) {
     out[part.slice(0, i).trim()] = decodeURIComponent(part.slice(i + 1).trim());
   });
   return out;
+}
+
+function requestIsHttps(req) {
+  const xf = String(req?.headers?.['x-forwarded-proto'] || '').split(',')[0].trim().toLowerCase();
+  if (xf === 'https') return true;
+  if (xf === 'http') return false;
+  // Some gateways only set X-Forwarded-Ssl
+  const xss = String(req?.headers?.['x-forwarded-ssl'] || '').toLowerCase();
+  if (xss === 'on' || xss === '1') return true;
+  return false;
+}
+
+/**
+ * Build Set-Cookie for Builder access.
+ * @param {string} token
+ * @param {{ req?: any, clear?: boolean }} [opts]
+ */
+export function accessCookieHeader(token, opts = {}) {
+  const clear = Boolean(opts.clear);
+  const secure = opts.req ? requestIsHttps(opts.req) : Boolean(opts.secure);
+  // Behind SoloHost remote gateway / Pi Browser, prefer Secure + SameSite=None so the
+  // session cookie survives HTTPS reverse-proxy and cross-site embedding.
+  const sameSite = secure ? 'None' : 'Lax';
+  const parts = [
+    `${COOKIE}=${clear ? '' : encodeURIComponent(token || '')}`,
+    'Path=/',
+    'HttpOnly',
+    `SameSite=${sameSite}`,
+    `Max-Age=${clear ? 0 : MAX_AGE_SEC}`,
+  ];
+  if (secure) parts.push('Secure');
+  return parts.join('; ');
 }
 
 export function isAccessAuthorized(req, cfg) {
@@ -43,17 +81,13 @@ export function verifyAccessPassword(password, cfg) {
   return { ok, token: ok ? tokenFor(cfg.accessPassword) : null };
 }
 
-export function accessCookieHeader(token) {
-  return `${COOKIE}=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${MAX_AGE_SEC}`;
-}
-
 export function createAccessAuthMiddleware(cfg) {
   return function accessAuth(req, res, next) {
     const path = req.path || req.url || '';
     if (
       path === '/api/access/status' || path === '/api/access/login' || path === '/api/access/logout'
       || path === '/login.html' || path === '/favicon.ico' || path === '/app-logo.jpg'
-      || path === '/made-by.png' || path === '/styles.css'
+      || path === '/made-by.png' || path === '/styles.css' || path === '/health' || path === '/ready'
     ) return next();
     if (isAccessAuthorized(req, cfg)) return next();
     if (String(path).startsWith('/api/')) {
@@ -66,3 +100,5 @@ export function createAccessAuthMiddleware(cfg) {
     return res.end();
   };
 }
+
+export { COOKIE as ACCESS_COOKIE_NAME };

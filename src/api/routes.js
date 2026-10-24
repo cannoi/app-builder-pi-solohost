@@ -103,7 +103,7 @@ export function registerRoutes(r, app) {
       try {
         const { verifyAccessPassword, accessCookieHeader } = await import('../http-access-auth.js');
         const v = verifyAccessPassword(password, cfg);
-        if (v?.token) res.setHeader('Set-Cookie', accessCookieHeader(v.token));
+        if (v?.token) res.setHeader('Set-Cookie', accessCookieHeader(v.token, { req }));
       } catch { /* optional */ }
       res.json({ ok: true, password, once: true });
     } catch (err) {
@@ -236,12 +236,16 @@ export function registerRoutes(r, app) {
     const password = String(req.body?.password || '');
     const result = verifyAccessPassword(password, cfg);
     if (!result.ok) return res.status(401).json({ ok: false, error: 'Incorrect password.' });
-    if (result.token) res.setHeader('Set-Cookie', accessCookieHeader(result.token));
-    res.json({ ok: true });
+    // Cookie for normal browsers; token body for Pi Browser / gateway when cookies are blocked
+    if (result.token) {
+      res.setHeader('Set-Cookie', accessCookieHeader(result.token, { req }));
+      res.setHeader('Cache-Control', 'no-store');
+    }
+    res.json({ ok: true, token: result.token || null });
   });
 
-  r.post('/api/access/logout', (_req, res) => {
-    res.setHeader('Set-Cookie', 'builder_access=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0');
+  r.post('/api/access/logout', (req, res) => {
+    res.setHeader('Set-Cookie', accessCookieHeader('', { req, clear: true }));
     res.json({ ok: true });
   });
 

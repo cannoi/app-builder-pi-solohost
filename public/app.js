@@ -17,7 +17,15 @@ function uiLocale() {
 const state = { projectId: null, projects: [], busy: false, jobId: null, poll: null, pollFailures: 0, seenEvents: 0, files: [], settings: null, pollInFlight: false, pollInFlightJobId: null, watchSeq: 0, lastNotice: '', jobStartedAt: 0, slowOffered: false };
 
 async function api(url, options = {}) {
-  const r = await fetch(url, { headers: { 'Content-Type': 'application/json', ...(options.headers || {}) }, ...options });
+  const headers = { 'Content-Type': 'application/json', ...(options.headers || {}) };
+  try {
+    const tok = sessionStorage.getItem('builder_access_token');
+    if (tok && !headers.Authorization && !headers['X-Builder-Access']) {
+      headers['X-Builder-Access'] = tok;
+      headers.Authorization = 'Bearer ' + tok;
+    }
+  } catch (_) { /* private mode */ }
+  const r = await fetch(url, { credentials: 'include', ...options, headers });
   const text = await r.text(); let data = {};
   try { data = text ? JSON.parse(text) : {}; } catch { data = { error: text }; }
   if (!r.ok) {
