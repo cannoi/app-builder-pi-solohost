@@ -48,7 +48,7 @@ export class OpenAICompatProvider {
       .filter((m) => m.id);
   }
 
-  async complete({ prompt, system, json = false, model, images = [] }) {
+  async complete({ prompt, system, json = false, model, images = [], signal = null }) {
     if (!this.configured()) {
       throw Object.assign(new Error(`${this.name} API key is not configured`), {
         classify: { code: 'INVALID_CREDENTIAL', user: 'API key is invalid.' },
@@ -74,7 +74,7 @@ export class OpenAICompatProvider {
       method: 'POST',
       headers: this.authHeaders(),
       body: JSON.stringify(body),
-      signal: AbortSignal.timeout(120000),
+      signal: (signal ? AbortSignal.any([AbortSignal.timeout(60000), signal]) : AbortSignal.timeout(60000)),
     });
     const raw = await res.text();
     if (!res.ok) {

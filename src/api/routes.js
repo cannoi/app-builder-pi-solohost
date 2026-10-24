@@ -1,4 +1,3 @@
-import { verifyAccessPassword, accessCookieHeader, accessPasswordConfigured } from '../http-access-auth.js';
 import path from 'node:path';
 import fs from 'node:fs/promises';
 import { createReadStream } from 'node:fs';
@@ -49,77 +48,6 @@ export function registerRoutes(r, app) {
   });
 
   
-  // Public IP + SoloHost host port for UI QR (UI from v2.4.1)
-  r.get('/api/remote/info', async (req, res) => {
-    try {
-      const { resolvePublicUrl, isLoopbackRequest, rememberPublicPort } = await import('../remote/info.js');
-      rememberPublicPort(req);
-      const info = await resolvePublicUrl({ cfg, req, dataDir: cfg.dataDir || cfg.paths?.data });
-      res.json({ ok: true, ...info, loopback: isLoopbackRequest(req) });
-    } catch (err) {
-      res.status(500).json({ error: String(err.message || err) });
-    }
-  });
-  r.get('/api/remote/url', async (req, res) => {
-    try {
-      const { resolvePublicUrl, rememberPublicPort } = await import('../remote/info.js');
-      rememberPublicPort(req);
-      const info = await resolvePublicUrl({ cfg, req, dataDir: cfg.dataDir || cfg.paths?.data });
-      res.json({ ok: true, url: info.publicUrl || info.url || null, ...info });
-    } catch (err) {
-      res.status(500).json({ error: String(err.message || err) });
-    }
-  });
-  r.post('/api/remote/url', async (req, res) => {
-    try {
-      const fs = await import('node:fs/promises');
-      const path = await import('node:path');
-      const url = String(req.body?.publicUrl || req.body?.url || '').trim();
-      if (!url || !/^https?:\/\//i.test(url)) return res.status(400).json({ error: 'Invalid URL' });
-      const dataDir = cfg.dataDir || cfg.paths?.data || path.join(process.cwd(), 'data');
-      await fs.mkdir(dataDir, { recursive: true });
-      await fs.writeFile(path.join(dataDir, 'remote.json'), JSON.stringify({ publicUrl: url.replace(/\/$/, ''), updatedAt: new Date().toISOString() }, null, 2));
-      res.json({ ok: true, publicUrl: url.replace(/\/$/, '') });
-    } catch (err) {
-      res.status(500).json({ error: String(err.message || err) });
-    }
-  });
-  r.post('/api/access/generate', async (req, res) => {
-    try {
-      const { isLoopbackRequest } = await import('../remote/info.js');
-      const authorized = isLoopbackRequest(req) || (req.headers.cookie || '').includes('builder_access=');
-      if (!authorized && cfg.accessPassword) return res.status(403).json({ error: 'Forbidden' });
-      const crypto = await import('node:crypto');
-      const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789';
-      let password = '';
-      const bytes = crypto.randomBytes(12);
-      for (let i = 0; i < 12; i++) password += alphabet[bytes[i] % alphabet.length];
-      const fs = await import('node:fs/promises');
-      const path = await import('node:path');
-      const dataDir = cfg.dataDir || cfg.paths?.data || path.join(process.cwd(), 'data');
-      await fs.mkdir(dataDir, { recursive: true });
-      await fs.writeFile(path.join(dataDir, 'access.json'), JSON.stringify({ password, updatedAt: new Date().toISOString() }, null, 2), { mode: 0o600 });
-      cfg.accessPassword = password;
-      try {
-        const { verifyAccessPassword, accessCookieHeader } = await import('../http-access-auth.js');
-        const v = verifyAccessPassword(password, cfg);
-        if (v?.token) res.setHeader('Set-Cookie', accessCookieHeader(v.token, { req }));
-      } catch { /* optional */ }
-      res.json({ ok: true, password, once: true });
-    } catch (err) {
-      res.status(500).json({ error: String(err.message || err) });
-    }
-  });
-  r.get('/api/ai/doctor', (_req, res) => {
-    let hub = {};
-    try { hub = ai?.hub?.publicState?.() || ai?.status?.() || {}; } catch { /* */ }
-    res.json({
-      ok: true,
-      status: 'core-1.7',
-      message: 'AI Doctor (compat). Configure and Test your AI key in Settings. Core is v1.7.1 stable.',
-      steps: [{ id: 'compat', ok: true, detail: 'stable-core' }],
-      hub,
-    });
   });
   r.get('/api/activity/unified', (req, res) => {
     try {
@@ -232,21 +160,6 @@ export function registerRoutes(r, app) {
     res.json({ passwordRequired: accessPasswordConfigured(cfg) });
   });
 
-  r.post('/api/access/login', (req, res) => {
-    const password = String(req.body?.password || '');
-    const result = verifyAccessPassword(password, cfg);
-    if (!result.ok) return res.status(401).json({ ok: false, error: 'Incorrect password.' });
-    // Cookie for normal browsers; token body for Pi Browser / gateway when cookies are blocked
-    if (result.token) {
-      res.setHeader('Set-Cookie', accessCookieHeader(result.token, { req }));
-      res.setHeader('Cache-Control', 'no-store');
-    }
-    res.json({ ok: true, token: result.token || null });
-  });
-
-  r.post('/api/access/logout', (req, res) => {
-    res.setHeader('Set-Cookie', accessCookieHeader('', { req, clear: true }));
-    res.json({ ok: true });
   });
 
   r.get('/api/activity/global', async (req, res) => {

@@ -32,13 +32,13 @@ export class DeepSeekProvider {
     return Array.isArray(data.data) ? data.data.map((m) => ({ id: m.id, contextWindow: m.context_length || null })) : [];
   }
 
-  async complete({ prompt, system, json = false, images = [] }) {
+  async complete({ prompt, system, json = false, images = [], signal = null }) {
     if (!this.apiKey) throw new Error('DeepSeek API key is not configured');
-    const models = [this.model, 'deepseek-v4-flash', 'deepseek-v4-pro'].filter((value, index, list) => value && list.indexOf(value) === index);
+    const models = [this.model, 'deepseek-chat'].filter((value, index, list) => value && list.indexOf(value) === index).slice(0, 2);
     let lastError = null;
     for (const model of models) {
       try {
-        return await this.request(model, { prompt, system, json, images });
+        return await this.request(model, { prompt, system, json, images, signal });
       } catch (err) {
         lastError = err;
         // A stale model setting should not make the whole provider unusable.
@@ -48,7 +48,7 @@ export class DeepSeekProvider {
     throw lastError || new Error('DeepSeek returned no usable model');
   }
 
-  async request(model, { prompt, system, json = false, images = [] }) {
+  async request(model, { prompt, system, json = false, images = [], signal = null } = {}) {
     const started = Date.now();
     const res = await fetch('https://api.deepseek.com/chat/completions', {
       method: 'POST',
@@ -65,7 +65,7 @@ export class DeepSeekProvider {
           { role: 'user', content: prompt },
         ],
       }),
-      signal: AbortSignal.timeout(120000),
+      signal: (signal ? AbortSignal.any([AbortSignal.timeout(60000), signal]) : AbortSignal.timeout(60000)),
     });
     const raw = await res.text();
     if (!res.ok) throw new Error(`DeepSeek HTTP ${res.status}: ${raw.slice(0, 500)}`);

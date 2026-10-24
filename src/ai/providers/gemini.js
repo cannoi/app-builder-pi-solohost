@@ -1,15 +1,8 @@
 import { maskKey } from '../../utils/mask.js';
 
 export const GEMINI_MODEL_CANDIDATES = [
-  'gemini-3.8-flash',
-  'gemini-3.7-flash',
-  'gemini-3.6-flash',
-  'gemini-3.5-flash',
-  'gemini-3.5-flash-lite',
   'gemini-2.5-flash',
-  'gemini-3.1-flash-lite',
-  'gemini-2.5-flash-lite',
-  'gemini-3.1-pro-preview',
+  'gemini-2.0-flash',
 ];
 
 export function geminiVersion(name) {
@@ -22,8 +15,9 @@ export function geminiVersion(name) {
 
 export function geminiShouldRotate(err) {
   const msg = String(err?.message || err || '');
-  return /HTTP (400|403|404|429|503)/.test(msg)
-    || /UNAVAILABLE|high demand|overloaded|resource exhausted|not found|not supported|permission|try again later/i.test(msg);
+  // Only overload/rate-limit/unavailable — never rotate on 400/auth (wrong request or key)
+  return /HTTP (429|503)/.test(msg)
+    || /UNAVAILABLE|high demand|overloaded|resource exhausted|try again later/i.test(msg);
 }
 
 export function compareGeminiModels(a, b) {
@@ -62,6 +56,7 @@ export class GeminiProvider {
     if (!this.apiKey) throw new Error('Gemini API key is not configured');
     const res = await fetch('https://generativelanguage.googleapis.com/v1beta/models', {
       headers: { 'x-goog-api-key': this.apiKey },
+      signal: AbortSignal.timeout(15000),
     });
     const raw = await res.text();
     if (!res.ok) throw new Error(`Gemini model discovery HTTP ${res.status}`);
@@ -119,15 +114,15 @@ export class GeminiProvider {
     }
   }
 
-  async complete({ prompt, system, json = false, model = null, images = [] }) {
+  async complete({ prompt, system, json = false, model = null, images = [], signal = null }) {
     if (!this.apiKey) throw new Error('Gemini API key is not configured');
     await this.ensureModel();
     const requested = model || this.model;
-    const candidates = [requested, ...GEMINI_MODEL_CANDIDATES].filter(Boolean).filter((v, i, a) => a.indexOf(v) === i);
+    const candidates = [requested, ...GEMINI_MODEL_CANDIDATES].filter(Boolean).filter((v, i, a) => a.indexOf(v) === i).slice(0, 2);
     let lastError = null;
     for (const model of candidates) {
       try {
-        const result = await this.request(model, { prompt, system, json, images });
+        const result = await this.request(model, { prompt, system, json, images, signal });
         this.setStickyModel(model);
         return result;
       } catch (err) {
@@ -144,7 +139,7 @@ export class GeminiProvider {
     throw lastError || new Error('No usable Gemini model found');
   }
 
-  async request(model, { prompt, system, json, images = [] }) {
+  async request(model, { prompt, system, json, images = [], signal: outerSignal = null } = {}) {
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`;
     const body = {
       contents: [{ role: 'user', parts: [{ text: prompt }, ...images.map((i) => ({ inlineData: { mimeType: i.mimeType || i.type || 'image/png', data: String(i.dataUrl || '').replace(/^data:[^;]+;base64,/, '') } }))] }],
@@ -154,11 +149,15 @@ export class GeminiProvider {
         : { temperature: 0.4 },
     };
     const started = Date.now();
+    const timeout = AbortSignal.timeout(45000);
+    const signal = outerSignal
+      ? AbortSignal.any([timeout, outerSignal])
+      : timeout;
     const res = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-goog-api-key': this.apiKey },
       body: JSON.stringify(body),
-      signal: AbortSignal.timeout(120000),
+      signal,
     });
     const raw = await res.text();
     if (!res.ok) throw new Error(`Gemini HTTP ${res.status}: ${raw.slice(0, 500)}`);

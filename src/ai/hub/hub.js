@@ -235,16 +235,16 @@ export class AIProviderHub {
     return out.sort((a, b) => (rank.get(b.ref) || 0) - (rank.get(a.ref) || 0) || (added.get(b.conn.id) || 0) - (added.get(a.conn.id) || 0) || b.score - a.score);
   }
 
-  async execute({ task, prompt, system, json = false, images = [], modelRef = '' }) {
+  async execute({ task, prompt, system, json = false, images = [], modelRef = '', signal = null }) {
     const picks = this.candidates(task, modelRef);
     if (!picks.length) throw Object.assign(new Error('No verified AI model is available for this task. Connect a provider or refresh its models.'), { code: 'AI_UNAVAILABLE' });
     const errors = []; let tries = 0;
     for (const pick of picks) {
-      if (tries >= 4) break;
+      if (tries >= 2) break;
       tries += 1;
       try {
         const adapter = this.adapter({ ...pick.conn, models: [{ id: pick.model }] });
-        const result = await adapter.complete({ prompt, system, json, model: pick.model, images });
+        const result = await adapter.complete({ prompt, system, json, model: pick.model, images, signal });
         this.markModelVerified(pick.conn.id, pick.model, result);
         return result;
       } catch (err) {

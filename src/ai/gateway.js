@@ -1,3 +1,4 @@
+import { call as clientCall, callJson as clientCallJson } from './client.js';
 import { GeminiProvider } from './providers/gemini.js';
 import { DeepSeekProvider } from './providers/deepseek.js';
 import { extractJson, normalizeAIResponse, normalizeArray } from '../utils/validate.js';
@@ -27,6 +28,10 @@ const TASK_PREFERENCE = {
 };
 
 export class AIGateway {
+  /** Preferred single entry (1.8.1+) */
+  call(opts) { return clientCall(this, opts); }
+  callJson(opts) { return clientCallJson(this, opts); }
+
   constructor({ cfg, db, log }) {
     this.cfg = cfg; this.db = db; this.log = log; this.refresh();
   }
@@ -71,84 +76,18 @@ export class AIGateway {
 
   providerByName(name) { return name === 'deepseek' ? this.deepseek : this.gemini; }
 
-  async complete({ task, prompt, system, json = false, projectId = null, images = [], modelRef = '' }) {
+  async complete({ task, prompt, system, json = false, projectId = null, images = [], modelRef = '', signal = null }) {
     const rule = actionRule(task);
     const safeSystem = rule ? `${system || ''}\n\n${rule}`.trim() : (system || '').trim();
-    const safePrompt = rule ? `${prompt || ''}\n\n${rule}`.trim() : (prompt || '').trim();
-    try {
-      const routed = await this.hub.execute({ task, prompt: safePrompt, system: safeSystem, json, images, modelRef });
-      this.record({ projectId, task, provider: routed.provider, model: routed.model, success: 1, durationMs: routed.durationMs, tokens: routed.tokens, error: null });
-      return routed;
-    } catch (err) {
-      // A provider/model selection is normally respected. Only fall back when
-      // the hub supplies concrete provider-level evidence (for example 402
-      // billing, rate-limit, or network failure). This keeps an explicit
-      // locked selection deterministic while making common provider outages
-      // invisible to non-technical Builder users when a second provider works.
-      if (this.hub.isRoutingLocked?.() && !Array.isArray(err?.providerErrors)) throw err;
-      this.log.warn('AI hub execute failed; trying another configured provider', { error: err.message });
-    }
-    const errors = [];
-    const order = this.pickOrder(images);
-    for (const name of order) {
-      const provider = this.providerByName(name);
-      if (!provider.configured()) continue;
-      try {
-        const result = await provider.complete({ prompt: safePrompt, system: safeSystem, json, images });
-        this.record({ projectId, task, provider: result.provider, model: result.model, success: 1, durationMs: result.durationMs, tokens: result.tokens, error: null });
-        return result;
-      } catch (err) {
-        errors.push(`${name}: ${String(err.message || err).slice(0, 240)}`);
-      }
-    }
-    throw Object.assign(new Error(errors.join(' | ') || 'No AI provider is configured. Add a provider token in Settings.'), { code: 'AI_UNAVAILABLE', providerErrors: errors });
+    const safePrompt = (prompt || '').trim();
+    // Single plane: Provider Hub only (no legacy double-call after failure)
+    const routed = await this.hub.execute({ task, prompt: safePrompt, system: safeSystem, json, images, modelRef, signal });
+    this.record({ projectId, task, provider: routed.provider, model: routed.model, success: 1, durationMs: routed.durationMs, tokens: routed.tokens, error: null });
+    return routed;
   }
 
   async completeJson(opts) {
-    const pair = this.hub.selectedModels?.() || [];
-    const pairTask = ['CODING', 'DEBUGGING', 'CODE_REVIEW'].includes(opts.task);
-    if (pair.length >= 2 && pairTask) return this.completeSelectedPair(opts, pair);
-    const council = (this.cfg.ai.mode === 'council') && pairTask;
-    if (council) return this.completeCouncil(opts);
-
-    const first = await this.complete({ ...opts, json: true });
-    let norm = normalizeAIResponse(first.text);
-    let parsed = norm.ok ? norm.value : null;
-    if (parsed && (!opts.validateJson || opts.validateJson(parsed))) return { ...first, json: parsed };
-
-    // Recovery 1: strict structured retry on the same provider path
-    const strictPrompt = `${opts.prompt}\n\nJSON OUTPUT CONTRACT:\n- Return exactly one valid JSON object.\n- No markdown fences.\n- No commentary before or after JSON.\n- If uncertain, return {"root_cause":"FORMAT_ERROR","files":[],"explanation":"Unable to produce valid JSON."}.`;
-    try {
-      const retry = await this.complete({ ...opts, json: true, prompt: strictPrompt });
-      norm = normalizeAIResponse(retry.text);
-      parsed = norm.ok ? norm.value : null;
-      if (parsed && (!opts.validateJson || opts.validateJson(parsed))) {
-        return { ...retry, json: parsed, fallbackFrom: first.provider };
-      }
-    } catch (err) {
-      this.log.warn('AI JSON retry failed', { error: err.message });
-    }
-
-    // Recovery 2: try alternate provider once when available (hub already may have, but ensure)
-    try {
-      const alt = await this.complete({ ...opts, json: true, prompt: strictPrompt, modelRef: '' });
-      if (alt?.provider && alt.provider !== first.provider) {
-        norm = normalizeAIResponse(alt.text);
-        parsed = norm.ok ? norm.value : null;
-        if (parsed && (!opts.validateJson || opts.validateJson(parsed))) {
-          return { ...alt, json: parsed, fallbackFrom: first.provider };
-        }
-      }
-    } catch (err) {
-      this.log.warn('AI JSON alternate provider failed', { error: err.message });
-    }
-
-    // AI_RESPONSE_MALFORMED is a provider failure, not an application failure.
-    // Callers must not rollback verified work solely because of this code.
-    throw Object.assign(
-      new Error(`AI response format was invalid. ${first.provider || 'AI Provider Hub'} did not return valid JSON. No files were changed.`),
-      { code: 'AI_RESPONSE_MALFORMED', provider: first.provider || null, recoverable: true }
-    );
+    return clientCallJson(this, { ...opts, output: 'json' });
   }
 
   async completeSelectedPair(opts, pair) {

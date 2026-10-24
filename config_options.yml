@@ -1,19 +1,16 @@
 title: "App Builder — Pi SoloHost"
 eyebrow: SoloHost App
 description: "Build, test, repair, and publish simple SoloHost apps with AI."
-footer_hint: "Only enter your Builder access password. All other settings are managed inside Builder Settings."
+footer_hint: "No SoloHost form fields required. Configure AI and GitHub inside the app Settings."
 output_file: .env
-after_save: "Password saved. Open the app and configure AI or GitHub in Settings when needed."
+after_save: "Settings apply on the next Builder task."
 
 fixed_values:
   - name: PREVIEW_MODE
     value: "auto"
   - name: PREVIEW_ONLINE
     value: "true"
+  - name: HOST_PORT
+    value: "31881"
 
-fields:
-  - name: BUILDER_ACCESS_PASSWORD
-    label: Builder access password
-    type: password
-    preserve_if_blank: true
-    help: "Required to open Builder (remote QR). Use at least 16 characters and keep it private."
+fields: []

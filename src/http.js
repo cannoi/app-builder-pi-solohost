@@ -2,7 +2,6 @@ import http from 'node:http';
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
-import { createAccessAuthMiddleware } from './http-access-auth.js';
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -64,23 +63,11 @@ export function createApp() {
 
 export function listen(app, { port, bind, publicDir, log, preview = null, cfg = null }) {
   const resolvedPublic = resolvePublicDir(publicDir);
-  const accessGate = cfg ? createAccessAuthMiddleware(cfg) : null;
-  const server = http.createServer(async (req, res) => {
+    const server = http.createServer(async (req, res) => {
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('X-Frame-Options', 'SAMEORIGIN');
     res.setHeader('Referrer-Policy', 'no-referrer');
-    // CORS for AI panel / Feedback (same-origin + SoloHost reverse-proxy / iframe cases)
-    const origin = req.headers.origin;
-    if (origin) {
-      res.setHeader('Access-Control-Allow-Origin', origin);
-      res.setHeader('Access-Control-Allow-Credentials', 'true');
-      res.setHeader('Vary', 'Origin');
-    } else {
-      res.setHeader('Access-Control-Allow-Origin', '*');
-    }
-    res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-AI-Key, X-Builder-Access, X-Requested-With, Accept');
-    res.setHeader('Access-Control-Max-Age', '86400');
+    // 1.8.1: same-origin only — no reflective CORS / credentials (SoloHost is loopback)
     if (req.method === 'OPTIONS') {
       res.writeHead(204);
       res.end();
@@ -89,13 +76,30 @@ export function listen(app, { port, bind, publicDir, log, preview = null, cfg = 
     try {
       const url = new URL(req.url, 'http://localhost');
       req.path = url.pathname;
-      if (accessGate) {
-        let gated = false;
-        await new Promise((resolve) => {
-          accessGate(req, res, () => { gated = true; resolve(); });
-          setImmediate(() => { if (!gated && res.writableEnded) resolve(); });
-        });
-        if (res.writableEnded || res.headersSent) return;
+
+      const hostHeader = String(req.headers.host || '').split(',')[0].trim().toLowerCase();
+      const hostName = hostHeader.replace(/^\[|\]$/g, '').split(':')[0];
+      const allowedHosts = new Set(['localhost', '127.0.0.1', '::1', '[::1]']);
+      for (const h of String(process.env.BUILDER_ALLOWED_HOSTS || '').split(',')) {
+        const x = h.trim().toLowerCase();
+        if (x) allowedHosts.add(x);
+      }
+      if (hostName && !allowedHosts.has(hostName)) {
+        log?.warn?.('Rejected Host header', { host: hostHeader });
+        res.writeHead(403, { 'Content-Type': 'application/json; charset=utf-8' });
+        res.end(JSON.stringify({ error: 'FORBIDDEN_HOST', message: 'Host not allowed. Set BUILDER_ALLOWED_HOSTS if needed.' }));
+        return;
+      }
+
+      const origin = String(req.headers.origin || '');
+      if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method) && origin) {
+        let originHost = '';
+        try { originHost = new URL(origin).hostname.toLowerCase(); } catch { originHost = ''; }
+        if (originHost && !allowedHosts.has(originHost) && originHost !== hostName) {
+          res.writeHead(403, { 'Content-Type': 'application/json; charset=utf-8' });
+          res.end(JSON.stringify({ error: 'FORBIDDEN_ORIGIN', message: 'Cross-origin write blocked.' }));
+          return;
+        }
       }
       if (preview && url.pathname.startsWith('/preview/')) {
         await preview(req, res, url);

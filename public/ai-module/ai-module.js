@@ -106,7 +106,7 @@ window.UniversalAI = (() => {
         } catch (firstErr) {
           console.warn('[UniversalAI] panel/chat failed, trying /api/ai/chat', firstErr.message);
           try {
-            out = await json('/api/ai/chat', { method: 'POST', body, timeoutMs: 60000 });
+            out = await json('/api/panel/chat', { method: 'POST', body, timeoutMs: 60000 });
           } catch (secondErr) {
             throw firstErr.message && !/Not found|404/i.test(firstErr.message) ? firstErr : secondErr;
           }

@@ -2,6 +2,7 @@ FROM node:24-alpine
 WORKDIR /app
 
 ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
+ENV NODE_OPTIONS=--dns-result-order=ipv4first
 ENV PLAYWRIGHT_CHROMIUM_EXECUTABLE=/usr/bin/chromium-browser
 
 RUN apk add --no-cache tini unzip git chromium \
