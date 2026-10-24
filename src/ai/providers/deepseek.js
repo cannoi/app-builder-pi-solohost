@@ -34,18 +34,8 @@ export class DeepSeekProvider {
 
   async complete({ prompt, system, json = false, images = [], signal = null }) {
     if (!this.apiKey) throw new Error('DeepSeek API key is not configured');
-    const models = [this.model, 'deepseek-chat'].filter((value, index, list) => value && list.indexOf(value) === index).slice(0, 2);
-    let lastError = null;
-    for (const model of models) {
-      try {
-        return await this.request(model, { prompt, system, json, images, signal });
-      } catch (err) {
-        lastError = err;
-        // A stale model setting should not make the whole provider unusable.
-        if (!/HTTP 400|model|not found|invalid/i.test(String(err.message || err))) throw err;
-      }
-    }
-    throw lastError || new Error('DeepSeek returned no usable model');
+    const model = this.model || 'deepseek-chat';
+    return await this.request(model, { prompt, system, json, images, signal });
   }
 
   async request(model, { prompt, system, json = false, images = [], signal = null } = {}) {

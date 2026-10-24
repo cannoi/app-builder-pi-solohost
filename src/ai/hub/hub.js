@@ -236,11 +236,28 @@ export class AIProviderHub {
   }
 
   async execute({ task, prompt, system, json = false, images = [], modelRef = '', signal = null }) {
-    const picks = this.candidates(task, modelRef);
+    const st = this.state();
+    const preferred = normalizePreferredModels(st.preferredModels || (st.preferredModel ? [st.preferredModel] : []));
+    let picks = this.candidates(task, modelRef || preferred[0] || '');
+    // Hard lock: if user selected preferred model(s), only those (first only)
+    if (preferred.length) {
+      const want = preferred[0];
+      const locked = picks.filter((p) => p.ref === want || p.model === want.split(':').slice(1).join(':') || `${p.conn.provider}:${p.model}` === want);
+      if (locked.length) picks = locked.slice(0, 1);
+      else {
+        // Build single pick from preferred even if not in discovered list
+        const [prov, ...rest] = want.split(':');
+        const mid = rest.join(':') || want;
+        const conn = (st.connections || []).find((c) => c.provider === prov || c.id === prov) || (st.connections || [])[0];
+        if (conn) picks = [{ conn, model: mid, ref: want, score: 100 }];
+      }
+    } else if (picks.length > 1) {
+      picks = picks.slice(0, 1);
+    }
     if (!picks.length) throw Object.assign(new Error('No verified AI model is available for this task. Connect a provider or refresh its models.'), { code: 'AI_UNAVAILABLE' });
     const errors = []; let tries = 0;
     for (const pick of picks) {
-      if (tries >= 2) break;
+      if (tries >= 1) break; // user model only — no ladder rotate
       tries += 1;
       try {
         const adapter = this.adapter({ ...pick.conn, models: [{ id: pick.model }] });

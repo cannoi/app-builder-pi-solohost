@@ -77,31 +77,10 @@ export function listen(app, { port, bind, publicDir, log, preview = null, cfg = 
       const url = new URL(req.url, 'http://localhost');
       req.path = url.pathname;
 
-      const hostHeader = String(req.headers.host || '').split(',')[0].trim().toLowerCase();
-      const hostName = hostHeader.replace(/^\[|\]$/g, '').split(':')[0];
-      const allowedHosts = new Set(['localhost', '127.0.0.1', '::1', '[::1]']);
-      for (const h of String(process.env.BUILDER_ALLOWED_HOSTS || '').split(',')) {
-        const x = h.trim().toLowerCase();
-        if (x) allowedHosts.add(x);
-      }
-      if (hostName && !allowedHosts.has(hostName)) {
-        log?.warn?.('Rejected Host header', { host: hostHeader });
-        res.writeHead(403, { 'Content-Type': 'application/json; charset=utf-8' });
-        res.end(JSON.stringify({ error: 'FORBIDDEN_HOST', message: 'Host not allowed. Set BUILDER_ALLOWED_HOSTS if needed.' }));
-        return;
-      }
+      // 1.8.4: never reject Host (public IP, SoloHost gateway, Pi Browser).
+      // Origin checks removed — app is intended for SoloHost remote access without a password gate.
 
-      const origin = String(req.headers.origin || '');
-      if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method) && origin) {
-        let originHost = '';
-        try { originHost = new URL(origin).hostname.toLowerCase(); } catch { originHost = ''; }
-        if (originHost && !allowedHosts.has(originHost) && originHost !== hostName) {
-          res.writeHead(403, { 'Content-Type': 'application/json; charset=utf-8' });
-          res.end(JSON.stringify({ error: 'FORBIDDEN_ORIGIN', message: 'Cross-origin write blocked.' }));
-          return;
-        }
-      }
-      if (preview && url.pathname.startsWith('/preview/')) {
+if (preview && url.pathname.startsWith('/preview/')) {
         await preview(req, res, url);
         return;
       }

@@ -90,53 +90,30 @@ export class GeminiProvider {
   }
 
   async ensureModel() {
+    // Prefer user sticky / configured model — never auto-discover over a choice.
     const sticky = this.getStickyModel();
-    if (sticky && geminiVersion(sticky) >= 2.5) {
+    if (sticky) {
       this.model = sticky;
       return sticky;
     }
-    // A configured model is a usable preference. Do not make every generation
-    // depend on a separate model-list request: that endpoint can be blocked or
-    // rate-limited even when generateContent itself works. Request-time model
-    // rotation below remains the fallback for stale model names.
-    if (this.model && geminiVersion(this.model) >= 2.5) {
+    if (this.model) {
       this.setStickyModel(this.model);
       return this.model;
     }
-    try {
-      const found = await this.discover({ force: true });
-      return found.model;
-    } catch (err) {
-      const fallback = 'gemini-3.8-flash';
-      this.model = fallback;
-      this.log?.warn?.('Gemini model discovery unavailable; using stable fallback candidate', { error: err.message, model: fallback });
-      return fallback;
-    }
+    const fallback = GEMINI_MODEL_CANDIDATES[0] || 'gemini-2.5-flash';
+    this.model = fallback;
+    return fallback;
   }
 
   async complete({ prompt, system, json = false, model = null, images = [], signal = null }) {
     if (!this.apiKey) throw new Error('Gemini API key is not configured');
-    await this.ensureModel();
-    const requested = model || this.model;
-    const candidates = [requested, ...GEMINI_MODEL_CANDIDATES].filter(Boolean).filter((v, i, a) => a.indexOf(v) === i).slice(0, 2);
-    let lastError = null;
-    for (const model of candidates) {
-      try {
-        const result = await this.request(model, { prompt, system, json, images, signal });
-        this.setStickyModel(model);
-        return result;
-      } catch (err) {
-        lastError = err;
-        if (geminiShouldRotate(err)) {
-          if (this.getStickyModel() === model) this.clearStickyModel();
-          this.log?.warn?.('Gemini model busy or unusable; trying next', { model, error: err.message });
-          await new Promise((r) => setTimeout(r, /503|429|UNAVAILABLE|high demand/i.test(err.message) ? 450 : 80));
-          continue;
-        }
-        throw err;
-      }
-    }
-    throw lastError || new Error('No usable Gemini model found');
+    // Explicit model argument wins; then sticky; never rotate.
+    let useModel = model || this.getStickyModel() || this.model;
+    if (!useModel) useModel = await this.ensureModel();
+    if (!useModel) throw new Error('No Gemini model selected');
+    const result = await this.request(useModel, { prompt, system, json, images, signal });
+    this.setStickyModel(useModel);
+    return result;
   }
 
   async request(model, { prompt, system, json, images = [], signal: outerSignal = null } = {}) {
