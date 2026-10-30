@@ -1,0 +1,22 @@
+services:
+  app-builder:
+    image: ghcr.io/cannoi/app-builder-pi-solohost:1.8.9
+    pull_policy: always
+    restart: unless-stopped
+    labels:
+      pi.ui.primary: "true"
+    ports:
+      - "127.0.0.1:31881:8080"
+    environment:
+      PREVIEW_MODE: "auto"
+      PREVIEW_ONLINE: "true"
+      HOST_PORT: "31881"
+      NODE_OPTIONS: "--dns-result-order=ipv4first"
+    volumes:
+      - builder_data:/app/data
+    dns:
+      - "8.8.8.8"
+      - "1.1.1.1"
+
+volumes:
+  builder_data:

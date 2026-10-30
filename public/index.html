@@ -1,0 +1,409 @@
+<!doctype html>
+
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>App Builder — Pi SoloHost</title>
+  <meta name="theme-color" content="#0e1116">
+  <link rel="stylesheet" href="/styles.css?v=1.8.24">
+<style>.paf-made-by{position:fixed;right:8px;bottom:8px;width:min(72px,12vw);max-width:12vw;height:auto;object-fit:contain;opacity:.5;background:transparent;padding:0;border:0;box-shadow:none;filter:none;pointer-events:none;z-index:30}</style>
+  <link rel="stylesheet" href="/ai-panel.css?v=1.8.24">
+</head><body data-ui-simple="1">
+  <div id="app"><header class="hero">
+  <img src="/banner.png" alt="App Builder — Pi SoloHost">
+</header>
+
+<header class="top">
+  <div class="brand">
+    <img class="logoMark" src="/app-logo.jpg" alt="App Builder logo">
+    <div>
+      <h1>App Builder</h1>
+      <p>Pi SoloHost · idea in, app out</p>
+    </div>
+  </div>
+
+  <div class="topRight">
+    <span id="workPill" class="pill ready">Ready</span>
+
+    <button
+      id="liveBtn"
+      class="pill live"
+      hidden
+      type="button"
+      title="Stop the test app and delete its container">
+      Live · Stop
+    </button>
+
+    <select id="aiSelect" aria-label="AI provider">
+      <option value="">AI provider</option>
+    </select>
+
+    <select id="projectSelect" aria-label="Project">
+      <option value="">New app</option>
+    </select>
+
+    <button id="settingsBtn" class="iconBtn" title="Settings">⚙</button>
+    <button id="langToggle" class="iconBtn langToggle" type="button" title="Language / Ngôn ngữ" aria-label="Language">EN</button>
+  </div>
+</header>
+
+<main class="chatShell">
+
+  <section id="chat" class="chat" aria-live="polite"></section>
+
+  <button
+    id="jumpDown"
+    class="jump"
+    hidden
+    title="Jump to new messages">
+    ↓
+  </button>
+
+  <div id="busyBar" class="busy" hidden>
+    <span class="spinner"></span>
+    <span id="busyText">Working…</span>
+  </div>
+
+  <section class="composer">
+
+    
+    <div class="contextChipRow" id="contextChipRow">
+      <button type="button" class="contextChip" id="contextChip" hidden></button>
+    </div>
+
+<input
+      id="importZipInput"
+      type="file"
+      accept=".zip,application/zip"
+      hidden>
+
+    
+    <div class="quickActions" id="quickActions">
+      <button type="button" id="btnRun" class="qaBtn primary" data-action="run" data-i18n="qa.run">▶ Run</button>
+      <button type="button" id="btnPublish" class="qaBtn" data-action="publish" data-i18n="qa.publish">🚀 Publish</button>
+      <button type="button" id="btnDonate" class="qaBtn" data-action="support" data-i18n="qa.donate">💛 Donate</button>
+    </div>
+
+    <div class="inputRow">
+
+      <button
+        id="attachBtn"
+        class="attach"
+        title="Attach files">
+        📎
+      </button>
+
+      <input
+        id="fileInput"
+        type="file"
+        multiple
+        hidden
+        accept=".zip,.pdf,.txt,.md,.json,.yaml,.yml,.js,.ts,.jsx,.tsx,.html,.css,.py,.go,.rs,.java,.php,.sql,.csv,.png,.jpg,.jpeg,.gif,.webp">
+
+      <textarea
+        id="message"
+        rows="2"
+        placeholder="Describe your app idea, paste a GitHub link, or say what to change…" data-i18n-placeholder="chat.placeholder"></textarea>
+
+      <button id="sendBtn" class="send" title="Send">➤</button>
+      <button id="moreBtn" class="moreBtn" type="button" title="More" aria-haspopup="true">⋯</button>
+<div id="moreMenu" class="moreMenu" hidden>
+        <button type="button" data-more="export" data-i18n="more.zip">⬇ Download ZIP</button>
+        <button type="button" data-more="import" data-i18n="more.import">⬆ Import ZIP</button>
+        <button type="button" data-more="compare-import" data-i18n="more.compareImport">📋 Compare import</button>
+        <button type="button" data-more="sandbox" data-i18n="more.sandbox">🧪 Sandbox</button>
+        <button type="button" data-more="script-run" data-i18n="more.scriptRun">📦 Run script on PC</button>
+        <button type="button" data-more="script-github" data-i18n="more.scriptGithub">⬆ GitHub push script</button>
+        <button type="button" data-more="rollback" data-i18n="more.rollback">↩ Undo</button>
+        <button type="button" data-more="support" data-i18n="more.support">💛 Support</button>
+      </div>
+
+    </div>
+
+    <div id="attachments" class="attachments"></div>
+
+    <p class="hint" data-i18n="chat.hint">1 Idea → 2 Run → 3 Publish. I keep the next step visible.</p>
+
+  </section>
+</main>
+
+  </div>  <!-- SUPPORT MODAL -->  <div id="supportModal" class="modal" hidden>
+    <div class="sheet">  <div class="sheetHead">
+    <h2>💛 Support this project</h2>
+    <button id="closeSupport" class="iconBtn" type="button">✕</button>
+  </div>
+
+  <p class="info">
+    Thank you for supporting App Builder — Pi SoloHost.
+    Your gift keeps the tool free for Pioneers.
+  </p>
+
+  <div class="supportTabs">
+    <button
+      type="button"
+      class="supportTab on"
+      data-support="pi">
+      Pi Wallet
+    </button>
+
+    <button
+      type="button"
+      class="supportTab"
+      data-support="mb">
+      MB Bank
+    </button>
+  </div>
+
+  <div id="supportPi" class="supportPane">
+    <img
+      src="/support-pi-qr.jpg"
+      alt="Pi Wallet QR"
+      class="supportQr">
+
+    <p class="muted">Pi Wallet address</p>
+
+    <p class="mono" id="piAddr">
+      GAQAZ5XLWREKQYMMN247A44PNPLAKRORZOPZNVG3CDPCSSFMEVFIYJJL
+    </p>
+
+    <button
+      type="button"
+      class="primary wide"
+      data-copy="GAQAZ5XLWREKQYMMN247A44PNPLAKRORZOPZNVG3CDPCSSFMEVFIYJJL">
+      Copy address
+    </button>
+  </div>
+
+  <div id="supportMb" class="supportPane" hidden>
+
+    <img
+      src="https://img.vietqr.io/image/MB-0905428801-compact2.png"
+      alt="MB Bank VietQR"
+      class="supportQr">
+
+    <p class="muted">MB Bank · 0905428801</p>
+
+    <p class="mono" id="mbAddr">0905428801</p>
+
+    <button
+      type="button"
+      class="primary wide"
+      data-copy="0905428801">
+      Copy account
+    </button>
+
+  </div>
+
+</div>
+
+  </div>
+  <!-- FEEDBACK MODAL -->
+  <div id="feedbackModal" class="modal" hidden style="display:none!important">
+    <div class="sheet">
+      <div class="sheetHead">
+        <h2>💬 Feedback</h2>
+        <button id="closeFeedback" class="iconBtn" type="button">✕</button>
+      </div>
+      <p class="info">Send a bug, idea, or improvement. Feedback is queued locally if the Hub is temporarily offline.</p>
+      <label class="feedbackField">Type
+        <select id="feedbackType"><option value="bug">Bug</option><option value="improvement" selected>Improvement</option><option value="question">Question</option></select>
+      </label>
+      <label class="feedbackField">Message
+        <textarea id="feedbackMessage" rows="5" placeholder="Tell us what happened…"></textarea>
+      </label>
+      <button id="sendFeedback" class="primary wide" type="button">Send feedback</button>
+      <div id="feedbackNotices" class="info compactInfo" hidden></div>
+    </div>
+  </div>
+  <!-- SETTINGS MODAL -->  <div id="settings" class="modal" hidden><div class="sheet">
+
+  <div class="sheetHead">
+    <h2>Settings</h2>
+    <button id="closeSettings" class="iconBtn">✕</button>
+  </div>
+
+  <div class="settingsGrid">
+
+    <label>
+      AI Provider
+      <select id="hubProvider">
+        <option value="deepseek">DeepSeek</option>
+        <option value="gemini">Gemini</option>
+        <option value="openai">OpenAI</option>
+        <option value="anthropic">Anthropic</option>
+        <option value="openrouter">OpenRouter</option>
+        <option value="groq">Groq</option>
+        <option value="mistral">Mistral</option>
+        <option value="xai">xAI</option>
+        <option value="custom">Custom</option>
+      </select>
+    </label>
+
+    <label>
+      API key
+      <input
+        id="hubKey"
+        type="password"
+        autocomplete="off"
+        placeholder="Paste token">
+    </label>
+
+    <label id="hubBaseWrap" hidden>
+      Base URL
+      <input
+        id="hubBase"
+        type="text"
+        placeholder="https://api.example.com/v1">
+    </label>
+
+    <div class="row" style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin:8px 0">
+      <label style="display:flex;align-items:center;gap:6px;margin:0">
+        <input type="radio" name="routingMode" id="routingAuto" value="AUTO" checked>
+        <span data-i18n="routing.auto">Auto (recommended)</span>
+      </label>
+      <label style="display:flex;align-items:center;gap:6px;margin:0">
+        <input type="radio" name="routingMode" id="routingSelected" value="SELECTED">
+        <span data-i18n="routing.choose">Choose model</span>
+      </label>
+    </div>
+
+    <label>
+      Model
+      <input id="hubModel" type="text" list="hubModelOptions" autocomplete="off"
+        placeholder="Type model id or Load models then pick">
+      <datalist id="hubModelOptions"></datalist>
+    </label>
+    <div id="hubModelBadges" class="hubModelBadges small" style="margin:4px 0 8px;display:flex;flex-wrap:wrap;gap:6px"></div>
+
+    <div class="row hubModelActions" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+      <button id="aiDoctorBtn" class="ws-btn" type="button" title="AI health check">🩺 AI check</button>
+      <button id="hubLoadModels" class="ws-btn" type="button" title="Fetch models from Provider + API key">↻ Load models</button>
+    </div>
+
+    <button id="hubAdd" class="wide" type="button">＋ Add</button>
+
+    <label>
+      GitHub owner
+      <input
+        id="setGhOwner"
+        type="text"
+        placeholder="username or org">
+    </label>
+
+    <label>
+      GitHub token
+      <input
+        id="setGhToken"
+        type="password"
+        autocomplete="off"
+        placeholder="Classic token">
+    </label>
+
+    <div class="settingNote">
+      <span>Auto prefers Gemini · user-selected model always first</span>
+      <span>🛡 No docker.sock</span>
+    </div>
+
+  </div>
+
+  <div id="hubList" class="info compactInfo">
+    No AI provider connected yet.
+  </div>
+
+  <div class="info compactInfo">
+    Add a provider token, then Save GitHub if you publish.
+  </div>
+
+  <button id="saveSettings" class="primary wide">Save</button>
+
+  <p id="settingsState" class="muted"></p>
+
+</div>
+
+  </div>  <!-- Single AI FAB — robot icon + unread badge -->
+    <button type="button" class="ai-fab" id="aiFab" title="AI · Feedback · Settings" aria-label="AI">
+      <img src="/ai-icon.png" alt="AI" class="ai-fab-img">
+      <span class="ai-fab-dot" id="aiStatusDot"></span>
+      <span class="ai-badge" id="aiBadge" hidden style="display:none"></span>
+    </button>
+  </div>
+
+  <!-- Unified AI Panel: Chat | Feedback | Settings | Logs -->
+  <div class="panel-overlay" id="aiOverlay" hidden style="z-index:400">
+    <div class="panel ai-panel" id="aiPanel">
+      <div class="panel-header">
+        <span class="panel-title">✦ AI</span>
+        <button type="button" class="panel-close" id="aiClose" aria-label="Close">×</button>
+      </div>
+      <div class="panel-tabs" id="panelTabs">
+        <button type="button" class="tab active" data-tab="chat">Chat</button>
+        <button type="button" class="tab" data-tab="feedback">Feedback <span class="tab-badge" id="fbTabBadge" hidden></span></button>
+        <button type="button" class="tab" data-tab="logs">Logs</button>
+      </div>
+
+      <!-- Chat tab -->
+      <div class="tab-pane active" id="tab-chat">
+        <div class="panel-body" id="aiChat"></div>
+        <div class="panel-footer">
+          <input type="text" id="aiInput" placeholder="Ask about Builder, Publish, preview……" autocomplete="off" enterkeyhint="send">
+          <button type="button" id="aiSend" aria-label="Send">➤</button>
+        </div>
+        <div class="ai-status-bar" id="aiStatusBar">AI: checking…</div>
+      </div>
+
+      <!-- Feedback tab -->
+      <div class="tab-pane" id="tab-feedback">
+        <div class="panel-body fb-body">
+          <div id="fbNotices" class="fb-notices"></div>
+          <div id="fbDonate" class="fb-donate" hidden></div>
+          <label class="fb-label">Type</label>
+          <select id="fbType">
+            <option value="improvement">Improvement</option>
+            <option value="bug">Bug</option>
+            <option value="question">Question</option>
+          </select>
+          <label class="fb-label">Rating</label>
+          <div class="fb-stars" id="fbStars">
+            <button type="button" data-r="1">★</button>
+            <button type="button" data-r="2">★</button>
+            <button type="button" data-r="3">★</button>
+            <button type="button" data-r="4">★</button>
+            <button type="button" data-r="5">★</button>
+          </div>
+          <label class="fb-label">Message</label>
+          <textarea id="fbMessage" rows="3" placeholder="Phản hồi của bạn…" maxlength="2000"></textarea>
+          <p class="fb-hint">Chỉ gửi nội dung bạn nhập. Không cần mật khẩu / API key.</p>
+          <button type="button" class="fb-submit" id="fbSubmit">Send Feedback</button>
+          <p class="fb-status" id="fbStatus"></p>
+        </div>
+      </div>
+
+      <!-- Logs tab -->
+      <div class="tab-pane" id="tab-logs">
+        <div class="panel-body logs-body">
+          <div class="logs-toolbar">
+            <button type="button" class="ws-btn" id="logsRefresh">Refresh</button>
+          </div>
+          <pre id="logsView" class="logs-view">Loading…</pre>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  
+
+<!-- shfh-client removed: universal feedback panel --><script src="/i18n.js?v=1.8.24"></script>
+  <script type="module" src="/app.js?v=1.8.24"></script><img
+class="paf-made-by"
+src="/made-by.png"
+alt="Made with App Builder — Pi SoloHost">
+
+<!-- AI panel: SDK (optional) → client module → feedback → panel controller -->
+<script>window.BUILDER_API_BASE = window.BUILDER_API_BASE || window.location.origin;</script>
+<script src="/ai-hub-sdk.js"></script>
+<script src="/ai-module/ai-module.js?v=1.4.77"></script>
+<script src="/feedback-module/feedback-module.js?v=1.4.77"></script>
+<script src="/ai-panel.js?v=1.8.24"></script>
+</body>
+                                             </html>

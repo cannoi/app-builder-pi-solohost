@@ -1,0 +1,16 @@
+title: "App Builder — Pi SoloHost"
+eyebrow: SoloHost App
+description: "Build, test, repair, and publish simple SoloHost apps with AI."
+footer_hint: "Nothing to enter here. Start the app, then open Settings for AI and GitHub."
+output_file: .env
+after_save: "App is ready. Configure AI keys inside Builder Settings."
+
+fixed_values:
+  - name: PREVIEW_MODE
+    value: "auto"
+  - name: PREVIEW_ONLINE
+    value: "true"
+  - name: HOST_PORT
+    value: "31881"
+
+fields: []

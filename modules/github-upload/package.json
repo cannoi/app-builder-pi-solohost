@@ -1,0 +1,13 @@
+{
+  "name": "@solohost/github-upload",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Simple GitHub source publish for SoloHost Builder apps (git-first, plain user errors)",
+  "main": "src/index.js",
+  "exports": {
+    ".": "./src/index.js",
+    "./user-errors": "./src/user-errors.js"
+  },
+  "engines": { "node": ">=20" },
+  "license": "MIT"
+}

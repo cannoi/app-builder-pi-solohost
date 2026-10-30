@@ -1,0 +1,344 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import { inferAction, classifyLogs, classifyFailureLayer, describeFailure, isHostDockerCommand, isNpmOnEmptyRisk, parseGithubRepoUrl } from '../src/scripts/ops.js';
+
+test('parseGithubRepoUrl accepts full and short public repo forms', () => {
+  assert.deepEqual(parseGithubRepoUrl('https://github.com/cannoi/social-connect'), { owner: 'cannoi', repo: 'social-connect', url: 'https://github.com/cannoi/social-connect' });
+  assert.deepEqual(parseGithubRepoUrl('cannoi/social-connect'), { owner: 'cannoi', repo: 'social-connect', url: 'https://github.com/cannoi/social-connect' });
+  assert.equal(parseGithubRepoUrl('not a repo'), null);
+});
+
+test('user language maps to controller scripts', () => {
+  assert.equal(inferAction('chạy app và cho tôi link'), 'run');
+  assert.equal(inferAction('Release blocked: the latest saved verification still has a failed runtime test'), 'run');
+  assert.equal(inferAction('app bị lỗi hãy sửa'), 'analyze');
+  assert.equal(inferAction('quét bảo mật'), 'analyze');
+});
+
+test('natural-language problems route to debugging and access errors get concrete causes', () => {
+  assert.equal(inferAction('GitHub upload failed because workflow permission is read only'), 'analyze');
+  assert.equal(inferAction('the app has a problem and does not work'), 'analyze');
+  assert.equal(inferAction('sửa code vì cannot find module express'), 'improve');
+  assert.equal(inferAction('add this feature: save high scores'), 'improve');
+  assert.equal(inferAction('create a new app for invoices'), 'build');
+  assert.equal(classifyLogs('docker compose up -d failed: ghcr.io/example/app:0.1.0 Error response from daemon: unauthorized').code, 'registry_unauthorized');
+  assert.equal(classifyLogs('GitHub workflow permission is read-only').code, 'github_workflow_permission');
+});
+
+test('crash logs are classified instead of ignored', () => {
+  const crash = classifyLogs("Error: Cannot find module 'express'");
+  assert.equal(crash.code, 'missing_express');
+  assert.match(crash.title, /before listen/);
+});
+
+test('raw docker and npm commands are treated as host scripts', () => {
+  assert.equal(isHostDockerCommand('docker build -t paf-app:ran-san-moi .'), true);
+  assert.equal(isNpmOnEmptyRisk('npm install'), true);
+});
+
+
+test('GitHub publishing uses the current remote head and never force-updates main', async () => {
+  const github = await import('../src/github/manager.js');
+  assert.equal(github.buildGitTreeUpdates([{ path: 'new.txt', sha: 'abc' }], [{ path: 'old.txt', sha: 'def', type: 'blob' }])[1].sha, null);
+  const source = fs.readFileSync(new URL('../src/github/manager.js', import.meta.url), 'utf8');
+  assert.match(source, /force:\s*false/);
+  assert.match(source, /verifyPublishedFiles/);
+});
+
+
+test('export intent routes to an export action', async () => {
+  const { inferAction } = await import('../src/scripts/ops.js');
+  assert.equal(inferAction('give me a ZIP download of this app'), 'export');
+  assert.equal(inferAction('cho tôi file cài đặt SoloHost'), 'export');
+});
+
+
+test('GitHub publish creates a parent-aware commit, deletes stale files, and verifies the remote tree', async () => {
+  const { GitHubManager, gitBlobSha } = await import('../src/github/manager.js');
+  const root = '/tmp/paf-github-publish-test';
+  fs.rmSync(root, { recursive: true, force: true });
+  fs.mkdirSync(root, { recursive: true });
+  fs.writeFileSync(`${root}/new.txt`, 'hello');
+  fs.writeFileSync(`${root}/Dockerfile`, 'FROM node:24-alpine\nCOPY . .\nCMD ["node","index.js"]\n');
+  fs.writeFileSync(`${root}/index.js`, 'console.log("ok")');
+  const localSha = gitBlobSha(Buffer.from('hello'));
+  const mgr = new GitHubManager({ cfg: { github: { token: 'test', owner: 'alice' } }, log: { warn() {} } });
+  let head = 'oldcommit';
+  let commitBody = null;
+  let treeBody = null;
+  let refBody = null;
+  mgr.ensureRepo = async () => ({ html_url: 'https://github.com/alice/demo', default_branch: 'main' });
+  const published = [];
+  mgr.api = async (method, pathname, body) => {
+    if (method === 'POST' && pathname.endsWith('/git/blobs')) { published.push(true); return { sha: localSha }; }
+    if (method === 'GET' && pathname.endsWith('/git/ref/heads/main')) return { object: { sha: head } };
+    if (method === 'GET' && pathname.endsWith('/git/commits/oldcommit')) return { tree: { sha: 'basetree' } };
+    if (method === 'GET' && pathname.includes('/git/trees/basetree')) return { tree: [{ path: 'old.txt', type: 'blob', sha: 'oldsha' }] };
+    if (method === 'POST' && pathname.endsWith('/git/trees')) { treeBody = body; return { sha: 'newtree' }; }
+    if (method === 'POST' && pathname.endsWith('/git/commits')) { commitBody = body; head = 'newcommit'; return { sha: 'newcommit' }; }
+    if (method === 'PATCH' && pathname.endsWith('/git/refs/heads/main')) { refBody = body; return {}; }
+    if (method === 'GET' && pathname.endsWith('/git/commits/newcommit')) return { tree: { sha: 'newtree' } };
+    if (method === 'GET' && pathname.includes('/git/trees/newtree')) {
+      return { tree: ['new.txt', 'Dockerfile', 'index.js'].map((path) => ({ path, type: 'blob', sha: localSha })) };
+    }
+    throw new Error(`unexpected ${method} ${pathname}`);
+  };
+  const result = await mgr.createAndPush({ slug: 'demo' }, root, { version: '1.0.0' });
+  assert.equal(result.verification.ok, true);
+  assert.deepEqual(commitBody.parents, ['oldcommit']);
+  assert.equal(refBody.force, false);
+  assert.equal(treeBody.tree.some((x) => x.path === 'old.txt' && x.sha === null), true);
+});
+
+test('GitHub first publish initializes an empty repository without a base tree', async () => {
+  const { GitHubManager, classifyGitHubError } = await import('../src/github/manager.js');
+  assert.equal(classifyGitHubError(409, 'Git Repository is empty.'), 'empty_repo');
+  assert.equal(classifyGitHubError(401, 'Bad credentials'), 'auth');
+  const root = '/tmp/paf-github-empty-test';
+  fs.rmSync(root, { recursive: true, force: true });
+  fs.mkdirSync(root, { recursive: true });
+  fs.writeFileSync(`${root}/Dockerfile`, 'FROM node:24-alpine\nCMD ["node","index.js"]\n');
+  fs.writeFileSync(`${root}/index.js`, 'console.log("ok")');
+  const mgr = new GitHubManager({ cfg: { github: { token: 'test', owner: 'alice' } }, log: { warn() {} } });
+  let treeBody = null;
+  let commitBody = null;
+  let createdRef = null;
+  let head = null;
+  mgr.ensureRepo = async () => ({ html_url: 'https://github.com/alice/demo', default_branch: 'main' });
+  mgr.api = async (method, pathname, body) => {
+    if (method === 'POST' && pathname.endsWith('/git/blobs')) return { sha: 'blobsha' };
+    if (method === 'GET' && pathname.endsWith('/git/ref/heads/main')) {
+      if (!head) {
+        const err = new Error('GitHub 409: Git Repository is empty.');
+        err.code = 'empty_repo';
+        err.status = 409;
+        throw err;
+      }
+      return { object: { sha: head } };
+    }
+    if (method === 'GET' && pathname.endsWith('/git/ref/heads/master')) {
+      const err = new Error('GitHub 404');
+      err.code = 'not_found';
+      throw err;
+    }
+    if (method === 'POST' && pathname.endsWith('/git/trees')) { treeBody = body; return { sha: 'newtree' }; }
+    if (method === 'POST' && pathname.endsWith('/git/commits')) { commitBody = body; return { sha: 'firstcommit' }; }
+    if (method === 'POST' && pathname.endsWith('/git/refs')) { createdRef = body; head = body.sha; return {}; }
+    if (method === 'GET' && pathname.endsWith('/git/commits/firstcommit')) return { tree: { sha: 'newtree' } };
+    if (method === 'GET' && pathname.includes('/git/trees/newtree')) {
+      return { tree: [{ path: 'Dockerfile', type: 'blob', sha: 'blobsha' }, { path: 'index.js', type: 'blob', sha: 'blobsha' }] };
+    }
+    throw new Error(`unexpected ${method} ${pathname}`);
+  };
+  const result = await mgr.createAndPush({ slug: 'demo' }, root, { version: '1.0.0' });
+  assert.equal(result.emptyInitialized, true);
+  assert.equal(treeBody.base_tree, undefined);
+  assert.equal(commitBody.parents, undefined);
+  assert.equal(createdRef.ref, 'refs/heads/main');
+  assert.equal(result.verification.ok, true);
+});
+
+test('GitHub follows a non-main default branch on existing repositories', async () => {
+  const { GitHubManager } = await import('../src/github/manager.js');
+  const root = '/tmp/paf-github-trunk-test';
+  fs.rmSync(root, { recursive: true, force: true });
+  fs.mkdirSync(root, { recursive: true });
+  fs.writeFileSync(`${root}/Dockerfile`, 'FROM node:24-alpine\nCMD ["node","index.js"]\n');
+  fs.writeFileSync(`${root}/index.js`, 'ok');
+  const mgr = new GitHubManager({ cfg: { github: { token: 'test', owner: 'alice' } }, log: { warn() {} } });
+  let patched = null;
+  let trunkHead = 'oldcommit';
+  mgr.ensureRepo = async () => ({ html_url: 'https://github.com/alice/demo', default_branch: 'trunk' });
+  mgr.api = async (method, pathname, body) => {
+    if (method === 'POST' && pathname.endsWith('/git/blobs')) return { sha: 'blobsha' };
+    if (method === 'GET' && pathname.endsWith('/git/ref/heads/trunk')) return { object: { sha: trunkHead } };
+    if (method === 'GET' && pathname.endsWith('/git/commits/oldcommit')) return { tree: { sha: 'basetree' } };
+    if (method === 'GET' && pathname.includes('/git/trees/basetree')) return { tree: [] };
+    if (method === 'POST' && pathname.endsWith('/git/trees')) return { sha: 'newtree' };
+    if (method === 'POST' && pathname.endsWith('/git/commits')) return { sha: 'newcommit' };
+    if (method === 'PATCH' && pathname.endsWith('/git/refs/heads/trunk')) { patched = body; trunkHead = body.sha; return {}; }
+    if (method === 'GET' && pathname.endsWith('/git/commits/newcommit')) return { tree: { sha: 'newtree' } };
+    if (method === 'GET' && pathname.includes('/git/trees/newtree')) {
+      return { tree: [{ path: 'Dockerfile', type: 'blob', sha: 'blobsha' }, { path: 'index.js', type: 'blob', sha: 'blobsha' }] };
+    }
+    const err = new Error('GitHub 404'); err.code = 'not_found'; throw err;
+  };
+  const result = await mgr.createAndPush({ slug: 'demo' }, root);
+  assert.equal(result.branch, 'trunk');
+  assert.equal(patched.force, false);
+});
+
+test('empty generated project is rejected before GitHub upload', async () => {
+  const { validateProjectForPublish } = await import('../src/github/manager.js');
+  const root = '/tmp/paf-github-blank-test';
+  fs.rmSync(root, { recursive: true, force: true });
+  fs.mkdirSync(root, { recursive: true });
+  const result = await validateProjectForPublish(root);
+  assert.equal(result.ok, false);
+  assert.match(result.errors.join(' '), /empty|Dockerfile|source/i);
+});
+
+test('release preflight creates a minimal Dockerfile only for a provable Node start script', async () => {
+  const { prepareReleaseContract } = await import('../src/release/preflight.js');
+  const root = '/tmp/paf-release-preflight-dockerfile';
+  fs.rmSync(root, { recursive: true, force: true });
+  fs.mkdirSync(root, { recursive: true });
+  fs.writeFileSync(`${root}/package.json`, JSON.stringify({ name: 'demo', scripts: { start: 'node server.js' }, main: 'server.js' }));
+  const result = await prepareReleaseContract({ sourceDir: root, owner: 'cannoi', repo: 'demo', version: '1.2.3' });
+  assert.equal(result.ok, true);
+  assert.equal(result.changed.includes('Dockerfile'), true);
+  assert.match(fs.readFileSync(`${root}/Dockerfile`, 'utf8'), /FROM node:24-alpine/);
+  assert.match(fs.readFileSync(`${root}/Dockerfile`, 'utf8'), /CMD \[\"sh\",\"-lc\",\"node server\.js\"\]/);
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+test('release preflight creates missing SoloHost compose without overwriting existing app files', async () => {
+  const { prepareReleaseContract } = await import('../src/release/preflight.js');
+  const root = '/tmp/paf-release-preflight-compose';
+  fs.rmSync(root, { recursive: true, force: true });
+  fs.mkdirSync(root, { recursive: true });
+  fs.writeFileSync(`${root}/Dockerfile`, 'FROM node:24-alpine\nEXPOSE 8080\n');
+  fs.writeFileSync(`${root}/package.json`, JSON.stringify({ name: 'demo', scripts: { start: 'node server.js' } }));
+  const result = await prepareReleaseContract({ sourceDir: root, owner: 'cannoi', repo: 'demo', version: '1.2.3', project: { slug: 'demo', name: 'Demo', idea: 'Demo app' } });
+  assert.equal(result.ok, true);
+  assert.equal(result.changed.includes('docker-compose.yml'), true);
+  const compose = fs.readFileSync(`${root}/docker-compose.yml`, 'utf8');
+  assert.match(compose, /ghcr\.io\/cannoi\/demo:1\.2\.3/);
+  assert.match(compose, /127\.0\.0\.1:\d+:8080/);
+  assert.doesNotMatch(compose, /127\.0\.0\.1:18080:8080/);
+  const second = await prepareReleaseContract({ sourceDir: root, owner: 'cannoi', repo: 'demo', version: '9.9.9', project: { slug: 'demo' } });
+  assert.equal(second.changed.length, 0);
+  assert.match(fs.readFileSync(`${root}/docker-compose.yml`, 'utf8'), /demo:1\.2\.3/);
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+test('GitHub publisher validates required SoloHost files', async () => {
+  const { validateReleaseProject } = await import('../src/github/git-publisher.js');
+  const root = '/tmp/paf-validate-release';
+  fs.rmSync(root, { recursive: true, force: true });
+  fs.mkdirSync(root, { recursive: true });
+  const missing = await validateReleaseProject(root);
+  assert.equal(missing.ok, false);
+  fs.writeFileSync(`${root}/Dockerfile`, 'FROM node:24-alpine\nCMD ["node","index.js"]\n');
+  fs.writeFileSync(`${root}/docker-compose.yml`, 'services:\n  app:\n    image: demo:1\n');
+  fs.writeFileSync(`${root}/index.js`, 'console.log("ok")');
+  const ok = await validateReleaseProject(root);
+  assert.equal(ok.ok, true);
+});
+
+test('publish error classes stop without guessing the owner', async () => {
+  const { classifyPublishError } = await import('../src/github/git-publisher.js');
+  assert.equal(classifyPublishError({ status: 401, message: 'Bad credentials' }).code, 'auth');
+  assert.match(classifyPublishError({ status: 401 }).message, /authorization is required/i);
+  assert.equal(classifyPublishError({ status: 403, message: 'Resource not accessible by integration' }).code, 'permission');
+  assert.equal(classifyPublishError({ status: 404, message: 'Not Found' }).code, 'not_found');
+  assert.equal(classifyPublishError(new Error('git push rejected')).code, 'git_push');
+});
+
+test('source validation allows build compose while SoloHost package validation rejects it', async () => {
+  const { validateReleaseProject } = await import('../src/github/git-publisher.js');
+  const root = '/tmp/paf-source-vs-solohost-validation';
+  fs.rmSync(root, { recursive: true, force: true });
+  fs.mkdirSync(root, { recursive: true });
+  fs.writeFileSync(`${root}/Dockerfile`, 'FROM node:24-alpine\nCMD [\"node\",\"index.js\"]\n');
+  fs.writeFileSync(`${root}/docker-compose.yml`, 'services:\n  app:\n    build: .\n');
+  fs.writeFileSync(`${root}/index.js`, 'console.log(\"ok\")');
+  const source = await validateReleaseProject(root, { context: 'source' });
+  assert.equal(source.ok, true);
+  const packageResult = await validateReleaseProject(root, { context: 'solohost-package' });
+  assert.equal(packageResult.ok, false);
+  assert.match(packageResult.errors.join(' '), /published Docker image|image:/i);
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+test('publish validation blocks secrets and missing Docker files', async () => {
+  const { validateReleaseProject } = await import('../src/github/git-publisher.js');
+  const root = '/tmp/paf-secret-publish';
+  fs.rmSync(root, { recursive: true, force: true });
+  fs.mkdirSync(root, { recursive: true });
+  fs.writeFileSync(`${root}/Dockerfile`, 'FROM node:24-alpine\nENV GITHUB_TOKEN=ghp_abcdefghijklmnopqrstuvwx\n');
+  fs.writeFileSync(`${root}/docker-compose.yml`, 'services:\n  app:\n    image: demo:1\n');
+  const blocked = await validateReleaseProject(root);
+  assert.equal(blocked.ok, false);
+});
+
+
+test('splitUserSteps keeps multi-step requests separate', async () => {
+  const { splitUserSteps } = await import('../src/scripts/ops.js');
+  const steps = splitUserSteps('Change the button color then run the app');
+  assert.equal(steps.length, 2);
+});
+
+test('Gemini prefers models at least 2.5', async () => {
+  const { geminiVersion, compareGeminiModels } = await import('../src/ai/providers/gemini.js');
+  assert.ok(geminiVersion('gemini-2.5-flash') >= 2.5);
+  assert.ok(geminiVersion('gemini-1.5-pro') < 2.5);
+  assert.ok(compareGeminiModels('gemini-2.5-flash', 'gemini-2.5-pro') > 0);
+});
+
+test('imported zip wrapper folder is flattened', async () => {
+  const fs = await import('node:fs/promises');
+  const path = await import('node:path');
+  const os = await import('node:os');
+  const { flattenImportedTree } = await import('../src/projects/importer.js');
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'paf-flat-'));
+  await fs.mkdir(path.join(root, 'snake-app', 'public'), { recursive: true });
+  await fs.writeFile(path.join(root, 'snake-app', 'package.json'), '{"name":"snake"}');
+  await fs.writeFile(path.join(root, 'snake-app', 'public', 'index.html'), '<html></html>');
+  await flattenImportedTree(root);
+  const names = await fs.readdir(root);
+  assert.ok(names.includes('package.json'));
+  assert.ok(names.includes('public'));
+});
+
+test('summary requests are analysis, not automatic code repair', () => {
+  assert.equal(inferAction('tổng hợp các lỗi hiện có trong app'), 'analyze');
+  assert.equal(inferAction('summarize all current errors'), 'analyze');
+});
+
+
+test('network failures are classified before app proxy repair', () => {
+  const d = describeFailure({ error: 'getaddrinfo EAI_AGAIN example.com' });
+  assert.equal(d.code, 'network_dns');
+  assert.match(d.fix, /Sandbox Internet|DNS/i);
+});
+
+
+test('GitHub publisher uses GitHub API upload without requiring local git', async () => {
+  const fs = await import('node:fs/promises');
+  const os = await import('node:os');
+  const path = await import('node:path');
+  const { publishWorktreeWithGitHubApi } = await import('../src/github/git-publisher.js');
+  const work = await fs.mkdtemp(path.join(os.tmpdir(), 'paf-gh-api-'));
+  await fs.mkdir(path.join(work, '.github', 'workflows'), { recursive: true });
+  await fs.writeFile(path.join(work, 'Dockerfile'), 'FROM node:24-alpine\n');
+  await fs.writeFile(path.join(work, '.github', 'workflows', 'docker.yml'), 'permissions:\n  packages: write\n');
+  const calls = [];
+  let n = 0;
+  const octokit = { request: async ({ method, url, data }) => {
+    calls.push({ method, url, data });
+    if (method === 'GET' && /git\/ref\/heads\/main$/.test(url)) {
+      const e = new Error('Not Found'); e.status = 404; throw e;
+    }
+    if (method === 'POST' && /\/git\/blobs$/.test(url)) return { data: { sha: `blob-${++n}` } };
+    if (method === 'POST' && /\/git\/trees$/.test(url)) return { data: { sha: 'tree-1' } };
+    if (method === 'POST' && /\/git\/commits$/.test(url)) return { data: { sha: 'commit-1' } };
+    if (method === 'POST' && /\/git\/refs$/.test(url)) return { data: {} };
+    throw new Error(`Unexpected ${method} ${url}`);
+  }};
+  const sha = await publishWorktreeWithGitHubApi({ octokit, work, owner: 'cannoi', repo: 'demo', branch: 'main', version: '1.4.22' });
+  assert.equal(sha, 'commit-1');
+  assert.ok(calls.some((x) => x.method === 'POST' && /\/git\/blobs$/.test(x.url)));
+  assert.ok(calls.some((x) => x.method === 'POST' && /\/git\/trees$/.test(x.url)));
+  assert.ok(calls.some((x) => x.method === 'POST' && /\/git\/commits$/.test(x.url)));
+});
+
+
+test('GHCR image text becomes a SoloHost export action', async () => {
+  const { extractGhcrImage, inferAction, guessSoloHostPorts } = await import('../src/scripts/ops.js');
+  const msg = 'tạo file install SoloHost ghcr.io/cannoi/solohost-browser-native-v3:latest';
+  assert.equal(extractGhcrImage(msg), 'ghcr.io/cannoi/solohost-browser-native-v3:latest');
+  assert.equal(inferAction(msg), 'export');
+  assert.deepEqual(guessSoloHostPorts(msg, extractGhcrImage(msg)), { hostPort: 16080, containerPort: 6080 });
+});
