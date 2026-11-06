@@ -1,0 +1,24 @@
+RULE_VERSION: 1.0
+RULE_NAME: PERSONAL_AUTOMATION_HUB
+APP_TYPE: AUTOMATION
+TARGET: PI_SOLOHOST
+GOAL: A personal automation hub that can create, run, and persist workflows.
+
+REQUIRED CAPABILITIES:
+- Create automation
+- Run automation
+- Execution history
+- Persistent storage
+EXECUTION:
+  MAX_CYCLES: 8
+  MAX_TASKS: 16
+  MAX_RETRIES_PER_TASK: 1
+  AUTO_APPLY: true
+  VERIFY_EACH_TASK: true
+  STOP_ON_USER_ACTION: true
+
+DEFINITION_OF_DONE:
+- Automation can be created and run
+- Execution history persists
+- Persistent data survives restart
+- SoloHost runtime starts successfully

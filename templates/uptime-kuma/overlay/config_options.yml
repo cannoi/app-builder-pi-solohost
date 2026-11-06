@@ -1,0 +1,14 @@
+title: "Uptime Kuma"
+eyebrow: SoloHost App
+description: "Full upstream Uptime Kuma (pinned). SoloHost overlay only in Builder; source fetched on create."
+footer_hint: "Only enter values you need. Leave the rest default."
+output_file: .env
+fixed_values:
+  - name: PORT
+    value: "3001"
+fields:
+  - name: APP_NAME
+    label: App name
+    type: text
+    default: "Uptime Kuma"
+    help: "Display name for this installation."

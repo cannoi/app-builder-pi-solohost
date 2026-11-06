@@ -1,0 +1,14 @@
+title: "Shop Starter"
+eyebrow: SoloHost App
+description: "Simple storefront SoloHost starter"
+footer_hint: "Only enter values you need. Leave the rest default."
+output_file: .env
+fixed_values:
+  - name: PORT
+    value: "8080"
+fields:
+  - name: APP_NAME
+    label: App name
+    type: text
+    default: "Shop Starter"
+    help: "Display name shown in the app."

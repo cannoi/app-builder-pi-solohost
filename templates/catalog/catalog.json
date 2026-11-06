@@ -1,0 +1,5367 @@
+{
+  "schemaVersion": 1,
+  "templates": [
+    {
+      "id": "open-webui",
+      "name": "Open WebUI",
+      "version": "0.0.0-catalog",
+      "description": "Open WebUI — ai-agents, rag, docker, models",
+      "category": "ai-agents",
+      "kind": "package",
+      "tags": [
+        "ai-agents",
+        "rag",
+        "docker",
+        "models",
+        "chat",
+        "python"
+      ],
+      "license": "MIT",
+      "homepage": "https://github.com/open-webui/open-webui",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/open-webui/open-webui"
+      },
+      "verified": false,
+      "instantiable": false,
+      "verification": {
+        "sourcePresent": false,
+        "dependenciesValidated": false,
+        "buildVerified": false,
+        "runtimeTested": false,
+        "playwrightTested": false,
+        "solohostPackageValidated": false,
+        "productionReady": false
+      },
+      "compatibility": {
+        "solohost": false,
+        "solohostStatus": "not-validated"
+      },
+      "deploymentReady": false
+    },
+    {
+      "id": "ollama",
+      "name": "Ollama",
+      "version": "0.0.0-catalog",
+      "description": "Ollama — go, ai-agents, llm-runtime, docker",
+      "category": "ai-agents",
+      "kind": "package",
+      "tags": [
+        "go",
+        "ai-agents",
+        "llm-runtime",
+        "docker",
+        "local-models"
+      ],
+      "license": "MIT",
+      "homepage": "https://github.com/ollama/ollama",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/ollama/ollama"
+      },
+      "verified": false,
+      "instantiable": false,
+      "verification": {
+        "sourcePresent": false,
+        "dependenciesValidated": false,
+        "buildVerified": false,
+        "runtimeTested": false,
+        "playwrightTested": false,
+        "solohostPackageValidated": false,
+        "productionReady": false
+      },
+      "compatibility": {
+        "solohost": false,
+        "solohostStatus": "not-validated"
+      },
+      "deploymentReady": false
+    },
+    {
+      "id": "anything-llm",
+      "name": "AnythingLLM",
+      "version": "0.0.0-catalog",
+      "description": "AnythingLLM — ai-agents, rag, docker, chat",
+      "category": "ai-agents",
+      "kind": "package",
+      "tags": [
+        "ai-agents",
+        "rag",
+        "docker",
+        "chat",
+        "node",
+        "workspace"
+      ],
+      "license": "MIT",
+      "homepage": "https://github.com/Mintplex-Labs/anything-llm",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/Mintplex-Labs/anything-llm"
+      },
+      "verified": false,
+      "instantiable": false,
+      "verification": {
+        "sourcePresent": false,
+        "dependenciesValidated": false,
+        "buildVerified": false,
+        "runtimeTested": false,
+        "playwrightTested": false,
+        "solohostPackageValidated": false,
+        "productionReady": false
+      },
+      "compatibility": {
+        "solohost": false,
+        "solohostStatus": "not-validated"
+      },
+      "deploymentReady": false
+    },
+    {
+      "id": "dify",
+      "name": "Dify",
+      "version": "0.0.0-catalog",
+      "description": "Dify — ai-agents, rag, python, docker",
+      "category": "ai-agents",
+      "kind": "package",
+      "tags": [
+        "ai-agents",
+        "rag",
+        "python",
+        "docker",
+        "agents",
+        "workflows"
+      ],
+      "license": "Apache-2.0",
+      "homepage": "https://github.com/langgenius/dify",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/langgenius/dify"
+      },
+      "verified": false,
+      "instantiable": false,
+      "verification": {
+        "sourcePresent": false,
+        "dependenciesValidated": false,
+        "buildVerified": false,
+        "runtimeTested": false,
+        "playwrightTested": false,
+        "solohostPackageValidated": false,
+        "productionReady": false
+      },
+      "compatibility": {
+        "solohost": false,
+        "solohostStatus": "not-validated"
+      },
+      "deploymentReady": false
+    },
+    {
+      "id": "flowise",
+      "name": "Flowise",
+      "version": "0.0.0-catalog",
+      "description": "Flowise — ai-agents, langchain, docker, visual-agents",
+      "category": "ai-agents",
+      "kind": "package",
+      "tags": [
+        "ai-agents",
+        "langchain",
+        "docker",
+        "visual-agents",
+        "node"
+      ],
+      "license": "Apache-2.0",
+      "homepage": "https://github.com/FlowiseAI/Flowise",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/FlowiseAI/Flowise"
+      },
+      "verified": false,
+      "instantiable": false,
+      "verification": {
+        "sourcePresent": false,
+        "dependenciesValidated": false,
+        "buildVerified": false,
+        "runtimeTested": false,
+        "playwrightTested": false,
+        "solohostPackageValidated": false,
+        "productionReady": false
+      },
+      "compatibility": {
+        "solohost": false,
+        "solohostStatus": "not-validated"
+      },
+      "deploymentReady": false
+    },
+    {
+      "id": "n8n",
+      "name": "n8n",
+      "version": "0.0.0-catalog",
+      "description": "n8n — automation, ai-agents, docker, ai-nodes",
+      "category": "ai-agents",
+      "kind": "package",
+      "tags": [
+        "automation",
+        "ai-agents",
+        "docker",
+        "ai-nodes",
+        "node",
+        "webhooks"
+      ],
+      "license": "Sustainable-Use",
+      "homepage": "https://github.com/n8n-io/n8n",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/n8n-io/n8n"
+      },
+      "verified": false,
+      "instantiable": false,
+      "verification": {
+        "sourcePresent": false,
+        "dependenciesValidated": false,
+        "buildVerified": false,
+        "runtimeTested": false,
+        "playwrightTested": false,
+        "solohostPackageValidated": false,
+        "productionReady": false
+      },
+      "compatibility": {
+        "solohost": false,
+        "solohostStatus": "not-validated"
+      },
+      "deploymentReady": false
+    },
+    {
+      "id": "huggingface-chat-ui",
+      "name": "Chat UI (Hugging Face)",
+      "version": "0.0.0-catalog",
+      "description": "Chat UI (Hugging Face) — svelte, ai-agents, models, chat",
+      "category": "ai-agents",
+      "kind": "reference",
+      "tags": [
+        "svelte",
+        "ai-agents",
+        "models",
+        "chat",
+        "node"
+      ],
+      "license": "Apache-2.0",
+      "homepage": "https://github.com/huggingface/chat-ui",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/huggingface/chat-ui"
+      },
+      "verified": false,
+      "instantiable": false,
+      "verification": {
+        "sourcePresent": false,
+        "dependenciesValidated": false,
+        "buildVerified": false,
+        "runtimeTested": false,
+        "playwrightTested": false,
+        "solohostPackageValidated": false,
+        "productionReady": false
+      },
+      "compatibility": {
+        "solohost": false,
+        "solohostStatus": "not-validated"
+      },
+      "deploymentReady": false
+    },
+    {
+      "id": "localai",
+      "name": "LocalAI",
+      "version": "0.0.0-catalog",
+      "description": "LocalAI — go, openai-compatible, ai-agents, docker",
+      "category": "ai-agents",
+      "kind": "package",
+      "tags": [
+        "go",
+        "openai-compatible",
+        "ai-agents",
+        "docker",
+        "local-inference"
+      ],
+      "license": "MIT",
+      "homepage": "https://github.com/mudler/LocalAI",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/mudler/LocalAI"
+      },
+      "verified": false,
+      "instantiable": false,
+      "verification": {
+        "sourcePresent": false,
+        "dependenciesValidated": false,
+        "buildVerified": false,
+        "runtimeTested": false,
+        "playwrightTested": false,
+        "solohostPackageValidated": false,
+        "productionReady": false
+      },
+      "compatibility": {
+        "solohost": false,
+        "solohostStatus": "not-validated"
+      },
+      "deploymentReady": false
+    },
+    {
+      "id": "text-generation-webui",
+      "name": "Text Generation WebUI",
+      "version": "0.0.0-catalog",
+      "description": "Text Generation WebUI — llm, gradio, ai-agents, python",
+      "category": "ai-agents",
+      "kind": "reference",
+      "tags": [
+        "llm",
+        "gradio",
+        "ai-agents",
+        "python"
+      ],
+      "license": "AGPL-3.0",
+      "homepage": "https://github.com/oobabooga/text-generation-webui",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/oobabooga/text-generation-webui"
+      },
+      "verified": false,
+      "instantiable": false,
+      "verification": {
+        "sourcePresent": false,
+        "dependenciesValidated": false,
+        "buildVerified": false,
+        "runtimeTested": false,
+        "playwrightTested": false,
+        "solohostPackageValidated": false,
+        "productionReady": false
+      },
+      "compatibility": {
+        "solohost": false,
+        "solohostStatus": "not-validated"
+      },
+      "deploymentReady": false
+    },
+    {
+      "id": "privategpt",
+      "name": "PrivateGPT",
+      "version": "0.0.0-catalog",
+      "description": "PrivateGPT — privacy, ai-agents, rag, python",
+      "category": "ai-agents",
+      "kind": "reference",
+      "tags": [
+        "privacy",
+        "ai-agents",
+        "rag",
+        "python"
+      ],
+      "license": "Apache-2.0",
+      "homepage": "https://github.com/zylon-ai/private-gpt",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/zylon-ai/private-gpt"
+      },
+      "verified": false,
+      "instantiable": false,
+      "verification": {
+        "sourcePresent": false,
+        "dependenciesValidated": false,
+        "buildVerified": false,
+        "runtimeTested": false,
+        "playwrightTested": false,
+        "solohostPackageValidated": false,
+        "productionReady": false
+      },
+      "compatibility": {
+        "solohost": false,
+        "solohostStatus": "not-validated"
+      },
+      "deploymentReady": false
+    },
+    {
+      "id": "ragflow",
+      "name": "RAGFlow",
+      "version": "0.0.0-catalog",
+      "description": "RAGFlow — ai-agents, rag, docker, python",
+      "category": "ai-agents",
+      "kind": "package",
+      "tags": [
+        "ai-agents",
+        "rag",
+        "docker",
+        "python",
+        "deepdoc"
+      ],
+      "license": "Apache-2.0",
+      "homepage": "https://github.com/infiniflow/ragflow",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/infiniflow/ragflow"
+      },
+      "verified": false,
+      "instantiable": false,
+      "verification": {
+        "sourcePresent": false,
+        "dependenciesValidated": false,
+        "buildVerified": false,
+        "runtimeTested": false,
+        "playwrightTested": false,
+        "solohostPackageValidated": false,
+        "productionReady": false
+      },
+      "compatibility": {
+        "solohost": false,
+        "solohostStatus": "not-validated"
+      },
+      "deploymentReady": false
+    },
+    {
+      "id": "lobe-chat",
+      "name": "Lobe Chat",
+      "version": "0.0.0-catalog",
+      "description": "Lobe Chat — ai-agents, plugins, nextjs, multi-model",
+      "category": "ai-agents",
+      "kind": "package",
+      "tags": [
+        "ai-agents",
+        "plugins",
+        "nextjs",
+        "multi-model",
+        "docker",
+        "chat"
+      ],
+      "license": "MIT",
+      "homepage": "https://github.com/lobehub/lobe-chat",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/lobehub/lobe-chat"
+      },
+      "verified": false,
+      "instantiable": false,
+      "verification": {
+        "sourcePresent": false,
+        "dependenciesValidated": false,
+        "buildVerified": false,
+        "runtimeTested": false,
+        "playwrightTested": false,
+        "solohostPackageValidated": false,
+        "productionReady": false
+      },
+      "compatibility": {
+        "solohost": false,
+        "solohostStatus": "not-validated"
+      },
+      "deploymentReady": false
+    },
+    {
+      "id": "librechat",
+      "name": "LibreChat",
+      "version": "0.0.0-catalog",
+      "description": "LibreChat — ai-agents, docker, agents, chat",
+      "category": "ai-agents",
+      "kind": "package",
+      "tags": [
+        "ai-agents",
+        "docker",
+        "agents",
+        "chat",
+        "node",
+        "multi-provider"
+      ],
+      "license": "MIT",
+      "homepage": "https://github.com/danny-avila/LibreChat",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/danny-avila/LibreChat"
+      },
+      "verified": false,
+      "instantiable": false,
+      "verification": {
+        "sourcePresent": false,
+        "dependenciesValidated": false,
+        "buildVerified": false,
+        "runtimeTested": false,
+        "playwrightTested": false,
+        "solohostPackageValidated": false,
+        "productionReady": false
+      },
+      "compatibility": {
+        "solohost": false,
+        "solohostStatus": "not-validated"
+      },
+      "deploymentReady": false
+    },
+    {
+      "id": "sillytavern",
+      "name": "SillyTavern",
+      "version": "0.0.0-catalog",
+      "description": "SillyTavern — llm-frontend, ai-agents, roleplay, node",
+      "category": "ai-agents",
+      "kind": "reference",
+      "tags": [
+        "llm-frontend",
+        "ai-agents",
+        "roleplay",
+        "node"
+      ],
+      "license": "AGPL-3.0",
+      "homepage": "https://github.com/SillyTavern/SillyTavern",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/SillyTavern/SillyTavern"
+      },
+      "verified": false,
+      "instantiable": false,
+      "verification": {
+        "sourcePresent": false,
+        "dependenciesValidated": false,
+        "buildVerified": false,
+        "runtimeTested": false,
+        "playwrightTested": false,
+        "solohostPackageValidated": false,
+        "productionReady": false
+      },
+      "compatibility": {
+        "solohost": false,
+        "solohostStatus": "not-validated"
+      },
+      "deploymentReady": false
+    },
+    {
+      "id": "continue-dev",
+      "name": "Continue",
+      "version": "0.0.0-catalog",
+      "description": "Continue — coding-assistant, typescript, ide, ai-agents",
+      "category": "ai-agents",
+      "kind": "reference",
+      "tags": [
+        "coding-assistant",
+        "typescript",
+        "ide",
+        "ai-agents"
+      ],
+      "license": "Apache-2.0",
+      "homepage": "https://github.com/continuedev/continue",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/continuedev/continue"
+      },
+      "verified": false,
+      "instantiable": false,
+      "verification": {
+        "sourcePresent": false,
+        "dependenciesValidated": false,
+        "buildVerified": false,
+        "runtimeTested": false,
+        "playwrightTested": false,
+        "solohostPackageValidated": false,
+        "productionReady": false
+      },
+      "compatibility": {
+        "solohost": false,
+        "solohostStatus": "not-validated"
+      },
+      "deploymentReady": false
+    },
+    {
+      "id": "twenty",
+      "name": "Twenty CRM",
+      "version": "0.0.0-catalog",
+      "description": "Twenty CRM — business-crm, postgres, contacts, pipeline",
+      "category": "business-crm",
+      "kind": "package",
+      "tags": [
+        "business-crm",
+        "postgres",
+        "contacts",
+        "pipeline",
+        "typescript",
+        "crm"
+      ],
+      "license": "AGPL-3.0",
+      "homepage": "https://github.com/twentyhq/twenty",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/twentyhq/twenty"
+      },
+      "verified": false,
+      "instantiable": false,
+      "verification": {
+        "sourcePresent": false,
+        "dependenciesValidated": false,
+        "buildVerified": false,
+        "runtimeTested": false,
+        "playwrightTested": false,
+        "solohostPackageValidated": false,
+        "productionReady": false
+      },
+      "compatibility": {
+        "solohost": false,
+        "solohostStatus": "not-validated"
+      },
+      "deploymentReady": false
+    },
+    {
+      "id": "erpnext",
+      "name": "ERPNext",
+      "version": "0.0.0-catalog",
+      "description": "ERPNext — inventory, frappe, python, erp",
+      "category": "erp-admin",
+      "kind": "package",
+      "tags": [
+        "inventory",
+        "frappe",
+        "python",
+        "erp",
+        "erp-admin",
+        "accounting"
+      ],
+      "license": "GPL-3.0",
+      "homepage": "https://github.com/frappe/erpnext",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/frappe/erpnext"
+      },
+      "verified": false,
+      "instantiable": false,
+      "verification": {
+        "sourcePresent": false,
+        "dependenciesValidated": false,
+        "buildVerified": false,
+        "runtimeTested": false,
+        "playwrightTested": false,
+        "solohostPackageValidated": false,
+        "productionReady": false
+      },
+      "compatibility": {
+        "solohost": false,
+        "solohostStatus": "not-validated"
+      },
+      "deploymentReady": false
+    },
+    {
+      "id": "frappe-crm",
+      "name": "Frappe CRM",
+      "version": "0.0.0-catalog",
+      "description": "Frappe CRM — leads, business-crm, python, deals",
+      "category": "business-crm",
+      "kind": "package",
+      "tags": [
+        "leads",
+        "business-crm",
+        "python",
+        "deals",
+        "crm"
+      ],
+      "license": "AGPL-3.0",
+      "homepage": "https://github.com/frappe/crm",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/frappe/crm"
+      },
+      "verified": false,
+      "instantiable": false,
+      "verification": {
+        "sourcePresent": false,
+        "dependenciesValidated": false,
+        "buildVerified": false,
+        "runtimeTested": false,
+        "playwrightTested": false,
+        "solohostPackageValidated": false,
+        "productionReady": false
+      },
+      "compatibility": {
+        "solohost": false,
+        "solohostStatus": "not-validated"
+      },
+      "deploymentReady": false
+    },
+    {
+      "id": "suitecrm",
+      "name": "SuiteCRM",
+      "version": "0.0.0-catalog",
+      "description": "SuiteCRM — business-crm, mysql, sales, php",
+      "category": "business-crm",
+      "kind": "package",
+      "tags": [
+        "business-crm",
+        "mysql",
+        "sales",
+        "php",
+        "crm"
+      ],
+      "license": "AGPL-3.0",
+      "homepage": "https://github.com/salesagility/SuiteCRM",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/salesagility/SuiteCRM"
+      },
+      "verified": false,
+      "instantiable": false,
+      "verification": {
+        "sourcePresent": false,
+        "dependenciesValidated": false,
+        "buildVerified": false,
+        "runtimeTested": false,
+        "playwrightTested": false,
+        "solohostPackageValidated": false,
+        "productionReady": false
+      },
+      "compatibility": {
+        "solohost": false,
+        "solohostStatus": "not-validated"
+      },
+      "deploymentReady": false
+    },
+    {
+      "id": "vtiger",
+      "name": "Vtiger CRM",
+      "version": "0.0.0-catalog",
+      "description": "Vtiger CRM — business-crm, crm, php",
+      "category": "business-crm",
+      "kind": "reference",
+      "tags": [
+        "business-crm",
+        "crm",
+        "php"
+      ],
+      "license": "VPL",
+      "homepage": "https://github.com/vtiger-crm/vtigercrm",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/vtiger-crm/vtigercrm"
+      },
+      "verified": false,
+      "instantiable": false,
+      "verification": {
+        "sourcePresent": false,
+        "dependenciesValidated": false,
+        "buildVerified": false,
+        "runtimeTested": false,
+        "playwrightTested": false,
+        "solohostPackageValidated": false,
+        "productionReady": false
+      },
+      "compatibility": {
+        "solohost": false,
+        "solohostStatus": "not-validated"
+      },
+      "deploymentReady": false
+    },
+    {
+      "id": "kimai",
+      "name": "Kimai",
+      "version": "0.0.0-catalog",
+      "description": "Kimai — business-crm, invoicing, time-tracking, docker",
+      "category": "business-crm",
+      "kind": "package",
+      "tags": [
+        "business-crm",
+        "invoicing",
+        "time-tracking",
+        "docker",
+        "php"
+      ],
+      "license": "AGPL-3.0",
+      "homepage": "https://github.com/kimai/kimai",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/kimai/kimai"
+      },
+      "verified": false,
+      "instantiable": false,
+      "verification": {
+        "sourcePresent": false,
+        "dependenciesValidated": false,
+        "buildVerified": false,
+        "runtimeTested": false,
+        "playwrightTested": false,
+        "solohostPackageValidated": false,
+        "productionReady": false
+      },
+      "compatibility": {
+        "solohost": false,
+        "solohostStatus": "not-validated"
+      },
+      "deploymentReady": false
+    },
+    {
+      "id": "invoice-ninja",
+      "name": "Invoice Ninja",
+      "version": "0.0.0-catalog",
+      "description": "Invoice Ninja — clients, invoices, finance-payment, docker",
+      "category": "finance-payment",
+      "kind": "package",
+      "tags": [
+        "clients",
+        "invoices",
+        "finance-payment",
+        "docker",
+        "payments",
+        "php"
+      ],
+      "license": "AAL",
+      "homepage": "https://github.com/invoiceninja/invoiceninja",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/invoiceninja/invoiceninja"
+      },
+      "verified": false,
+      "instantiable": false,
+      "verification": {
+        "sourcePresent": false,
+        "dependenciesValidated": false,
+        "buildVerified": false,
+        "runtimeTested": false,
+        "playwrightTested": false,
+        "solohostPackageValidated": false,
+        "productionReady": false
+      },
+      "compatibility": {
+        "solohost": false,
+        "solohostStatus": "not-validated"
+      },
+      "deploymentReady": false
+    },
+    {
+      "id": "crater",
+      "name": "Crater",
+      "version": "0.0.0-catalog",
+      "description": "Crater — finance-payment, invoices, expenses, php",
+      "category": "finance-payment",
+      "kind": "reference",
+      "tags": [
+        "finance-payment",
+        "invoices",
+        "expenses",
+        "php",
+        "laravel"
+      ],
+      "license": "AAL",
+      "homepage": "https://github.com/bytefury/crater",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/bytefury/crater"
+      },
+      "verified": false,
+      "instantiable": false,
+      "verification": {
+        "sourcePresent": false,
+        "dependenciesValidated": false,
+        "buildVerified": false,
+        "runtimeTested": false,
+        "playwrightTested": false,
+        "solohostPackageValidated": false,
+        "productionReady": false
+      },
+      "compatibility": {
+        "solohost": false,
+        "solohostStatus": "not-validated"
+      },
+      "deploymentReady": false
+    },
+    {
+      "id": "akaunting",
+      "name": "Akaunting",
+      "version": "0.0.0-catalog",
+      "description": "Akaunting — finance-payment, multi-company, php, laravel",
+      "category": "finance-payment",
+      "kind": "package",
+      "tags": [
+        "finance-payment",
+        "multi-company",
+        "php",
+        "laravel",
+        "accounting"
+      ],
+      "license": "GPL-3.0",
+      "homepage": "https://github.com/akaunting/akaunting",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/akaunting/akaunting"
+      },
+      "verified": false,
+      "instantiable": false,
+      "verification": {
+        "sourcePresent": false,
+        "dependenciesValidated": false,
+        "buildVerified": false,
+        "runtimeTested": false,
+        "playwrightTested": false,
+        "solohostPackageValidated": false,
+        "productionReady": false
+      },
+      "compatibility": {
+        "solohost": false,
+        "solohostStatus": "not-validated"
+      },
+      "deploymentReady": false
+    },
+    {
+      "id": "plane",
+      "name": "Plane",
+      "version": "0.0.0-catalog",
+      "description": "Plane — cycles, issues, productivity-pm, docker",
+      "category": "productivity-pm",
+      "kind": "package",
+      "tags": [
+        "cycles",
+        "issues",
+        "productivity-pm",
+        "docker",
+        "project-management",
+        "typescript"
+      ],
+      "license": "AGPL-3.0",
+      "homepage": "https://github.com/makeplane/plane",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/makeplane/plane"
+      },
+      "verified": false,
+      "instantiable": false,
+      "verification": {
+        "sourcePresent": false,
+        "dependenciesValidated": false,
+        "buildVerified": false,
+        "runtimeTested": false,
+        "playwrightTested": false,
+        "solohostPackageValidated": false,
+        "productionReady": false
+      },
+      "compatibility": {
+        "solohost": false,
+        "solohostStatus": "not-validated"
+      },
+      "deploymentReady": false
+    },
+    {
+      "id": "openproject",
+      "name": "OpenProject",
+      "version": "0.0.0-catalog",
+      "description": "OpenProject — wiki, ruby, productivity-pm, docker",
+      "category": "productivity-pm",
+      "kind": "package",
+      "tags": [
+        "wiki",
+        "ruby",
+        "productivity-pm",
+        "docker",
+        "project-management",
+        "gantt"
+      ],
+      "license": "GPL-3.0",
+      "homepage": "https://github.com/opf/openproject",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/opf/openproject"
+      },
+      "verified": false,
+      "instantiable": false,
+      "verification": {
+        "sourcePresent": false,
+        "dependenciesValidated": false,
+        "buildVerified": false,
+        "runtimeTested": false,
+        "playwrightTested": false,
+        "solohostPackageValidated": false,
+        "productionReady": false
+      },
+      "compatibility": {
+        "solohost": false,
+        "solohostStatus": "not-validated"
+      },
+      "deploymentReady": false
+    },
+    {
+      "id": "taiga",
+      "name": "Taiga",
+      "version": "0.0.0-catalog",
+      "description": "Taiga — agile, productivity-pm, scrum, docker",
+      "category": "productivity-pm",
+      "kind": "package",
+      "tags": [
+        "agile",
+        "productivity-pm",
+        "scrum",
+        "docker",
+        "kanban",
+        "python"
+      ],
+      "license": "MPL-2.0",
+      "homepage": "https://github.com/kaleidos-ventures/taiga",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/kaleidos-ventures/taiga"
+      },
+      "verified": false,
+      "instantiable": false,
+      "verification": {
+        "sourcePresent": false,
+        "dependenciesValidated": false,
+        "buildVerified": false,
+        "runtimeTested": false,
+        "playwrightTested": false,
+        "solohostPackageValidated": false,
+        "productionReady": false
+      },
+      "compatibility": {
+        "solohost": false,
+        "solohostStatus": "not-validated"
+      },
+      "deploymentReady": false
+    },
+    {
+      "id": "focalboard",
+      "name": "Focalboard",
+      "version": "0.0.0-catalog",
+      "description": "Focalboard — go, react, productivity-pm, kanban",
+      "category": "productivity-pm",
+      "kind": "package",
+      "tags": [
+        "go",
+        "react",
+        "productivity-pm",
+        "kanban",
+        "boards"
+      ],
+      "license": "MIT",
+      "homepage": "https://github.com/mattermost/focalboard",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/mattermost/focalboard"
+      },
+      "verified": false,
+      "instantiable": false,
+      "verification": {
+        "sourcePresent": false,
+        "dependenciesValidated": false,
+        "buildVerified": false,
+        "runtimeTested": false,
+        "playwrightTested": false,
+        "solohostPackageValidated": false,
+        "productionReady": false
+      },
+      "compatibility": {
+        "solohost": false,
+        "solohostStatus": "not-validated"
+      },
+      "deploymentReady": false
+    },
+    {
+      "id": "affine",
+      "name": "AFFiNE",
+      "version": "0.0.0-catalog",
+      "description": "AFFiNE — productivity-pm, whiteboard, typescript, docs",
+      "category": "productivity-pm",
+      "kind": "reference",
+      "tags": [
+        "productivity-pm",
+        "whiteboard",
+        "typescript",
+        "docs",
+        "knowledge"
+      ],
+      "license": "MIT",
+      "homepage": "https://github.com/toeverything/AFFiNE",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/toeverything/AFFiNE"
+      },
+      "verified": false,
+      "instantiable": false,
+      "verification": {
+        "sourcePresent": false,
+        "dependenciesValidated": false,
+        "buildVerified": false,
+        "runtimeTested": false,
+        "playwrightTested": false,
+        "solohostPackageValidated": false,
+        "productionReady": false
+      },
+      "compatibility": {
+        "solohost": false,
+        "solohostStatus": "not-validated"
+      },
+      "deploymentReady": false
+    },
+    {
+      "id": "appflowy",
+      "name": "AppFlowy",
+      "version": "0.0.0-catalog",
+      "description": "AppFlowy — flutter, productivity-pm, tasks, docs",
+      "category": "productivity-pm",
+      "kind": "reference",
+      "tags": [
+        "flutter",
+        "productivity-pm",
+        "tasks",
+        "docs",
+        "rust"
+      ],
+      "license": "AGPL-3.0",
+      "homepage": "https://github.com/AppFlowy-IO/AppFlowy",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/AppFlowy-IO/AppFlowy"
+      },
+      "verified": false,
+      "instantiable": false,
+      "verification": {
+        "sourcePresent": false,
+        "dependenciesValidated": false,
+        "buildVerified": false,
+        "runtimeTested": false,
+        "playwrightTested": false,
+        "solohostPackageValidated": false,
+        "productionReady": false
+      },
+      "compatibility": {
+        "solohost": false,
+        "solohostStatus": "not-validated"
+      },
+      "deploymentReady": false
+    },
+    {
+      "id": "odoo",
+      "name": "Odoo Community",
+      "version": "0.0.0-catalog",
+      "description": "Odoo Community — website, postgres, python, erp",
+      "category": "erp-admin",
+      "kind": "package",
+      "tags": [
+        "website",
+        "postgres",
+        "python",
+        "erp",
+        "erp-admin",
+        "crm"
+      ],
+      "license": "LGPL-3.0",
+      "homepage": "https://github.com/odoo/odoo",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/odoo/odoo"
+      },
+      "verified": false,
+      "instantiable": false,
+      "verification": {
+        "sourcePresent": false,
+        "dependenciesValidated": false,
+        "buildVerified": false,
+        "runtimeTested": false,
+        "playwrightTested": false,
+        "solohostPackageValidated": false,
+        "productionReady": false
+      },
+      "compatibility": {
+        "solohost": false,
+        "solohostStatus": "not-validated"
+      },
+      "deploymentReady": false
+    },
+    {
+      "id": "dolibarr",
+      "name": "Dolibarr",
+      "version": "0.0.0-catalog",
+      "description": "Dolibarr — mysql, invoicing, php, erp",
+      "category": "erp-admin",
+      "kind": "package",
+      "tags": [
+        "mysql",
+        "invoicing",
+        "php",
+        "erp",
+        "erp-admin",
+        "crm"
+      ],
+      "license": "GPL-3.0",
+      "homepage": "https://github.com/Dolibarr/dolibarr",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/Dolibarr/dolibarr"
+      },
+      "verified": false,
+      "instantiable": false,
+      "verification": {
+        "sourcePresent": false,
+        "dependenciesValidated": false,
+        "buildVerified": false,
+        "runtimeTested": false,
+        "playwrightTested": false,
+        "solohostPackageValidated": false,
+        "productionReady": false
+      },
+      "compatibility": {
+        "solohost": false,
+        "solohostStatus": "not-validated"
+      },
+      "deploymentReady": false
+    },
+    {
+      "id": "tryton",
+      "name": "Tryton",
+      "version": "0.0.0-catalog",
+      "description": "Tryton — erp, erp-admin, python",
+      "category": "erp-admin",
+      "kind": "reference",
+      "tags": [
+        "erp",
+        "erp-admin",
+        "python"
+      ],
+      "license": "GPL-3.0",
+      "homepage": "https://github.com/tryton/tryton",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/tryton/tryton"
+      },
+      "verified": false,
+      "instantiable": false,
+      "verification": {
+        "sourcePresent": false,
+        "dependenciesValidated": false,
+        "buildVerified": false,
+        "runtimeTested": false,
+        "playwrightTested": false,
+        "solohostPackageValidated": false,
+        "productionReady": false
+      },
+      "compatibility": {
+        "solohost": false,
+        "solohostStatus": "not-validated"
+      },
+      "deploymentReady": false
+    },
+    {
+      "id": "idempiere",
+      "name": "iDempiere",
+      "version": "0.0.0-catalog",
+      "description": "iDempiere — java, erp, erp-admin",
+      "category": "erp-admin",
+      "kind": "reference",
+      "tags": [
+        "java",
+        "erp",
+        "erp-admin"
+      ],
+      "license": "GPL-2.0",
+      "homepage": "https://github.com/idempiere/idempiere",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/idempiere/idempiere"
+      },
+      "verified": false,
+      "instantiable": false,
+      "verification": {
+        "sourcePresent": false,
+        "dependenciesValidated": false,
+        "buildVerified": false,
+        "runtimeTested": false,
+        "playwrightTested": false,
+        "solohostPackageValidated": false,
+        "productionReady": false
+      },
+      "compatibility": {
+        "solohost": false,
+        "solohostStatus": "not-validated"
+      },
+      "deploymentReady": false
+    },
+    {
+      "id": "medusa",
+      "name": "Medusa",
+      "version": "0.0.0-catalog",
+      "description": "Medusa — ecommerce-marketplace, cart, orders, commerce-api",
+      "category": "ecommerce-marketplace",
+      "kind": "package",
+      "tags": [
+        "ecommerce-marketplace",
+        "cart",
+        "orders",
+        "commerce-api",
+        "node",
+        "typescript"
+      ],
+      "license": "MIT",
+      "homepage": "https://github.com/medusajs/medusa",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/medusajs/medusa"
+      },
+      "verified": false,
+      "instantiable": false,
+      "verification": {
+        "sourcePresent": false,
+        "dependenciesValidated": false,
+        "buildVerified": false,
+        "runtimeTested": false,
+        "playwrightTested": false,
+        "solohostPackageValidated": false,
+        "productionReady": false
+      },
+      "compatibility": {
+        "solohost": false,
+        "solohostStatus": "not-validated"
+      },
+      "deploymentReady": false
+    },
+    {
+      "id": "saleor",
+      "name": "Saleor",
+      "version": "0.0.0-catalog",
+      "description": "Saleor — headless-commerce, graphql, ecommerce-marketplace, python",
+      "category": "ecommerce-marketplace",
+      "kind": "package",
+      "tags": [
+        "headless-commerce",
+        "graphql",
+        "ecommerce-marketplace",
+        "python"
+      ],
+      "license": "BSD-3-Clause",
+      "homepage": "https://github.com/saleor/saleor",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/saleor/saleor"
+      },
+      "verified": false,
+      "instantiable": false,
+      "verification": {
+        "sourcePresent": false,
+        "dependenciesValidated": false,
+        "buildVerified": false,
+        "runtimeTested": false,
+        "playwrightTested": false,
+        "solohostPackageValidated": false,
+        "productionReady": false
+      },
+      "compatibility": {
+        "solohost": false,
+        "solohostStatus": "not-validated"
+      },
+      "deploymentReady": false
+    },
+    {
+      "id": "woocommerce",
+      "name": "WooCommerce",
+      "version": "0.0.0-catalog",
+      "description": "WooCommerce — wordpress, ecommerce-marketplace, shop, payments",
+      "category": "ecommerce-marketplace",
+      "kind": "reference",
+      "tags": [
+        "wordpress",
+        "ecommerce-marketplace",
+        "shop",
+        "payments",
+        "php"
+      ],
+      "license": "GPL-3.0",
+      "homepage": "https://github.com/woocommerce/woocommerce",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/woocommerce/woocommerce"
+      },
+      "verified": false,
+      "instantiable": false,
+      "verification": {
+        "sourcePresent": false,
+        "dependenciesValidated": false,
+        "buildVerified": false,
+        "runtimeTested": false,
+        "playwrightTested": false,
+        "solohostPackageValidated": false,
+        "productionReady": false
+      },
+      "compatibility": {
+        "solohost": false,
+        "solohostStatus": "not-validated"
+      },
+      "deploymentReady": false
+    },
+    {
+      "id": "prestashop",
+      "name": "PrestaShop",
+      "version": "0.0.0-catalog",
+      "description": "PrestaShop — shop, catalog, ecommerce-marketplace, php",
+      "category": "ecommerce-marketplace",
+      "kind": "package",
+      "tags": [
+        "shop",
+        "catalog",
+        "ecommerce-marketplace",
+        "php"
+      ],
+      "license": "OSL-3.0",
+      "homepage": "https://github.com/PrestaShop/PrestaShop",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/PrestaShop/PrestaShop"
+      },
+      "verified": false,
+      "instantiable": false,
+      "verification": {
+        "sourcePresent": false,
+        "dependenciesValidated": false,
+        "buildVerified": false,
+        "runtimeTested": false,
+        "playwrightTested": false,
+        "solohostPackageValidated": false,
+        "productionReady": false
+      },
+      "compatibility": {
+        "solohost": false,
+        "solohostStatus": "not-validated"
+      },
+      "deploymentReady": false
+    },
+    {
+      "id": "opencart",
+      "name": "OpenCart",
+      "version": "0.0.0-catalog",
+      "description": "OpenCart — shop, ecommerce-marketplace, php",
+      "category": "ecommerce-marketplace",
+      "kind": "reference",
+      "tags": [
+        "shop",
+        "ecommerce-marketplace",
+        "php"
+      ],
+      "license": "GPL-3.0",
+      "homepage": "https://github.com/opencart/opencart",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/opencart/opencart"
+      },
+      "verified": false,
+      "instantiable": false,
+      "verification": {
+        "sourcePresent": false,
+        "dependenciesValidated": false,
+        "buildVerified": false,
+        "runtimeTested": false,
+        "playwrightTested": false,
+        "solohostPackageValidated": false,
+        "productionReady": false
+      },
+      "compatibility": {
+        "solohost": false,
+        "solohostStatus": "not-validated"
+      },
+      "deploymentReady": false
+    },
+    {
+      "id": "sylius",
+      "name": "Sylius",
+      "version": "0.0.0-catalog",
+      "description": "Sylius — symfony, ecommerce-marketplace, ecommerce-framework, php",
+      "category": "ecommerce-marketplace",
+      "kind": "reference",
+      "tags": [
+        "symfony",
+        "ecommerce-marketplace",
+        "ecommerce-framework",
+        "php"
+      ],
+      "license": "MIT",
+      "homepage": "https://github.com/Sylius/Sylius",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/Sylius/Sylius"
+      },
+      "verified": false,
+      "instantiable": false,
+      "verification": {
+        "sourcePresent": false,
+        "dependenciesValidated": false,
+        "buildVerified": false,
+        "runtimeTested": false,
+        "playwrightTested": false,
+        "solohostPackageValidated": false,
+        "productionReady": false
+      },
+      "compatibility": {
+        "solohost": false,
+        "solohostStatus": "not-validated"
+      },
+      "deploymentReady": false
+    },
+    {
+      "id": "shopware",
+      "name": "Shopware Community",
+      "version": "0.0.0-catalog",
+      "description": "Shopware Community — shop, headless, ecommerce-marketplace, php",
+      "category": "ecommerce-marketplace",
+      "kind": "package",
+      "tags": [
+        "shop",
+        "headless",
+        "ecommerce-marketplace",
+        "php"
+      ],
+      "license": "MIT",
+      "homepage": "https://github.com/shopware/shopware",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/shopware/shopware"
+      },
+      "verified": false,
+      "instantiable": false,
+      "verification": {
+        "sourcePresent": false,
+        "dependenciesValidated": false,
+        "buildVerified": false,
+        "runtimeTested": false,
+        "playwrightTested": false,
+        "solohostPackageValidated": false,
+        "productionReady": false
+      },
+      "compatibility": {
+        "solohost": false,
+        "solohostStatus": "not-validated"
+      },
+      "deploymentReady": false
+    },
+    {
+      "id": "vendure",
+      "name": "Vendure",
+      "version": "0.0.0-catalog",
+      "description": "Vendure — typescript, ecommerce-marketplace, node, headless-commerce",
+      "category": "ecommerce-marketplace",
+      "kind": "package",
+      "tags": [
+        "typescript",
+        "ecommerce-marketplace",
+        "node",
+        "headless-commerce"
+      ],
+      "license": "GPL-3.0",
+      "homepage": "https://github.com/vendure-ecommerce/vendure",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/vendure-ecommerce/vendure"
+      },
+      "verified": false,
+      "instantiable": false,
+      "verification": {
+        "sourcePresent": false,
+        "dependenciesValidated": false,
+        "buildVerified": false,
+        "runtimeTested": false,
+        "playwrightTested": false,
+        "solohostPackageValidated": false,
+        "productionReady": false
+      },
+      "compatibility": {
+        "solohost": false,
+        "solohostStatus": "not-validated"
+      },
+      "deploymentReady": false
+    },
+    {
+      "id": "bagisto",
+      "name": "Bagisto",
+      "version": "0.0.0-catalog",
+      "description": "Bagisto — ecommerce-marketplace, shop, multi-vendor, php",
+      "category": "ecommerce-marketplace",
+      "kind": "package",
+      "tags": [
+        "ecommerce-marketplace",
+        "shop",
+        "multi-vendor",
+        "php",
+        "laravel"
+      ],
+      "license": "MIT",
+      "homepage": "https://github.com/bagisto/bagisto",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/bagisto/bagisto"
+      },
+      "verified": false,
+      "instantiable": false,
+      "verification": {
+        "sourcePresent": false,
+        "dependenciesValidated": false,
+        "buildVerified": false,
+        "runtimeTested": false,
+        "playwrightTested": false,
+        "solohostPackageValidated": false,
+        "productionReady": false
+      },
+      "compatibility": {
+        "solohost": false,
+        "solohostStatus": "not-validated"
+      },
+      "deploymentReady": false
+    },
+    {
+      "id": "evershop",
+      "name": "EverShop",
+      "version": "0.0.0-catalog",
+      "description": "EverShop — shop, ecommerce-marketplace, node",
+      "category": "ecommerce-marketplace",
+      "kind": "reference",
+      "tags": [
+        "shop",
+        "ecommerce-marketplace",
+        "node"
+      ],
+      "license": "GPL-3.0",
+      "homepage": "https://github.com/evershopcommerce/evershop",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/evershopcommerce/evershop"
+      },
+      "verified": false,
+      "instantiable": false,
+      "verification": {
+        "sourcePresent": false,
+        "dependenciesValidated": false,
+        "buildVerified": false,
+        "runtimeTested": false,
+        "playwrightTested": false,
+        "solohostPackageValidated": false,
+        "productionReady": false
+      },
+      "compatibility": {
+        "solohost": false,
+        "solohostStatus": "not-validated"
+      },
+      "deploymentReady": false
+    },
+    {
+      "id": "mastodon",
+      "name": "Mastodon",
+      "version": "0.0.0-catalog",
+      "description": "Mastodon — ruby, social, fediverse, social-community",
+      "category": "social-community",
+      "kind": "package",
+      "tags": [
+        "ruby",
+        "social",
+        "fediverse",
+        "social-community",
+        "docker"
+      ],
+      "license": "AGPL-3.0",
+      "homepage": "https://github.com/mastodon/mastodon",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/mastodon/mastodon"
+      },
+      "verified": false,
+      "instantiable": false,
+      "verification": {
+        "sourcePresent": false,
+        "dependenciesValidated": false,
+        "buildVerified": false,
+        "runtimeTested": false,
+        "playwrightTested": false,
+        "solohostPackageValidated": false,
+        "productionReady": false
+      },
+      "compatibility": {
+        "solohost": false,
+        "solohostStatus": "not-validated"
+      },
+      "deploymentReady": false
+    },
+    {
+      "id": "misskey",
+      "name": "Misskey",
+      "version": "0.0.0-catalog",
+      "description": "Misskey — fediverse, social-community, docker, notes",
+      "category": "social-community",
+      "kind": "package",
+      "tags": [
+        "fediverse",
+        "social-community",
+        "docker",
+        "notes",
+        "typescript"
+      ],
+      "license": "AGPL-3.0",
+      "homepage": "https://github.com/misskey-dev/misskey",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/misskey-dev/misskey"
+      },
+      "verified": false,
+      "instantiable": false,
+      "verification": {
+        "sourcePresent": false,
+        "dependenciesValidated": false,
+        "buildVerified": false,
+        "runtimeTested": false,
+        "playwrightTested": false,
+        "solohostPackageValidated": false,
+        "productionReady": false
+      },
+      "compatibility": {
+        "solohost": false,
+        "solohostStatus": "not-validated"
+      },
+      "deploymentReady": false
+    },
+    {
+      "id": "lemmy",
+      "name": "Lemmy",
+      "version": "0.0.0-catalog",
+      "description": "Lemmy — fediverse, social-community, docker, link-aggregator",
+      "category": "social-community",
+      "kind": "package",
+      "tags": [
+        "fediverse",
+        "social-community",
+        "docker",
+        "link-aggregator",
+        "rust"
+      ],
+      "license": "AGPL-3.0",
+      "homepage": "https://github.com/LemmyNet/lemmy",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/LemmyNet/lemmy"
+      },
+      "verified": false,
+      "instantiable": false,
+      "verification": {
+        "sourcePresent": false,
+        "dependenciesValidated": false,
+        "buildVerified": false,
+        "runtimeTested": false,
+        "playwrightTested": false,
+        "solohostPackageValidated": false,
+        "productionReady": false
+      },
+      "compatibility": {
+        "solohost": false,
+        "solohostStatus": "not-validated"
+      },
+      "deploymentReady": false
+    },
+    {
+      "id": "discourse",
+      "name": "Discourse",
+      "version": "0.0.0-catalog",
+      "description": "Discourse — ruby, forum, social-community, docker",
+      "category": "social-community",
+      "kind": "package",
+      "tags": [
+        "ruby",
+        "forum",
+        "social-community",
+        "docker",
+        "community"
+      ],
+      "license": "GPL-2.0",
+      "homepage": "https://github.com/discourse/discourse",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/discourse/discourse"
+      },
+      "verified": false,
+      "instantiable": false,
+      "verification": {
+        "sourcePresent": false,
+        "dependenciesValidated": false,
+        "buildVerified": false,
+        "runtimeTested": false,
+        "playwrightTested": false,
+        "solohostPackageValidated": false,
+        "productionReady": false
+      },
+      "compatibility": {
+        "solohost": false,
+        "solohostStatus": "not-validated"
+      },
+      "deploymentReady": false
+    },
+    {
+      "id": "flarum",
+      "name": "Flarum",
+      "version": "0.0.0-catalog",
+      "description": "Flarum — social-community, forum, php",
+      "category": "social-community",
+      "kind": "package",
+      "tags": [
+        "social-community",
+        "forum",
+        "php"
+      ],
+      "license": "MIT",
+      "homepage": "https://github.com/flarum/flarum",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/flarum/flarum"
+      },
+      "verified": false,
+      "instantiable": false,
+      "verification": {
+        "sourcePresent": false,
+        "dependenciesValidated": false,
+        "buildVerified": false,
+        "runtimeTested": false,
+        "playwrightTested": false,
+        "solohostPackageValidated": false,
+        "productionReady": false
+      },
+      "compatibility": {
+        "solohost": false,
+        "solohostStatus": "not-validated"
+      },
+      "deploymentReady": false
+    },
+    {
+      "id": "nodebb",
+      "name": "NodeBB",
+      "version": "0.0.0-catalog",
+      "description": "NodeBB — social-community, forum, realtime, node",
+      "category": "social-community",
+      "kind": "package",
+      "tags": [
+        "social-community",
+        "forum",
+        "realtime",
+        "node"
+      ],
+      "license": "GPL-3.0",
+      "homepage": "https://github.com/NodeBB/NodeBB",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/NodeBB/NodeBB"
+      },
+      "verified": false,
+      "instantiable": false,
+      "verification": {
+        "sourcePresent": false,
+        "dependenciesValidated": false,
+        "buildVerified": false,
+        "runtimeTested": false,
+        "playwrightTested": false,
+        "solohostPackageValidated": false,
+        "productionReady": false
+      },
+      "compatibility": {
+        "solohost": false,
+        "solohostStatus": "not-validated"
+      },
+      "deploymentReady": false
+    },
+    {
+      "id": "humhub",
+      "name": "HumHub",
+      "version": "0.0.0-catalog",
+      "description": "HumHub — social-community, social-network, intranet, php",
+      "category": "social-community",
+      "kind": "package",
+      "tags": [
+        "social-community",
+        "social-network",
+        "intranet",
+        "php"
+      ],
+      "license": "AGPL-3.0",
+      "homepage": "https://github.com/humhub/humhub",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/humhub/humhub"
+      },
+      "verified": false,
+      "instantiable": false,
+      "verification": {
+        "sourcePresent": false,
+        "dependenciesValidated": false,
+        "buildVerified": false,
+        "runtimeTested": false,
+        "playwrightTested": false,
+        "solohostPackageValidated": false,
+        "productionReady": false
+      },
+      "compatibility": {
+        "solohost": false,
+        "solohostStatus": "not-validated"
+      },
+      "deploymentReady": false
+    },
+    {
+      "id": "elgg",
+      "name": "Elgg",
+      "version": "0.0.0-catalog",
+      "description": "Elgg — social-community, social-framework, php",
+      "category": "social-community",
+      "kind": "reference",
+      "tags": [
+        "social-community",
+        "social-framework",
+        "php"
+      ],
+      "license": "MIT",
+      "homepage": "https://github.com/Elgg/Elgg",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/Elgg/Elgg"
+      },
+      "verified": false,
+      "instantiable": false,
+      "verification": {
+        "sourcePresent": false,
+        "dependenciesValidated": false,
+        "buildVerified": false,
+        "runtimeTested": false,
+        "playwrightTested": false,
+        "solohostPackageValidated": false,
+        "productionReady": false
+      },
+      "compatibility": {
+        "solohost": false,
+        "solohostStatus": "not-validated"
+      },
+      "deploymentReady": false
+    },
+    {
+      "id": "pixelfed",
+      "name": "Pixelfed",
+      "version": "0.0.0-catalog",
+      "description": "Pixelfed — fediverse, social-community, docker, photos",
+      "category": "social-community",
+      "kind": "package",
+      "tags": [
+        "fediverse",
+        "social-community",
+        "docker",
+        "photos",
+        "php"
+      ],
+      "license": "AGPL-3.0",
+      "homepage": "https://github.com/pixelfed/pixelfed",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/pixelfed/pixelfed"
+      },
+      "verified": false,
+      "instantiable": false,
+      "verification": {
+        "sourcePresent": false,
+        "dependenciesValidated": false,
+        "buildVerified": false,
+        "runtimeTested": false,
+        "playwrightTested": false,
+        "solohostPackageValidated": false,
+        "productionReady": false
+      },
+      "compatibility": {
+        "solohost": false,
+        "solohostStatus": "not-validated"
+      },
+      "deploymentReady": false
+    },
+    {
+      "id": "peertube",
+      "name": "PeerTube",
+      "version": "0.0.0-catalog",
+      "description": "PeerTube — video, fediverse, media-streaming, docker",
+      "category": "media-streaming",
+      "kind": "package",
+      "tags": [
+        "video",
+        "fediverse",
+        "media-streaming",
+        "docker",
+        "typescript"
+      ],
+      "license": "AGPL-3.0",
+      "homepage": "https://github.com/Chocobozzz/PeerTube",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/Chocobozzz/PeerTube"
+      },
+      "verified": false,
+      "instantiable": false,
+      "verification": {
+        "sourcePresent": false,
+        "dependenciesValidated": false,
+        "buildVerified": false,
+        "runtimeTested": false,
+        "playwrightTested": false,
+        "solohostPackageValidated": false,
+        "productionReady": false
+      },
+      "compatibility": {
+        "solohost": false,
+        "solohostStatus": "not-validated"
+      },
+      "deploymentReady": false
+    },
+    {
+      "id": "mattermost",
+      "name": "Mattermost",
+      "version": "0.0.0-catalog",
+      "description": "Mattermost — go, integrations, react, docker",
+      "category": "chat-communication",
+      "kind": "package",
+      "tags": [
+        "go",
+        "integrations",
+        "react",
+        "docker",
+        "chat-communication",
+        "team-chat"
+      ],
+      "license": "Apache-2.0",
+      "homepage": "https://github.com/mattermost/mattermost",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/mattermost/mattermost"
+      },
+      "verified": false,
+      "instantiable": false,
+      "verification": {
+        "sourcePresent": false,
+        "dependenciesValidated": false,
+        "buildVerified": false,
+        "runtimeTested": false,
+        "playwrightTested": false,
+        "solohostPackageValidated": false,
+        "productionReady": false
+      },
+      "compatibility": {
+        "solohost": false,
+        "solohostStatus": "not-validated"
+      },
+      "deploymentReady": false
+    },
+    {
+      "id": "rocketchat",
+      "name": "Rocket.Chat",
+      "version": "0.0.0-catalog",
+      "description": "Rocket.Chat — omnichannel, chat-communication, docker, typescript",
+      "category": "chat-communication",
+      "kind": "package",
+      "tags": [
+        "omnichannel",
+        "chat-communication",
+        "docker",
+        "typescript",
+        "team-chat"
+      ],
+      "license": "MIT",
+      "homepage": "https://github.com/RocketChat/Rocket.Chat",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/RocketChat/Rocket.Chat"
+      },
+      "verified": false,
+      "instantiable": false,
+      "verification": {
+        "sourcePresent": false,
+        "dependenciesValidated": false,
+        "buildVerified": false,
+        "runtimeTested": false,
+        "playwrightTested": false,
+        "solohostPackageValidated": false,
+        "productionReady": false
+      },
+      "compatibility": {
+        "solohost": false,
+        "solohostStatus": "not-validated"
+      },
+      "deploymentReady": false
+    },
+    {
+      "id": "element-web",
+      "name": "Element Web",
+      "version": "0.0.0-catalog",
+      "description": "Element Web — chat-communication, matrix-client, typescript",
+      "category": "chat-communication",
+      "kind": "reference",
+      "tags": [
+        "chat-communication",
+        "matrix-client",
+        "typescript"
+      ],
+      "license": "Apache-2.0",
+      "homepage": "https://github.com/element-hq/element-web",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/element-hq/element-web"
+      },
+      "verified": false,
+      "instantiable": false,
+      "verification": {
+        "sourcePresent": false,
+        "dependenciesValidated": false,
+        "buildVerified": false,
+        "runtimeTested": false,
+        "playwrightTested": false,
+        "solohostPackageValidated": false,
+        "productionReady": false
+      },
+      "compatibility": {
+        "solohost": false,
+        "solohostStatus": "not-validated"
+      },
+      "deploymentReady": false
+    },
+    {
+      "id": "synapse",
+      "name": "Matrix Synapse",
+      "version": "0.0.0-catalog",
+      "description": "Matrix Synapse — docker, chat-communication, matrix-server, python",
+      "category": "chat-communication",
+      "kind": "package",
+      "tags": [
+        "docker",
+        "chat-communication",
+        "matrix-server",
+        "python"
+      ],
+      "license": "AGPL-3.0",
+      "homepage": "https://github.com/element-hq/synapse",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/element-hq/synapse"
+      },
+      "verified": false,
+      "instantiable": false,
+      "verification": {
+        "sourcePresent": false,
+        "dependenciesValidated": false,
+        "buildVerified": false,
+        "runtimeTested": false,
+        "playwrightTested": false,
+        "solohostPackageValidated": false,
+        "productionReady": false
+      },
+      "compatibility": {
+        "solohost": false,
+        "solohostStatus": "not-validated"
+      },
+      "deploymentReady": false
+    },
+    {
+      "id": "zulip",
+      "name": "Zulip",
+      "version": "0.0.0-catalog",
+      "description": "Zulip — team-chat, docker, chat-communication, python",
+      "category": "chat-communication",
+      "kind": "package",
+      "tags": [
+        "team-chat",
+        "docker",
+        "chat-communication",
+        "python",
+        "topics"
+      ],
+      "license": "Apache-2.0",
+      "homepage": "https://github.com/zulip/zulip",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/zulip/zulip"
+      },
+      "verified": false,
+      "instantiable": false,
+      "verification": {
+        "sourcePresent": false,
+        "dependenciesValidated": false,
+        "buildVerified": false,
+        "runtimeTested": false,
+        "playwrightTested": false,
+        "solohostPackageValidated": false,
+        "productionReady": false
+      },
+      "compatibility": {
+        "solohost": false,
+        "solohostStatus": "not-validated"
+      },
+      "deploymentReady": false
+    },
+    {
+      "id": "revolt",
+      "name": "Revolt",
+      "version": "0.0.0-catalog",
+      "description": "Revolt — chat-communication, chat, typescript, rust",
+      "category": "chat-communication",
+      "kind": "reference",
+      "tags": [
+        "chat-communication",
+        "chat",
+        "typescript",
+        "rust"
+      ],
+      "license": "AGPL-3.0",
+      "homepage": "https://github.com/revoltchat/revolt",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/revoltchat/revolt"
+      },
+      "verified": false,
+      "instantiable": false,
+      "verification": {
+        "sourcePresent": false,
+        "dependenciesValidated": false,
+        "buildVerified": false,
+        "runtimeTested": false,
+        "playwrightTested": false,
+        "solohostPackageValidated": false,
+        "productionReady": false
+      },
+      "compatibility": {
+        "solohost": false,
+        "solohostStatus": "not-validated"
+      },
+      "deploymentReady": false
+    },
+    {
+      "id": "chatwoot",
+      "name": "Chatwoot",
+      "version": "0.0.0-catalog",
+      "description": "Chatwoot — ruby, docker, chat-communication, inbox",
+      "category": "chat-communication",
+      "kind": "package",
+      "tags": [
+        "ruby",
+        "docker",
+        "chat-communication",
+        "inbox",
+        "customer-support"
+      ],
+      "license": "MIT",
+      "homepage": "https://github.com/chatwoot/chatwoot",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/chatwoot/chatwoot"
+      },
+      "verified": false,
+      "instantiable": false,
+      "verification": {
+        "sourcePresent": false,
+        "dependenciesValidated": false,
+        "buildVerified": false,
+        "runtimeTested": false,
+        "playwrightTested": false,
+        "solohostPackageValidated": false,
+        "productionReady": false
+      },
+      "compatibility": {
+        "solohost": false,
+        "solohostStatus": "not-validated"
+      },
+      "deploymentReady": false
+    },
+    {
+      "id": "livehelperchat",
+      "name": "Live Helper Chat",
+      "version": "0.0.0-catalog",
+      "description": "Live Helper Chat — live-chat, chat-communication, support, php",
+      "category": "chat-communication",
+      "kind": "reference",
+      "tags": [
+        "live-chat",
+        "chat-communication",
+        "support",
+        "php"
+      ],
+      "license": "Apache-2.0",
+      "homepage": "https://github.com/LiveHelperChat/livehelperchat",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/LiveHelperChat/livehelperchat"
+      },
+      "verified": false,
+      "instantiable": false,
+      "verification": {
+        "sourcePresent": false,
+        "dependenciesValidated": false,
+        "buildVerified": false,
+        "runtimeTested": false,
+        "playwrightTested": false,
+        "solohostPackageValidated": false,
+        "productionReady": false
+      },
+      "compatibility": {
+        "solohost": false,
+        "solohostStatus": "not-validated"
+      },
+      "deploymentReady": false
+    },
+    {
+      "id": "jellyfin",
+      "name": "Jellyfin",
+      "version": "0.0.0-catalog",
+      "description": "Jellyfin — transcode, csharp, media-server, media-streaming",
+      "category": "media-streaming",
+      "kind": "package",
+      "tags": [
+        "transcode",
+        "csharp",
+        "media-server",
+        "media-streaming",
+        "docker"
+      ],
+      "license": "GPL-2.0",
+      "homepage": "https://github.com/jellyfin/jellyfin",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/jellyfin/jellyfin"
+      },
+      "verified": false,
+      "instantiable": false,
+      "verification": {
+        "sourcePresent": false,
+        "dependenciesValidated": false,
+        "buildVerified": false,
+        "runtimeTested": false,
+        "playwrightTested": false,
+        "solohostPackageValidated": false,
+        "productionReady": false
+      },
+      "compatibility": {
+        "solohost": false,
+        "solohostStatus": "not-validated"
+      },
+      "deploymentReady": false
+    },
+    {
+      "id": "navidrome",
+      "name": "Navidrome",
+      "version": "0.0.0-catalog",
+      "description": "Navidrome — go, music, media-streaming, docker",
+      "category": "media-streaming",
+      "kind": "package",
+      "tags": [
+        "go",
+        "music",
+        "media-streaming",
+        "docker",
+        "subsonic"
+      ],
+      "license": "GPL-3.0",
+      "homepage": "https://github.com/navidrome/navidrome",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/navidrome/navidrome"
+      },
+      "verified": false,
+      "instantiable": false,
+      "verification": {
+        "sourcePresent": false,
+        "dependenciesValidated": false,
+        "buildVerified": false,
+        "runtimeTested": false,
+        "playwrightTested": false,
+        "solohostPackageValidated": false,
+        "productionReady": false
+      },
+      "compatibility": {
+        "solohost": false,
+        "solohostStatus": "not-validated"
+      },
+      "deploymentReady": false
+    },
+    {
+      "id": "immich",
+      "name": "Immich",
+      "version": "0.0.0-catalog",
+      "description": "Immich — backup, media-streaming, docker, photos",
+      "category": "media-streaming",
+      "kind": "package",
+      "tags": [
+        "backup",
+        "media-streaming",
+        "docker",
+        "photos",
+        "ml",
+        "typescript"
+      ],
+      "license": "AGPL-3.0",
+      "homepage": "https://github.com/immich-app/immich",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/immich-app/immich"
+      },
+      "verified": false,
+      "instantiable": false,
+      "verification": {
+        "sourcePresent": false,
+        "dependenciesValidated": false,
+        "buildVerified": false,
+        "runtimeTested": false,
+        "playwrightTested": false,
+        "solohostPackageValidated": false,
+        "productionReady": false
+      },
+      "compatibility": {
+        "solohost": false,
+        "solohostStatus": "not-validated"
+      },
+      "deploymentReady": false
+    },
+    {
+      "id": "photoprism",
+      "name": "PhotoPrism",
+      "version": "0.0.0-catalog",
+      "description": "PhotoPrism — go, ai-labeling, media-streaming, docker",
+      "category": "media-streaming",
+      "kind": "package",
+      "tags": [
+        "go",
+        "ai-labeling",
+        "media-streaming",
+        "docker",
+        "photos"
+      ],
+      "license": "AGPL-3.0",
+      "homepage": "https://github.com/photoprism/photoprism",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/photoprism/photoprism"
+      },
+      "verified": false,
+      "instantiable": false,
+      "verification": {
+        "sourcePresent": false,
+        "dependenciesValidated": false,
+        "buildVerified": false,
+        "runtimeTested": false,
+        "playwrightTested": false,
+        "solohostPackageValidated": false,
+        "productionReady": false
+      },
+      "compatibility": {
+        "solohost": false,
+        "solohostStatus": "not-validated"
+      },
+      "deploymentReady": false
+    },
+    {
+      "id": "owncast",
+      "name": "Owncast",
+      "version": "0.0.0-catalog",
+      "description": "Owncast — go, docker, live-streaming, media-streaming",
+      "category": "media-streaming",
+      "kind": "package",
+      "tags": [
+        "go",
+        "docker",
+        "live-streaming",
+        "media-streaming"
+      ],
+      "license": "MIT",
+      "homepage": "https://github.com/owncast/owncast",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/owncast/owncast"
+      },
+      "verified": false,
+      "instantiable": false,
+      "verification": {
+        "sourcePresent": false,
+        "dependenciesValidated": false,
+        "buildVerified": false,
+        "runtimeTested": false,
+        "playwrightTested": false,
+        "solohostPackageValidated": false,
+        "productionReady": false
+      },
+      "compatibility": {
+        "solohost": false,
+        "solohostStatus": "not-validated"
+      },
+      "deploymentReady": false
+    },
+    {
+      "id": "invidious",
+      "name": "Invidious",
+      "version": "0.0.0-catalog",
+      "description": "Invidious — crystal, docker, youtube-frontend, media-streaming",
+      "category": "media-streaming",
+      "kind": "package",
+      "tags": [
+        "crystal",
+        "docker",
+        "youtube-frontend",
+        "media-streaming"
+      ],
+      "license": "AGPL-3.0",
+      "homepage": "https://github.com/iv-org/invidious",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/iv-org/invidious"
+      },
+      "verified": false,
+      "instantiable": false,
+      "verification": {
+        "sourcePresent": false,
+        "dependenciesValidated": false,
+        "buildVerified": false,
+        "runtimeTested": false,
+        "playwrightTested": false,
+        "solohostPackageValidated": false,
+        "productionReady": false
+      },
+      "compatibility": {
+        "solohost": false,
+        "solohostStatus": "not-validated"
+      },
+      "deploymentReady": false
+    },
+    {
+      "id": "gitea",
+      "name": "Gitea",
+      "version": "0.0.0-catalog",
+      "description": "Gitea — go, git, issues, docker",
+      "category": "developer-api",
+      "kind": "package",
+      "tags": [
+        "go",
+        "git",
+        "issues",
+        "docker",
+        "developer-api",
+        "ci"
+      ],
+      "license": "MIT",
+      "homepage": "https://github.com/go-gitea/gitea",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/go-gitea/gitea"
+      },
+      "verified": false,
+      "instantiable": false,
+      "verification": {
+        "sourcePresent": false,
+        "dependenciesValidated": false,
+        "buildVerified": false,
+        "runtimeTested": false,
+        "playwrightTested": false,
+        "solohostPackageValidated": false,
+        "productionReady": false
+      },
+      "compatibility": {
+        "solohost": false,
+        "solohostStatus": "not-validated"
+      },
+      "deploymentReady": false
+    },
+    {
+      "id": "gitlab-ce",
+      "name": "GitLab CE",
+      "version": "0.0.0-catalog",
+      "description": "GitLab CE — ruby, git, docker, devops",
+      "category": "developer-api",
+      "kind": "package",
+      "tags": [
+        "ruby",
+        "git",
+        "docker",
+        "devops",
+        "developer-api",
+        "ci"
+      ],
+      "license": "MIT",
+      "homepage": "https://gitlab.com/gitlab-org/gitlab-foss",
+      "source": {
+        "type": "github",
+        "url": "https://gitlab.com/gitlab-org/gitlab-foss"
+      },
+      "verified": false,
+      "instantiable": false,
+      "verification": {
+        "sourcePresent": false,
+        "dependenciesValidated": false,
+        "buildVerified": false,
+        "runtimeTested": false,
+        "playwrightTested": false,
+        "solohostPackageValidated": false,
+        "productionReady": false
+      },
+      "compatibility": {
+        "solohost": false,
+        "solohostStatus": "not-validated"
+      },
+      "deploymentReady": false
+    },
+    {
+      "id": "forgejo",
+      "name": "Forgejo",
+      "version": "0.0.0-catalog",
+      "description": "Forgejo — go, git, docker, forge",
+      "category": "developer-api",
+      "kind": "package",
+      "tags": [
+        "go",
+        "git",
+        "docker",
+        "forge",
+        "developer-api"
+      ],
+      "license": "GPL-3.0",
+      "homepage": "https://codeberg.org/forgejo/forgejo",
+      "source": {
+        "type": "github",
+        "url": "https://codeberg.org/forgejo/forgejo"
+      },
+      "verified": false,
+      "instantiable": false,
+      "verification": {
+        "sourcePresent": false,
+        "dependenciesValidated": false,
+        "buildVerified": false,
+        "runtimeTested": false,
+        "playwrightTested": false,
+        "solohostPackageValidated": false,
+        "productionReady": false
+      },
+      "compatibility": {
+        "solohost": false,
+        "solohostStatus": "not-validated"
+      },
+      "deploymentReady": false
+    },
+    {
+      "id": "portainer-ce",
+      "name": "Portainer CE",
+      "version": "0.0.0-catalog",
+      "description": "Portainer CE — go, docker, container-ui, developer-api",
+      "category": "developer-api",
+      "kind": "package",
+      "tags": [
+        "go",
+        "docker",
+        "container-ui",
+        "developer-api"
+      ],
+      "license": "Zlib",
+      "homepage": "https://github.com/portainer/portainer",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/portainer/portainer"
+      },
+      "verified": false,
+      "instantiable": false,
+      "verification": {
+        "sourcePresent": false,
+        "dependenciesValidated": false,
+        "buildVerified": false,
+        "runtimeTested": false,
+        "playwrightTested": false,
+        "solohostPackageValidated": false,
+        "productionReady": false
+      },
+      "compatibility": {
+        "solohost": false,
+        "solohostStatus": "not-validated"
+      },
+      "deploymentReady": false
+    },
+    {
+      "id": "uptime-kuma",
+      "name": "Uptime Kuma",
+      "version": "0.0.0-catalog",
+      "description": "Uptime Kuma — monitoring-analytics, alerts, status-page, docker",
+      "category": "monitoring-analytics",
+      "kind": "package",
+      "tags": [
+        "monitoring-analytics",
+        "alerts",
+        "status-page",
+        "docker",
+        "uptime",
+        "node"
+      ],
+      "license": "MIT",
+      "homepage": "https://github.com/louislam/uptime-kuma",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/louislam/uptime-kuma"
+      },
+      "verified": false,
+      "instantiable": false,
+      "verification": {
+        "sourcePresent": false,
+        "dependenciesValidated": false,
+        "buildVerified": false,
+        "runtimeTested": false,
+        "playwrightTested": false,
+        "solohostPackageValidated": false,
+        "productionReady": false
+      },
+      "compatibility": {
+        "solohost": false,
+        "solohostStatus": "not-validated"
+      },
+      "deploymentReady": false
+    },
+    {
+      "id": "grafana",
+      "name": "Grafana",
+      "version": "0.0.0-catalog",
+      "description": "Grafana — go, monitoring-analytics, docker, dashboards",
+      "category": "monitoring-analytics",
+      "kind": "package",
+      "tags": [
+        "go",
+        "monitoring-analytics",
+        "docker",
+        "dashboards",
+        "typescript",
+        "metrics"
+      ],
+      "license": "AGPL-3.0",
+      "homepage": "https://github.com/grafana/grafana",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/grafana/grafana"
+      },
+      "verified": false,
+      "instantiable": false,
+      "verification": {
+        "sourcePresent": false,
+        "dependenciesValidated": false,
+        "buildVerified": false,
+        "runtimeTested": false,
+        "playwrightTested": false,
+        "solohostPackageValidated": false,
+        "productionReady": false
+      },
+      "compatibility": {
+        "solohost": false,
+        "solohostStatus": "not-validated"
+      },
+      "deploymentReady": false
+    },
+    {
+      "id": "prometheus",
+      "name": "Prometheus",
+      "version": "0.0.0-catalog",
+      "description": "Prometheus — go, monitoring-analytics, alerting, docker",
+      "category": "monitoring-analytics",
+      "kind": "package",
+      "tags": [
+        "go",
+        "monitoring-analytics",
+        "alerting",
+        "docker",
+        "metrics"
+      ],
+      "license": "Apache-2.0",
+      "homepage": "https://github.com/prometheus/prometheus",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/prometheus/prometheus"
+      },
+      "verified": false,
+      "instantiable": false,
+      "verification": {
+        "sourcePresent": false,
+        "dependenciesValidated": false,
+        "buildVerified": false,
+        "runtimeTested": false,
+        "playwrightTested": false,
+        "solohostPackageValidated": false,
+        "productionReady": false
+      },
+      "compatibility": {
+        "solohost": false,
+        "solohostStatus": "not-validated"
+      },
+      "deploymentReady": false
+    },
+    {
+      "id": "netdata",
+      "name": "Netdata",
+      "version": "0.0.0-catalog",
+      "description": "Netdata — realtime-metrics, docker, monitoring-analytics, c",
+      "category": "monitoring-analytics",
+      "kind": "package",
+      "tags": [
+        "realtime-metrics",
+        "docker",
+        "monitoring-analytics",
+        "c"
+      ],
+      "license": "GPL-3.0",
+      "homepage": "https://github.com/netdata/netdata",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/netdata/netdata"
+      },
+      "verified": false,
+      "instantiable": false,
+      "verification": {
+        "sourcePresent": false,
+        "dependenciesValidated": false,
+        "buildVerified": false,
+        "runtimeTested": false,
+        "playwrightTested": false,
+        "solohostPackageValidated": false,
+        "productionReady": false
+      },
+      "compatibility": {
+        "solohost": false,
+        "solohostStatus": "not-validated"
+      },
+      "deploymentReady": false
+    },
+    {
+      "id": "plausible",
+      "name": "Plausible Analytics",
+      "version": "0.0.0-catalog",
+      "description": "Plausible Analytics — monitoring-analytics, elixir, web-analytics, privacy",
+      "category": "monitoring-analytics",
+      "kind": "package",
+      "tags": [
+        "monitoring-analytics",
+        "elixir",
+        "web-analytics",
+        "privacy",
+        "docker"
+      ],
+      "license": "AGPL-3.0",
+      "homepage": "https://github.com/plausible/analytics",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/plausible/analytics"
+      },
+      "verified": false,
+      "instantiable": false,
+      "verification": {
+        "sourcePresent": false,
+        "dependenciesValidated": false,
+        "buildVerified": false,
+        "runtimeTested": false,
+        "playwrightTested": false,
+        "solohostPackageValidated": false,
+        "productionReady": false
+      },
+      "compatibility": {
+        "solohost": false,
+        "solohostStatus": "not-validated"
+      },
+      "deploymentReady": false
+    },
+    {
+      "id": "umami",
+      "name": "Umami",
+      "version": "0.0.0-catalog",
+      "description": "Umami — docker, monitoring-analytics, web-analytics, nextjs",
+      "category": "monitoring-analytics",
+      "kind": "package",
+      "tags": [
+        "docker",
+        "monitoring-analytics",
+        "web-analytics",
+        "nextjs"
+      ],
+      "license": "MIT",
+      "homepage": "https://github.com/umami-software/umami",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/umami-software/umami"
+      },
+      "verified": false,
+      "instantiable": false,
+      "verification": {
+        "sourcePresent": false,
+        "dependenciesValidated": false,
+        "buildVerified": false,
+        "runtimeTested": false,
+        "playwrightTested": false,
+        "solohostPackageValidated": false,
+        "productionReady": false
+      },
+      "compatibility": {
+        "solohost": false,
+        "solohostStatus": "not-validated"
+      },
+      "deploymentReady": false
+    },
+    {
+      "id": "posthog",
+      "name": "PostHog",
+      "version": "0.0.0-catalog",
+      "description": "PostHog — monitoring-analytics, docker, python, feature-flags",
+      "category": "monitoring-analytics",
+      "kind": "package",
+      "tags": [
+        "monitoring-analytics",
+        "docker",
+        "python",
+        "feature-flags",
+        "product-analytics"
+      ],
+      "license": "MIT",
+      "homepage": "https://github.com/PostHog/posthog",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/PostHog/posthog"
+      },
+      "verified": false,
+      "instantiable": false,
+      "verification": {
+        "sourcePresent": false,
+        "dependenciesValidated": false,
+        "buildVerified": false,
+        "runtimeTested": false,
+        "playwrightTested": false,
+        "solohostPackageValidated": false,
+        "productionReady": false
+      },
+      "compatibility": {
+        "solohost": false,
+        "solohostStatus": "not-validated"
+      },
+      "deploymentReady": false
+    },
+    {
+      "id": "nocodb",
+      "name": "NocoDB",
+      "version": "0.0.0-catalog",
+      "description": "NocoDB — database-ui, docker, node, airtable-alternative",
+      "category": "developer-api",
+      "kind": "package",
+      "tags": [
+        "database-ui",
+        "docker",
+        "node",
+        "airtable-alternative",
+        "developer-api"
+      ],
+      "license": "AGPL-3.0",
+      "homepage": "https://github.com/nocodb/nocodb",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/nocodb/nocodb"
+      },
+      "verified": false,
+      "instantiable": false,
+      "verification": {
+        "sourcePresent": false,
+        "dependenciesValidated": false,
+        "buildVerified": false,
+        "runtimeTested": false,
+        "playwrightTested": false,
+        "solohostPackageValidated": false,
+        "productionReady": false
+      },
+      "compatibility": {
+        "solohost": false,
+        "solohostStatus": "not-validated"
+      },
+      "deploymentReady": false
+    },
+    {
+      "id": "appsmith",
+      "name": "Appsmith",
+      "version": "0.0.0-catalog",
+      "description": "Appsmith — java, admin-panels, docker, developer-api",
+      "category": "developer-api",
+      "kind": "package",
+      "tags": [
+        "java",
+        "admin-panels",
+        "docker",
+        "developer-api",
+        "typescript",
+        "low-code"
+      ],
+      "license": "Apache-2.0",
+      "homepage": "https://github.com/appsmithorg/appsmith",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/appsmithorg/appsmith"
+      },
+      "verified": false,
+      "instantiable": false,
+      "verification": {
+        "sourcePresent": false,
+        "dependenciesValidated": false,
+        "buildVerified": false,
+        "runtimeTested": false,
+        "playwrightTested": false,
+        "solohostPackageValidated": false,
+        "productionReady": false
+      },
+      "compatibility": {
+        "solohost": false,
+        "solohostStatus": "not-validated"
+      },
+      "deploymentReady": false
+    },
+    {
+      "id": "tooljet",
+      "name": "ToolJet",
+      "version": "0.0.0-catalog",
+      "description": "ToolJet — internal-tools, docker, node, developer-api",
+      "category": "developer-api",
+      "kind": "package",
+      "tags": [
+        "internal-tools",
+        "docker",
+        "node",
+        "developer-api",
+        "low-code"
+      ],
+      "license": "GPL-3.0",
+      "homepage": "https://github.com/ToolJet/ToolJet",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/ToolJet/ToolJet"
+      },
+      "verified": false,
+      "instantiable": false,
+      "verification": {
+        "sourcePresent": false,
+        "dependenciesValidated": false,
+        "buildVerified": false,
+        "runtimeTested": false,
+        "playwrightTested": false,
+        "solohostPackageValidated": false,
+        "productionReady": false
+      },
+      "compatibility": {
+        "solohost": false,
+        "solohostStatus": "not-validated"
+      },
+      "deploymentReady": false
+    },
+    {
+      "id": "directus",
+      "name": "Directus",
+      "version": "0.0.0-catalog",
+      "description": "Directus — api, headless-cms, docker, node",
+      "category": "developer-api",
+      "kind": "package",
+      "tags": [
+        "api",
+        "headless-cms",
+        "docker",
+        "node",
+        "developer-api"
+      ],
+      "license": "BSL-1.1",
+      "homepage": "https://github.com/directus/directus",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/directus/directus"
+      },
+      "verified": false,
+      "instantiable": false,
+      "verification": {
+        "sourcePresent": false,
+        "dependenciesValidated": false,
+        "buildVerified": false,
+        "runtimeTested": false,
+        "playwrightTested": false,
+        "solohostPackageValidated": false,
+        "productionReady": false
+      },
+      "compatibility": {
+        "solohost": false,
+        "solohostStatus": "not-validated"
+      },
+      "deploymentReady": false
+    },
+    {
+      "id": "strapi",
+      "name": "Strapi",
+      "version": "0.0.0-catalog",
+      "description": "Strapi — headless-cms, docker, cms-publishing, node",
+      "category": "cms-publishing",
+      "kind": "package",
+      "tags": [
+        "headless-cms",
+        "docker",
+        "cms-publishing",
+        "node"
+      ],
+      "license": "MIT",
+      "homepage": "https://github.com/strapi/strapi",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/strapi/strapi"
+      },
+      "verified": false,
+      "instantiable": false,
+      "verification": {
+        "sourcePresent": false,
+        "dependenciesValidated": false,
+        "buildVerified": false,
+        "runtimeTested": false,
+        "playwrightTested": false,
+        "solohostPackageValidated": false,
+        "productionReady": false
+      },
+      "compatibility": {
+        "solohost": false,
+        "solohostStatus": "not-validated"
+      },
+      "deploymentReady": false
+    },
+    {
+      "id": "ghost",
+      "name": "Ghost",
+      "version": "0.0.0-catalog",
+      "description": "Ghost — cms-publishing, docker, newsletter, node",
+      "category": "cms-publishing",
+      "kind": "package",
+      "tags": [
+        "cms-publishing",
+        "docker",
+        "newsletter",
+        "node",
+        "publishing"
+      ],
+      "license": "MIT",
+      "homepage": "https://github.com/TryGhost/Ghost",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/TryGhost/Ghost"
+      },
+      "verified": false,
+      "instantiable": false,
+      "verification": {
+        "sourcePresent": false,
+        "dependenciesValidated": false,
+        "buildVerified": false,
+        "runtimeTested": false,
+        "playwrightTested": false,
+        "solohostPackageValidated": false,
+        "productionReady": false
+      },
+      "compatibility": {
+        "solohost": false,
+        "solohostStatus": "not-validated"
+      },
+      "deploymentReady": false
+    },
+    {
+      "id": "wordpress",
+      "name": "WordPress",
+      "version": "0.0.0-catalog",
+      "description": "WordPress — cms-publishing, mysql, cms, blog",
+      "category": "cms-publishing",
+      "kind": "package",
+      "tags": [
+        "cms-publishing",
+        "mysql",
+        "cms",
+        "blog",
+        "php"
+      ],
+      "license": "GPL-2.0",
+      "homepage": "https://github.com/WordPress/WordPress",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/WordPress/WordPress"
+      },
+      "verified": false,
+      "instantiable": false,
+      "verification": {
+        "sourcePresent": false,
+        "dependenciesValidated": false,
+        "buildVerified": false,
+        "runtimeTested": false,
+        "playwrightTested": false,
+        "solohostPackageValidated": false,
+        "productionReady": false
+      },
+      "compatibility": {
+        "solohost": false,
+        "solohostStatus": "not-validated"
+      },
+      "deploymentReady": false
+    },
+    {
+      "id": "ghostfolio",
+      "name": "Ghostfolio",
+      "version": "0.0.0-catalog",
+      "description": "Ghostfolio — finance-payment, wealth, portfolio, docker",
+      "category": "finance-payment",
+      "kind": "package",
+      "tags": [
+        "finance-payment",
+        "wealth",
+        "portfolio",
+        "docker",
+        "typescript"
+      ],
+      "license": "AGPL-3.0",
+      "homepage": "https://github.com/ghostfolio/ghostfolio",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/ghostfolio/ghostfolio"
+      },
+      "verified": false,
+      "instantiable": false,
+      "verification": {
+        "sourcePresent": false,
+        "dependenciesValidated": false,
+        "buildVerified": false,
+        "runtimeTested": false,
+        "playwrightTested": false,
+        "solohostPackageValidated": false,
+        "productionReady": false
+      },
+      "compatibility": {
+        "solohost": false,
+        "solohostStatus": "not-validated"
+      },
+      "deploymentReady": false
+    },
+    {
+      "id": "firefly-iii",
+      "name": "Firefly III",
+      "version": "0.0.0-catalog",
+      "description": "Firefly III — finance-payment, personal-finance, docker, php",
+      "category": "finance-payment",
+      "kind": "package",
+      "tags": [
+        "finance-payment",
+        "personal-finance",
+        "docker",
+        "php"
+      ],
+      "license": "AGPL-3.0",
+      "homepage": "https://github.com/firefly-iii/firefly-iii",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/firefly-iii/firefly-iii"
+      },
+      "verified": false,
+      "instantiable": false,
+      "verification": {
+        "sourcePresent": false,
+        "dependenciesValidated": false,
+        "buildVerified": false,
+        "runtimeTested": false,
+        "playwrightTested": false,
+        "solohostPackageValidated": false,
+        "productionReady": false
+      },
+      "compatibility": {
+        "solohost": false,
+        "solohostStatus": "not-validated"
+      },
+      "deploymentReady": false
+    },
+    {
+      "id": "nextcloud",
+      "name": "Nextcloud",
+      "version": "0.0.0-catalog",
+      "description": "Nextcloud — files, docker, php, collab",
+      "category": "storage-files",
+      "kind": "package",
+      "tags": [
+        "files",
+        "docker",
+        "php",
+        "collab",
+        "storage-files",
+        "sync"
+      ],
+      "license": "AGPL-3.0",
+      "homepage": "https://github.com/nextcloud/server",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/nextcloud/server"
+      },
+      "verified": false,
+      "instantiable": false,
+      "verification": {
+        "sourcePresent": false,
+        "dependenciesValidated": false,
+        "buildVerified": false,
+        "runtimeTested": false,
+        "playwrightTested": false,
+        "solohostPackageValidated": false,
+        "productionReady": false
+      },
+      "compatibility": {
+        "solohost": false,
+        "solohostStatus": "not-validated"
+      },
+      "deploymentReady": false
+    },
+    {
+      "id": "seafile",
+      "name": "Seafile",
+      "version": "0.0.0-catalog",
+      "description": "Seafile — docker, c, python, storage-files",
+      "category": "storage-files",
+      "kind": "package",
+      "tags": [
+        "docker",
+        "c",
+        "python",
+        "storage-files",
+        "file-sync"
+      ],
+      "license": "Apache-2.0",
+      "homepage": "https://github.com/haiwen/seafile",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/haiwen/seafile"
+      },
+      "verified": false,
+      "instantiable": false,
+      "verification": {
+        "sourcePresent": false,
+        "dependenciesValidated": false,
+        "buildVerified": false,
+        "runtimeTested": false,
+        "playwrightTested": false,
+        "solohostPackageValidated": false,
+        "productionReady": false
+      },
+      "compatibility": {
+        "solohost": false,
+        "solohostStatus": "not-validated"
+      },
+      "deploymentReady": false
+    },
+    {
+      "id": "minio",
+      "name": "MinIO",
+      "version": "0.0.0-catalog",
+      "description": "MinIO — go, s3-compatible, docker, storage-files",
+      "category": "storage-files",
+      "kind": "package",
+      "tags": [
+        "go",
+        "s3-compatible",
+        "docker",
+        "storage-files",
+        "object-storage"
+      ],
+      "license": "AGPL-3.0",
+      "homepage": "https://github.com/minio/minio",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/minio/minio"
+      },
+      "verified": false,
+      "instantiable": false,
+      "verification": {
+        "sourcePresent": false,
+        "dependenciesValidated": false,
+        "buildVerified": false,
+        "runtimeTested": false,
+        "playwrightTested": false,
+        "solohostPackageValidated": false,
+        "productionReady": false
+      },
+      "compatibility": {
+        "solohost": false,
+        "solohostStatus": "not-validated"
+      },
+      "deploymentReady": false
+    },
+    {
+      "id": "filebrowser",
+      "name": "File Browser",
+      "version": "0.0.0-catalog",
+      "description": "File Browser — go, docker, storage-files, web-file-manager",
+      "category": "storage-files",
+      "kind": "package",
+      "tags": [
+        "go",
+        "docker",
+        "storage-files",
+        "web-file-manager"
+      ],
+      "license": "Apache-2.0",
+      "homepage": "https://github.com/filebrowser/filebrowser",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/filebrowser/filebrowser"
+      },
+      "verified": false,
+      "instantiable": false,
+      "verification": {
+        "sourcePresent": false,
+        "dependenciesValidated": false,
+        "buildVerified": false,
+        "runtimeTested": false,
+        "playwrightTested": false,
+        "solohostPackageValidated": false,
+        "productionReady": false
+      },
+      "compatibility": {
+        "solohost": false,
+        "solohostStatus": "not-validated"
+      },
+      "deploymentReady": false
+    },
+    {
+      "id": "paperless-ngx",
+      "name": "Paperless-ngx",
+      "version": "0.0.0-catalog",
+      "description": "Paperless-ngx — documents, ocr, docker, python",
+      "category": "storage-files",
+      "kind": "package",
+      "tags": [
+        "documents",
+        "ocr",
+        "docker",
+        "python",
+        "storage-files"
+      ],
+      "license": "GPL-3.0",
+      "homepage": "https://github.com/paperless-ngx/paperless-ngx",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/paperless-ngx/paperless-ngx"
+      },
+      "verified": false,
+      "instantiable": false,
+      "verification": {
+        "sourcePresent": false,
+        "dependenciesValidated": false,
+        "buildVerified": false,
+        "runtimeTested": false,
+        "playwrightTested": false,
+        "solohostPackageValidated": false,
+        "productionReady": false
+      },
+      "compatibility": {
+        "solohost": false,
+        "solohostStatus": "not-validated"
+      },
+      "deploymentReady": false
+    },
+    {
+      "id": "stirling-pdf",
+      "name": "Stirling PDF",
+      "version": "0.0.0-catalog",
+      "description": "Stirling PDF — java, docker, storage-files, pdf-tools",
+      "category": "storage-files",
+      "kind": "package",
+      "tags": [
+        "java",
+        "docker",
+        "storage-files",
+        "pdf-tools"
+      ],
+      "license": "MIT",
+      "homepage": "https://github.com/Stirling-Tools/Stirling-PDF",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/Stirling-Tools/Stirling-PDF"
+      },
+      "verified": false,
+      "instantiable": false,
+      "verification": {
+        "sourcePresent": false,
+        "dependenciesValidated": false,
+        "buildVerified": false,
+        "runtimeTested": false,
+        "playwrightTested": false,
+        "solohostPackageValidated": false,
+        "productionReady": false
+      },
+      "compatibility": {
+        "solohost": false,
+        "solohostStatus": "not-validated"
+      },
+      "deploymentReady": false
+    },
+    {
+      "id": "moodle",
+      "name": "Moodle",
+      "version": "0.0.0-catalog",
+      "description": "Moodle — lms, education-knowledge, courses, php",
+      "category": "education-knowledge",
+      "kind": "package",
+      "tags": [
+        "lms",
+        "education-knowledge",
+        "courses",
+        "php"
+      ],
+      "license": "GPL-3.0",
+      "homepage": "https://github.com/moodle/moodle",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/moodle/moodle"
+      },
+      "verified": false,
+      "instantiable": false,
+      "verification": {
+        "sourcePresent": false,
+        "dependenciesValidated": false,
+        "buildVerified": false,
+        "runtimeTested": false,
+        "playwrightTested": false,
+        "solohostPackageValidated": false,
+        "productionReady": false
+      },
+      "compatibility": {
+        "solohost": false,
+        "solohostStatus": "not-validated"
+      },
+      "deploymentReady": false
+    },
+    {
+      "id": "canvas-lms",
+      "name": "Canvas LMS",
+      "version": "0.0.0-catalog",
+      "description": "Canvas LMS — ruby, education-knowledge, lms",
+      "category": "education-knowledge",
+      "kind": "reference",
+      "tags": [
+        "ruby",
+        "education-knowledge",
+        "lms"
+      ],
+      "license": "AGPL-3.0",
+      "homepage": "https://github.com/instructure/canvas-lms",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/instructure/canvas-lms"
+      },
+      "verified": false,
+      "instantiable": false,
+      "verification": {
+        "sourcePresent": false,
+        "dependenciesValidated": false,
+        "buildVerified": false,
+        "runtimeTested": false,
+        "playwrightTested": false,
+        "solohostPackageValidated": false,
+        "productionReady": false
+      },
+      "compatibility": {
+        "solohost": false,
+        "solohostStatus": "not-validated"
+      },
+      "deploymentReady": false
+    },
+    {
+      "id": "outline",
+      "name": "Outline",
+      "version": "0.0.0-catalog",
+      "description": "Outline — wiki, knowledge-base, docker, education-knowledge",
+      "category": "education-knowledge",
+      "kind": "package",
+      "tags": [
+        "wiki",
+        "knowledge-base",
+        "docker",
+        "education-knowledge",
+        "node",
+        "docs"
+      ],
+      "license": "BSL",
+      "homepage": "https://github.com/outline/outline",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/outline/outline"
+      },
+      "verified": false,
+      "instantiable": false,
+      "verification": {
+        "sourcePresent": false,
+        "dependenciesValidated": false,
+        "buildVerified": false,
+        "runtimeTested": false,
+        "playwrightTested": false,
+        "solohostPackageValidated": false,
+        "productionReady": false
+      },
+      "compatibility": {
+        "solohost": false,
+        "solohostStatus": "not-validated"
+      },
+      "deploymentReady": false
+    },
+    {
+      "id": "bookstack",
+      "name": "BookStack",
+      "version": "0.0.0-catalog",
+      "description": "BookStack — wiki, docker, education-knowledge, php",
+      "category": "education-knowledge",
+      "kind": "package",
+      "tags": [
+        "wiki",
+        "docker",
+        "education-knowledge",
+        "php",
+        "docs"
+      ],
+      "license": "MIT",
+      "homepage": "https://github.com/BookStackApp/BookStack",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/BookStackApp/BookStack"
+      },
+      "verified": false,
+      "instantiable": false,
+      "verification": {
+        "sourcePresent": false,
+        "dependenciesValidated": false,
+        "buildVerified": false,
+        "runtimeTested": false,
+        "playwrightTested": false,
+        "solohostPackageValidated": false,
+        "productionReady": false
+      },
+      "compatibility": {
+        "solohost": false,
+        "solohostStatus": "not-validated"
+      },
+      "deploymentReady": false
+    },
+    {
+      "id": "wiki-js",
+      "name": "Wiki.js",
+      "version": "0.0.0-catalog",
+      "description": "Wiki.js — wiki, docker, education-knowledge, node",
+      "category": "education-knowledge",
+      "kind": "package",
+      "tags": [
+        "wiki",
+        "docker",
+        "education-knowledge",
+        "node"
+      ],
+      "license": "AGPL-3.0",
+      "homepage": "https://github.com/requarks/wiki",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/requarks/wiki"
+      },
+      "verified": false,
+      "instantiable": false,
+      "verification": {
+        "sourcePresent": false,
+        "dependenciesValidated": false,
+        "buildVerified": false,
+        "runtimeTested": false,
+        "playwrightTested": false,
+        "solohostPackageValidated": false,
+        "productionReady": false
+      },
+      "compatibility": {
+        "solohost": false,
+        "solohostStatus": "not-validated"
+      },
+      "deploymentReady": false
+    },
+    {
+      "id": "docmost",
+      "name": "Docmost",
+      "version": "0.0.0-catalog",
+      "description": "Docmost — collaboration, docker, education-knowledge, typescript",
+      "category": "education-knowledge",
+      "kind": "package",
+      "tags": [
+        "collaboration",
+        "docker",
+        "education-knowledge",
+        "typescript",
+        "docs"
+      ],
+      "license": "AGPL-3.0",
+      "homepage": "https://github.com/docmost/docmost",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/docmost/docmost"
+      },
+      "verified": false,
+      "instantiable": false,
+      "verification": {
+        "sourcePresent": false,
+        "dependenciesValidated": false,
+        "buildVerified": false,
+        "runtimeTested": false,
+        "playwrightTested": false,
+        "solohostPackageValidated": false,
+        "productionReady": false
+      },
+      "compatibility": {
+        "solohost": false,
+        "solohostStatus": "not-validated"
+      },
+      "deploymentReady": false
+    },
+    {
+      "id": "calibre-web",
+      "name": "Calibre-Web",
+      "version": "0.0.0-catalog",
+      "description": "Calibre-Web — library, ebooks, docker, education-knowledge",
+      "category": "education-knowledge",
+      "kind": "package",
+      "tags": [
+        "library",
+        "ebooks",
+        "docker",
+        "education-knowledge",
+        "python"
+      ],
+      "license": "GPL-3.0",
+      "homepage": "https://github.com/janeczku/calibre-web",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/janeczku/calibre-web"
+      },
+      "verified": false,
+      "instantiable": false,
+      "verification": {
+        "sourcePresent": false,
+        "dependenciesValidated": false,
+        "buildVerified": false,
+        "runtimeTested": false,
+        "playwrightTested": false,
+        "solohostPackageValidated": false,
+        "productionReady": false
+      },
+      "compatibility": {
+        "solohost": false,
+        "solohostStatus": "not-validated"
+      },
+      "deploymentReady": false
+    },
+    {
+      "id": "minecraft-server",
+      "name": "Minecraft Server (Paper)",
+      "version": "0.0.0-catalog",
+      "description": "Minecraft Server (Paper) — java, docker, game-server, games-entertainment",
+      "category": "games-entertainment",
+      "kind": "package",
+      "tags": [
+        "java",
+        "docker",
+        "game-server",
+        "games-entertainment"
+      ],
+      "license": "GPL-3.0",
+      "homepage": "https://github.com/PaperMC/Paper",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/PaperMC/Paper"
+      },
+      "verified": false,
+      "instantiable": false,
+      "verification": {
+        "sourcePresent": false,
+        "dependenciesValidated": false,
+        "buildVerified": false,
+        "runtimeTested": false,
+        "playwrightTested": false,
+        "solohostPackageValidated": false,
+        "productionReady": false
+      },
+      "compatibility": {
+        "solohost": false,
+        "solohostStatus": "not-validated"
+      },
+      "deploymentReady": false
+    },
+    {
+      "id": "foundry-reference",
+      "name": "Foundry VTT (reference)",
+      "version": "0.0.0-catalog",
+      "description": "Foundry VTT (reference) — vtt, node, games-entertainment",
+      "category": "games-entertainment",
+      "kind": "reference",
+      "tags": [
+        "vtt",
+        "node",
+        "games-entertainment"
+      ],
+      "license": "Proprietary",
+      "homepage": "https://foundryvtt.com/",
+      "source": {
+        "type": "github",
+        "url": "https://foundryvtt.com/"
+      },
+      "verified": false,
+      "instantiable": false,
+      "verification": {
+        "sourcePresent": false,
+        "dependenciesValidated": false,
+        "buildVerified": false,
+        "runtimeTested": false,
+        "playwrightTested": false,
+        "solohostPackageValidated": false,
+        "productionReady": false
+      },
+      "compatibility": {
+        "solohost": false,
+        "solohostStatus": "not-validated"
+      },
+      "deploymentReady": false
+    },
+    {
+      "id": "romm",
+      "name": "RomM",
+      "version": "0.0.0-catalog",
+      "description": "RomM — games-entertainment, rom-manager, docker, python",
+      "category": "games-entertainment",
+      "kind": "package",
+      "tags": [
+        "games-entertainment",
+        "rom-manager",
+        "docker",
+        "python"
+      ],
+      "license": "AGPL-3.0",
+      "homepage": "https://github.com/rommapp/romm",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/rommapp/romm"
+      },
+      "verified": false,
+      "instantiable": false,
+      "verification": {
+        "sourcePresent": false,
+        "dependenciesValidated": false,
+        "buildVerified": false,
+        "runtimeTested": false,
+        "playwrightTested": false,
+        "solohostPackageValidated": false,
+        "productionReady": false
+      },
+      "compatibility": {
+        "solohost": false,
+        "solohostStatus": "not-validated"
+      },
+      "deploymentReady": false
+    },
+    {
+      "id": "romm-emulationstation",
+      "name": "EmulationStation Desktop Edition",
+      "version": "0.0.0-catalog",
+      "description": "EmulationStation Desktop Edition — games-entertainment, cpp, emulation",
+      "category": "games-entertainment",
+      "kind": "reference",
+      "tags": [
+        "games-entertainment",
+        "cpp",
+        "emulation"
+      ],
+      "license": "MIT",
+      "homepage": "https://github.com/ES-DE/ES-DE-Frontend",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/ES-DE/ES-DE-Frontend"
+      },
+      "verified": false,
+      "instantiable": false,
+      "verification": {
+        "sourcePresent": false,
+        "dependenciesValidated": false,
+        "buildVerified": false,
+        "runtimeTested": false,
+        "playwrightTested": false,
+        "solohostPackageValidated": false,
+        "productionReady": false
+      },
+      "compatibility": {
+        "solohost": false,
+        "solohostStatus": "not-validated"
+      },
+      "deploymentReady": false
+    },
+    {
+      "id": "wger",
+      "name": "wger",
+      "version": "0.0.0-catalog",
+      "description": "wger — workouts, python, docker, games-entertainment",
+      "category": "games-entertainment",
+      "kind": "package",
+      "tags": [
+        "workouts",
+        "python",
+        "docker",
+        "games-entertainment",
+        "fitness"
+      ],
+      "license": "AGPL-3.0",
+      "homepage": "https://github.com/wger-project/wger",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/wger-project/wger"
+      },
+      "verified": false,
+      "instantiable": false,
+      "verification": {
+        "sourcePresent": false,
+        "dependenciesValidated": false,
+        "buildVerified": false,
+        "runtimeTested": false,
+        "playwrightTested": false,
+        "solohostPackageValidated": false,
+        "productionReady": false
+      },
+      "compatibility": {
+        "solohost": false,
+        "solohostStatus": "not-validated"
+      },
+      "deploymentReady": false
+    },
+    {
+      "id": "homepage",
+      "name": "Homepage",
+      "version": "0.0.0-catalog",
+      "description": "Homepage — javascript, docker, dashboard, developer-api",
+      "category": "developer-api",
+      "kind": "package",
+      "tags": [
+        "javascript",
+        "docker",
+        "dashboard",
+        "developer-api",
+        "status"
+      ],
+      "license": "Apache-2.0",
+      "homepage": "https://github.com/gethomepage/homepage",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/gethomepage/homepage"
+      },
+      "verified": false,
+      "instantiable": false,
+      "verification": {
+        "sourcePresent": false,
+        "dependenciesValidated": false,
+        "buildVerified": false,
+        "runtimeTested": false,
+        "playwrightTested": false,
+        "solohostPackageValidated": false,
+        "productionReady": false
+      },
+      "compatibility": {
+        "solohost": false,
+        "solohostStatus": "not-validated"
+      },
+      "deploymentReady": false
+    },
+    {
+      "id": "dashy",
+      "name": "Dashy",
+      "version": "0.0.0-catalog",
+      "description": "Dashy — vue, docker, dashboard, developer-api",
+      "category": "developer-api",
+      "kind": "package",
+      "tags": [
+        "vue",
+        "docker",
+        "dashboard",
+        "developer-api"
+      ],
+      "license": "MIT",
+      "homepage": "https://github.com/Lissy93/dashy",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/Lissy93/dashy"
+      },
+      "verified": false,
+      "instantiable": false,
+      "verification": {
+        "sourcePresent": false,
+        "dependenciesValidated": false,
+        "buildVerified": false,
+        "runtimeTested": false,
+        "playwrightTested": false,
+        "solohostPackageValidated": false,
+        "productionReady": false
+      },
+      "compatibility": {
+        "solohost": false,
+        "solohostStatus": "not-validated"
+      },
+      "deploymentReady": false
+    },
+    {
+      "id": "homarr",
+      "name": "Homarr",
+      "version": "0.0.0-catalog",
+      "description": "Homarr — dashboard, docker, typescript, developer-api",
+      "category": "developer-api",
+      "kind": "package",
+      "tags": [
+        "dashboard",
+        "docker",
+        "typescript",
+        "developer-api"
+      ],
+      "license": "Apache-2.0",
+      "homepage": "https://github.com/homarr-labs/homarr",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/homarr-labs/homarr"
+      },
+      "verified": false,
+      "instantiable": false,
+      "verification": {
+        "sourcePresent": false,
+        "dependenciesValidated": false,
+        "buildVerified": false,
+        "runtimeTested": false,
+        "playwrightTested": false,
+        "solohostPackageValidated": false,
+        "productionReady": false
+      },
+      "compatibility": {
+        "solohost": false,
+        "solohostStatus": "not-validated"
+      },
+      "deploymentReady": false
+    },
+    {
+      "id": "vaultwarden",
+      "name": "Vaultwarden",
+      "version": "0.0.0-catalog",
+      "description": "Vaultwarden — rust, docker, bitwarden-api, storage-files",
+      "category": "storage-files",
+      "kind": "package",
+      "tags": [
+        "rust",
+        "docker",
+        "bitwarden-api",
+        "storage-files",
+        "password-manager"
+      ],
+      "license": "GPL-3.0",
+      "homepage": "https://github.com/dani-garcia/vaultwarden",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/dani-garcia/vaultwarden"
+      },
+      "verified": false,
+      "instantiable": false,
+      "verification": {
+        "sourcePresent": false,
+        "dependenciesValidated": false,
+        "buildVerified": false,
+        "runtimeTested": false,
+        "playwrightTested": false,
+        "solohostPackageValidated": false,
+        "productionReady": false
+      },
+      "compatibility": {
+        "solohost": false,
+        "solohostStatus": "not-validated"
+      },
+      "deploymentReady": false
+    },
+    {
+      "id": "linkwarden",
+      "name": "Linkwarden",
+      "version": "0.0.0-catalog",
+      "description": "Linkwarden — bookmarks, productivity-pm, docker, archive",
+      "category": "productivity-pm",
+      "kind": "package",
+      "tags": [
+        "bookmarks",
+        "productivity-pm",
+        "docker",
+        "archive",
+        "typescript"
+      ],
+      "license": "AGPL-3.0",
+      "homepage": "https://github.com/linkwarden/linkwarden",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/linkwarden/linkwarden"
+      },
+      "verified": false,
+      "instantiable": false,
+      "verification": {
+        "sourcePresent": false,
+        "dependenciesValidated": false,
+        "buildVerified": false,
+        "runtimeTested": false,
+        "playwrightTested": false,
+        "solohostPackageValidated": false,
+        "productionReady": false
+      },
+      "compatibility": {
+        "solohost": false,
+        "solohostStatus": "not-validated"
+      },
+      "deploymentReady": false
+    },
+    {
+      "id": "wallabag",
+      "name": "Wallabag",
+      "version": "0.0.0-catalog",
+      "description": "Wallabag — productivity-pm, read-it-later, docker, php",
+      "category": "productivity-pm",
+      "kind": "package",
+      "tags": [
+        "productivity-pm",
+        "read-it-later",
+        "docker",
+        "php"
+      ],
+      "license": "MIT",
+      "homepage": "https://github.com/wallabag/wallabag",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/wallabag/wallabag"
+      },
+      "verified": false,
+      "instantiable": false,
+      "verification": {
+        "sourcePresent": false,
+        "dependenciesValidated": false,
+        "buildVerified": false,
+        "runtimeTested": false,
+        "playwrightTested": false,
+        "solohostPackageValidated": false,
+        "productionReady": false
+      },
+      "compatibility": {
+        "solohost": false,
+        "solohostStatus": "not-validated"
+      },
+      "deploymentReady": false
+    },
+    {
+      "id": "freshrss",
+      "name": "FreshRSS",
+      "version": "0.0.0-catalog",
+      "description": "FreshRSS — rss, productivity-pm, docker, php",
+      "category": "productivity-pm",
+      "kind": "package",
+      "tags": [
+        "rss",
+        "productivity-pm",
+        "docker",
+        "php",
+        "reader"
+      ],
+      "license": "AGPL-3.0",
+      "homepage": "https://github.com/FreshRSS/FreshRSS",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/FreshRSS/FreshRSS"
+      },
+      "verified": false,
+      "instantiable": false,
+      "verification": {
+        "sourcePresent": false,
+        "dependenciesValidated": false,
+        "buildVerified": false,
+        "runtimeTested": false,
+        "playwrightTested": false,
+        "solohostPackageValidated": false,
+        "productionReady": false
+      },
+      "compatibility": {
+        "solohost": false,
+        "solohostStatus": "not-validated"
+      },
+      "deploymentReady": false
+    },
+    {
+      "id": "rsshub",
+      "name": "RSSHub",
+      "version": "0.0.0-catalog",
+      "description": "RSSHub — rss, feeds, docker, node",
+      "category": "developer-api",
+      "kind": "package",
+      "tags": [
+        "rss",
+        "feeds",
+        "docker",
+        "node",
+        "developer-api"
+      ],
+      "license": "MIT",
+      "homepage": "https://github.com/DIYgod/RSSHub",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/DIYgod/RSSHub"
+      },
+      "verified": false,
+      "instantiable": false,
+      "verification": {
+        "sourcePresent": false,
+        "dependenciesValidated": false,
+        "buildVerified": false,
+        "runtimeTested": false,
+        "playwrightTested": false,
+        "solohostPackageValidated": false,
+        "productionReady": false
+      },
+      "compatibility": {
+        "solohost": false,
+        "solohostStatus": "not-validated"
+      },
+      "deploymentReady": false
+    },
+    {
+      "id": "changedetection",
+      "name": "changedetection.io",
+      "version": "0.0.0-catalog",
+      "description": "changedetection.io — monitoring-analytics, alerts, python, docker",
+      "category": "monitoring-analytics",
+      "kind": "package",
+      "tags": [
+        "monitoring-analytics",
+        "alerts",
+        "python",
+        "docker",
+        "website-change"
+      ],
+      "license": "Apache-2.0",
+      "homepage": "https://github.com/dgtlmoon/changedetection.io",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/dgtlmoon/changedetection.io"
+      },
+      "verified": false,
+      "instantiable": false,
+      "verification": {
+        "sourcePresent": false,
+        "dependenciesValidated": false,
+        "buildVerified": false,
+        "runtimeTested": false,
+        "playwrightTested": false,
+        "solohostPackageValidated": false,
+        "productionReady": false
+      },
+      "compatibility": {
+        "solohost": false,
+        "solohostStatus": "not-validated"
+      },
+      "deploymentReady": false
+    },
+    {
+      "id": "semaphore-ui",
+      "name": "Semaphore UI",
+      "version": "0.0.0-catalog",
+      "description": "Semaphore UI — go, docker, developer-api, ansible",
+      "category": "developer-api",
+      "kind": "package",
+      "tags": [
+        "go",
+        "docker",
+        "developer-api",
+        "ansible",
+        "ci"
+      ],
+      "license": "MIT",
+      "homepage": "https://github.com/semaphoreui/semaphore",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/semaphoreui/semaphore"
+      },
+      "verified": false,
+      "instantiable": false,
+      "verification": {
+        "sourcePresent": false,
+        "dependenciesValidated": false,
+        "buildVerified": false,
+        "runtimeTested": false,
+        "playwrightTested": false,
+        "solohostPackageValidated": false,
+        "productionReady": false
+      },
+      "compatibility": {
+        "solohost": false,
+        "solohostStatus": "not-validated"
+      },
+      "deploymentReady": false
+    },
+    {
+      "id": "woodpecker-ci",
+      "name": "Woodpecker CI",
+      "version": "0.0.0-catalog",
+      "description": "Woodpecker CI — go, docker, developer-api, ci",
+      "category": "developer-api",
+      "kind": "package",
+      "tags": [
+        "go",
+        "docker",
+        "developer-api",
+        "ci",
+        "pipelines"
+      ],
+      "license": "Apache-2.0",
+      "homepage": "https://github.com/woodpecker-ci/woodpecker",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/woodpecker-ci/woodpecker"
+      },
+      "verified": false,
+      "instantiable": false,
+      "verification": {
+        "sourcePresent": false,
+        "dependenciesValidated": false,
+        "buildVerified": false,
+        "runtimeTested": false,
+        "playwrightTested": false,
+        "solohostPackageValidated": false,
+        "productionReady": false
+      },
+      "compatibility": {
+        "solohost": false,
+        "solohostStatus": "not-validated"
+      },
+      "deploymentReady": false
+    },
+    {
+      "id": "drone-oss",
+      "name": "Drone (OSS)",
+      "version": "0.0.0-catalog",
+      "description": "Drone (OSS) — go, docker, ci, developer-api",
+      "category": "developer-api",
+      "kind": "package",
+      "tags": [
+        "go",
+        "docker",
+        "ci",
+        "developer-api"
+      ],
+      "license": "Apache-2.0",
+      "homepage": "https://github.com/harness/drone",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/harness/drone"
+      },
+      "verified": false,
+      "instantiable": false,
+      "verification": {
+        "sourcePresent": false,
+        "dependenciesValidated": false,
+        "buildVerified": false,
+        "runtimeTested": false,
+        "playwrightTested": false,
+        "solohostPackageValidated": false,
+        "productionReady": false
+      },
+      "compatibility": {
+        "solohost": false,
+        "solohostStatus": "not-validated"
+      },
+      "deploymentReady": false
+    },
+    {
+      "id": "listmonk",
+      "name": "Listmonk",
+      "version": "0.0.0-catalog",
+      "description": "Listmonk — go, cms-publishing, mailing-lists, newsletters",
+      "category": "cms-publishing",
+      "kind": "package",
+      "tags": [
+        "go",
+        "cms-publishing",
+        "mailing-lists",
+        "newsletters",
+        "docker"
+      ],
+      "license": "AGPL-3.0",
+      "homepage": "https://github.com/knadh/listmonk",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/knadh/listmonk"
+      },
+      "verified": false,
+      "instantiable": false,
+      "verification": {
+        "sourcePresent": false,
+        "dependenciesValidated": false,
+        "buildVerified": false,
+        "runtimeTested": false,
+        "playwrightTested": false,
+        "solohostPackageValidated": false,
+        "productionReady": false
+      },
+      "compatibility": {
+        "solohost": false,
+        "solohostStatus": "not-validated"
+      },
+      "deploymentReady": false
+    },
+    {
+      "id": "postal",
+      "name": "Postal",
+      "version": "0.0.0-catalog",
+      "description": "Postal — ruby, docker, chat-communication, mail-server",
+      "category": "chat-communication",
+      "kind": "package",
+      "tags": [
+        "ruby",
+        "docker",
+        "chat-communication",
+        "mail-server"
+      ],
+      "license": "MIT",
+      "homepage": "https://github.com/postalserver/postal",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/postalserver/postal"
+      },
+      "verified": false,
+      "instantiable": false,
+      "verification": {
+        "sourcePresent": false,
+        "dependenciesValidated": false,
+        "buildVerified": false,
+        "runtimeTested": false,
+        "playwrightTested": false,
+        "solohostPackageValidated": false,
+        "productionReady": false
+      },
+      "compatibility": {
+        "solohost": false,
+        "solohostStatus": "not-validated"
+      },
+      "deploymentReady": false
+    },
+    {
+      "id": "mailcow",
+      "name": "Mailcow",
+      "version": "0.0.0-catalog",
+      "description": "Mailcow — docker, chat-communication, mail-suite",
+      "category": "chat-communication",
+      "kind": "package",
+      "tags": [
+        "docker",
+        "chat-communication",
+        "mail-suite"
+      ],
+      "license": "GPL-3.0",
+      "homepage": "https://github.com/mailcow/mailcow-dockerized",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/mailcow/mailcow-dockerized"
+      },
+      "verified": false,
+      "instantiable": false,
+      "verification": {
+        "sourcePresent": false,
+        "dependenciesValidated": false,
+        "buildVerified": false,
+        "runtimeTested": false,
+        "playwrightTested": false,
+        "solohostPackageValidated": false,
+        "productionReady": false
+      },
+      "compatibility": {
+        "solohost": false,
+        "solohostStatus": "not-validated"
+      },
+      "deploymentReady": false
+    },
+    {
+      "id": "roundcube",
+      "name": "Roundcube",
+      "version": "0.0.0-catalog",
+      "description": "Roundcube — webmail, chat-communication, php",
+      "category": "chat-communication",
+      "kind": "package",
+      "tags": [
+        "webmail",
+        "chat-communication",
+        "php"
+      ],
+      "license": "GPL-3.0",
+      "homepage": "https://github.com/roundcube/roundcubemail",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/roundcube/roundcubemail"
+      },
+      "verified": false,
+      "instantiable": false,
+      "verification": {
+        "sourcePresent": false,
+        "dependenciesValidated": false,
+        "buildVerified": false,
+        "runtimeTested": false,
+        "playwrightTested": false,
+        "solohostPackageValidated": false,
+        "productionReady": false
+      },
+      "compatibility": {
+        "solohost": false,
+        "solohostStatus": "not-validated"
+      },
+      "deploymentReady": false
+    },
+    {
+      "id": "nextcloud-deck",
+      "name": "Nextcloud Deck (ref)",
+      "version": "0.0.0-catalog",
+      "description": "Nextcloud Deck (ref) — js, productivity-pm, kanban, php",
+      "category": "productivity-pm",
+      "kind": "reference",
+      "tags": [
+        "js",
+        "productivity-pm",
+        "kanban",
+        "php"
+      ],
+      "license": "AGPL-3.0",
+      "homepage": "https://github.com/nextcloud/deck",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/nextcloud/deck"
+      },
+      "verified": false,
+      "instantiable": false,
+      "verification": {
+        "sourcePresent": false,
+        "dependenciesValidated": false,
+        "buildVerified": false,
+        "runtimeTested": false,
+        "playwrightTested": false,
+        "solohostPackageValidated": false,
+        "productionReady": false
+      },
+      "compatibility": {
+        "solohost": false,
+        "solohostStatus": "not-validated"
+      },
+      "deploymentReady": false
+    },
+    {
+      "id": "calcom",
+      "name": "Cal.com",
+      "version": "0.0.0-catalog",
+      "description": "Cal.com — productivity-pm, docker, scheduling, typescript",
+      "category": "productivity-pm",
+      "kind": "package",
+      "tags": [
+        "productivity-pm",
+        "docker",
+        "scheduling",
+        "typescript",
+        "bookings"
+      ],
+      "license": "AGPL-3.0",
+      "homepage": "https://github.com/calcom/cal.com",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/calcom/cal.com"
+      },
+      "verified": false,
+      "instantiable": false,
+      "verification": {
+        "sourcePresent": false,
+        "dependenciesValidated": false,
+        "buildVerified": false,
+        "runtimeTested": false,
+        "playwrightTested": false,
+        "solohostPackageValidated": false,
+        "productionReady": false
+      },
+      "compatibility": {
+        "solohost": false,
+        "solohostStatus": "not-validated"
+      },
+      "deploymentReady": false
+    },
+    {
+      "id": "rallly",
+      "name": "Rallly",
+      "version": "0.0.0-catalog",
+      "description": "Rallly — productivity-pm, docker, scheduling, polls",
+      "category": "productivity-pm",
+      "kind": "package",
+      "tags": [
+        "productivity-pm",
+        "docker",
+        "scheduling",
+        "polls",
+        "typescript"
+      ],
+      "license": "AGPL-3.0",
+      "homepage": "https://github.com/lukevella/rallly",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/lukevella/rallly"
+      },
+      "verified": false,
+      "instantiable": false,
+      "verification": {
+        "sourcePresent": false,
+        "dependenciesValidated": false,
+        "buildVerified": false,
+        "runtimeTested": false,
+        "playwrightTested": false,
+        "solohostPackageValidated": false,
+        "productionReady": false
+      },
+      "compatibility": {
+        "solohost": false,
+        "solohostStatus": "not-validated"
+      },
+      "deploymentReady": false
+    },
+    {
+      "id": "formbricks",
+      "name": "Formbricks",
+      "version": "0.0.0-catalog",
+      "description": "Formbricks — surveys, docker, experience-management, developer-api",
+      "category": "developer-api",
+      "kind": "package",
+      "tags": [
+        "surveys",
+        "docker",
+        "experience-management",
+        "developer-api",
+        "typescript"
+      ],
+      "license": "AGPL-3.0",
+      "homepage": "https://github.com/formbricks/formbricks",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/formbricks/formbricks"
+      },
+      "verified": false,
+      "instantiable": false,
+      "verification": {
+        "sourcePresent": false,
+        "dependenciesValidated": false,
+        "buildVerified": false,
+        "runtimeTested": false,
+        "playwrightTested": false,
+        "solohostPackageValidated": false,
+        "productionReady": false
+      },
+      "compatibility": {
+        "solohost": false,
+        "solohostStatus": "not-validated"
+      },
+      "deploymentReady": false
+    },
+    {
+      "id": "typebot",
+      "name": "Typebot",
+      "version": "0.0.0-catalog",
+      "description": "Typebot — ai-agents, chatbots, forms, docker",
+      "category": "ai-agents",
+      "kind": "package",
+      "tags": [
+        "ai-agents",
+        "chatbots",
+        "forms",
+        "docker",
+        "typescript"
+      ],
+      "license": "AGPL-3.0",
+      "homepage": "https://github.com/baptisteArno/typebot.io",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/baptisteArno/typebot.io"
+      },
+      "verified": false,
+      "instantiable": false,
+      "verification": {
+        "sourcePresent": false,
+        "dependenciesValidated": false,
+        "buildVerified": false,
+        "runtimeTested": false,
+        "playwrightTested": false,
+        "solohostPackageValidated": false,
+        "productionReady": false
+      },
+      "compatibility": {
+        "solohost": false,
+        "solohostStatus": "not-validated"
+      },
+      "deploymentReady": false
+    },
+    {
+      "id": "botpress",
+      "name": "Botpress",
+      "version": "0.0.0-catalog",
+      "description": "Botpress — ai-agents, chatbots, docker, agents",
+      "category": "ai-agents",
+      "kind": "package",
+      "tags": [
+        "ai-agents",
+        "chatbots",
+        "docker",
+        "agents",
+        "typescript"
+      ],
+      "license": "MIT",
+      "homepage": "https://github.com/botpress/botpress",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/botpress/botpress"
+      },
+      "verified": false,
+      "instantiable": false,
+      "verification": {
+        "sourcePresent": false,
+        "dependenciesValidated": false,
+        "buildVerified": false,
+        "runtimeTested": false,
+        "playwrightTested": false,
+        "solohostPackageValidated": false,
+        "productionReady": false
+      },
+      "compatibility": {
+        "solohost": false,
+        "solohostStatus": "not-validated"
+      },
+      "deploymentReady": false
+    },
+    {
+      "id": "langfuse",
+      "name": "Langfuse",
+      "version": "0.0.0-catalog",
+      "description": "Langfuse — docker, typescript, llm-observability, ai-agents",
+      "category": "ai-agents",
+      "kind": "package",
+      "tags": [
+        "docker",
+        "typescript",
+        "llm-observability",
+        "ai-agents"
+      ],
+      "license": "MIT",
+      "homepage": "https://github.com/langfuse/langfuse",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/langfuse/langfuse"
+      },
+      "verified": false,
+      "instantiable": false,
+      "verification": {
+        "sourcePresent": false,
+        "dependenciesValidated": false,
+        "buildVerified": false,
+        "runtimeTested": false,
+        "playwrightTested": false,
+        "solohostPackageValidated": false,
+        "productionReady": false
+      },
+      "compatibility": {
+        "solohost": false,
+        "solohostStatus": "not-validated"
+      },
+      "deploymentReady": false
+    },
+    {
+      "id": "openllmetry-ref",
+      "name": "OpenLLMetry (reference)",
+      "version": "0.0.0-catalog",
+      "description": "OpenLLMetry (reference) — llm-telemetry, ai-agents, python",
+      "category": "ai-agents",
+      "kind": "reference",
+      "tags": [
+        "llm-telemetry",
+        "ai-agents",
+        "python"
+      ],
+      "license": "Apache-2.0",
+      "homepage": "https://github.com/traceloop/openllmetry",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/traceloop/openllmetry"
+      },
+      "verified": false,
+      "instantiable": false,
+      "verification": {
+        "sourcePresent": false,
+        "dependenciesValidated": false,
+        "buildVerified": false,
+        "runtimeTested": false,
+        "playwrightTested": false,
+        "solohostPackageValidated": false,
+        "productionReady": false
+      },
+      "compatibility": {
+        "solohost": false,
+        "solohostStatus": "not-validated"
+      },
+      "deploymentReady": false
+    },
+    {
+      "id": "metabase",
+      "name": "Metabase",
+      "version": "0.0.0-catalog",
+      "description": "Metabase — monitoring-analytics, docker, dashboards, clojure",
+      "category": "monitoring-analytics",
+      "kind": "package",
+      "tags": [
+        "monitoring-analytics",
+        "docker",
+        "dashboards",
+        "clojure",
+        "sql",
+        "bi"
+      ],
+      "license": "AGPL-3.0",
+      "homepage": "https://github.com/metabase/metabase",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/metabase/metabase"
+      },
+      "verified": false,
+      "instantiable": false,
+      "verification": {
+        "sourcePresent": false,
+        "dependenciesValidated": false,
+        "buildVerified": false,
+        "runtimeTested": false,
+        "playwrightTested": false,
+        "solohostPackageValidated": false,
+        "productionReady": false
+      },
+      "compatibility": {
+        "solohost": false,
+        "solohostStatus": "not-validated"
+      },
+      "deploymentReady": false
+    },
+    {
+      "id": "superset",
+      "name": "Apache Superset",
+      "version": "0.0.0-catalog",
+      "description": "Apache Superset — monitoring-analytics, docker, dashboards, python",
+      "category": "monitoring-analytics",
+      "kind": "package",
+      "tags": [
+        "monitoring-analytics",
+        "docker",
+        "dashboards",
+        "python",
+        "bi"
+      ],
+      "license": "Apache-2.0",
+      "homepage": "https://github.com/apache/superset",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/apache/superset"
+      },
+      "verified": false,
+      "instantiable": false,
+      "verification": {
+        "sourcePresent": false,
+        "dependenciesValidated": false,
+        "buildVerified": false,
+        "runtimeTested": false,
+        "playwrightTested": false,
+        "solohostPackageValidated": false,
+        "productionReady": false
+      },
+      "compatibility": {
+        "solohost": false,
+        "solohostStatus": "not-validated"
+      },
+      "deploymentReady": false
+    },
+    {
+      "id": "redash",
+      "name": "Redash",
+      "version": "0.0.0-catalog",
+      "description": "Redash — monitoring-analytics, docker, dashboards, python",
+      "category": "monitoring-analytics",
+      "kind": "package",
+      "tags": [
+        "monitoring-analytics",
+        "docker",
+        "dashboards",
+        "python",
+        "sql"
+      ],
+      "license": "BSD-2-Clause",
+      "homepage": "https://github.com/getredash/redash",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/getredash/redash"
+      },
+      "verified": false,
+      "instantiable": false,
+      "verification": {
+        "sourcePresent": false,
+        "dependenciesValidated": false,
+        "buildVerified": false,
+        "runtimeTested": false,
+        "playwrightTested": false,
+        "solohostPackageValidated": false,
+        "productionReady": false
+      },
+      "compatibility": {
+        "solohost": false,
+        "solohostStatus": "not-validated"
+      },
+      "deploymentReady": false
+    },
+    {
+      "id": "nocobase",
+      "name": "NocoBase",
+      "version": "0.0.0-catalog",
+      "description": "NocoBase — no-code, data-platform, docker, developer-api",
+      "category": "developer-api",
+      "kind": "package",
+      "tags": [
+        "no-code",
+        "data-platform",
+        "docker",
+        "developer-api",
+        "typescript"
+      ],
+      "license": "AGPL-3.0",
+      "homepage": "https://github.com/nocobase/nocobase",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/nocobase/nocobase"
+      },
+      "verified": false,
+      "instantiable": false,
+      "verification": {
+        "sourcePresent": false,
+        "dependenciesValidated": false,
+        "buildVerified": false,
+        "runtimeTested": false,
+        "playwrightTested": false,
+        "solohostPackageValidated": false,
+        "productionReady": false
+      },
+      "compatibility": {
+        "solohost": false,
+        "solohostStatus": "not-validated"
+      },
+      "deploymentReady": false
+    },
+    {
+      "id": "baserow",
+      "name": "Baserow",
+      "version": "0.0.0-catalog",
+      "description": "Baserow — database, docker, nocode, python",
+      "category": "developer-api",
+      "kind": "package",
+      "tags": [
+        "database",
+        "docker",
+        "nocode",
+        "python",
+        "developer-api"
+      ],
+      "license": "MIT",
+      "homepage": "https://github.com/bram2w/baserow",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/bram2w/baserow"
+      },
+      "verified": false,
+      "instantiable": false,
+      "verification": {
+        "sourcePresent": false,
+        "dependenciesValidated": false,
+        "buildVerified": false,
+        "runtimeTested": false,
+        "playwrightTested": false,
+        "solohostPackageValidated": false,
+        "productionReady": false
+      },
+      "compatibility": {
+        "solohost": false,
+        "solohostStatus": "not-validated"
+      },
+      "deploymentReady": false
+    },
+    {
+      "id": "grist",
+      "name": "Grist",
+      "version": "0.0.0-catalog",
+      "description": "Grist — productivity-pm, database, docker, spreadsheet",
+      "category": "productivity-pm",
+      "kind": "package",
+      "tags": [
+        "productivity-pm",
+        "database",
+        "docker",
+        "spreadsheet",
+        "typescript"
+      ],
+      "license": "Apache-2.0",
+      "homepage": "https://github.com/gristlabs/grist-core",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/gristlabs/grist-core"
+      },
+      "verified": false,
+      "instantiable": false,
+      "verification": {
+        "sourcePresent": false,
+        "dependenciesValidated": false,
+        "buildVerified": false,
+        "runtimeTested": false,
+        "playwrightTested": false,
+        "solohostPackageValidated": false,
+        "productionReady": false
+      },
+      "compatibility": {
+        "solohost": false,
+        "solohostStatus": "not-validated"
+      },
+      "deploymentReady": false
+    },
+    {
+      "id": "penpot",
+      "name": "Penpot",
+      "version": "0.0.0-catalog",
+      "description": "Penpot — productivity-pm, design, prototyping, docker",
+      "category": "productivity-pm",
+      "kind": "package",
+      "tags": [
+        "productivity-pm",
+        "design",
+        "prototyping",
+        "docker",
+        "clojure"
+      ],
+      "license": "MPL-2.0",
+      "homepage": "https://github.com/penpot/penpot",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/penpot/penpot"
+      },
+      "verified": false,
+      "instantiable": false,
+      "verification": {
+        "sourcePresent": false,
+        "dependenciesValidated": false,
+        "buildVerified": false,
+        "runtimeTested": false,
+        "playwrightTested": false,
+        "solohostPackageValidated": false,
+        "productionReady": false
+      },
+      "compatibility": {
+        "solohost": false,
+        "solohostStatus": "not-validated"
+      },
+      "deploymentReady": false
+    },
+    {
+      "id": "excalidraw",
+      "name": "Excalidraw",
+      "version": "0.0.0-catalog",
+      "description": "Excalidraw — whiteboard, typescript, productivity-pm",
+      "category": "productivity-pm",
+      "kind": "reference",
+      "tags": [
+        "whiteboard",
+        "typescript",
+        "productivity-pm"
+      ],
+      "license": "MIT",
+      "homepage": "https://github.com/excalidraw/excalidraw",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/excalidraw/excalidraw"
+      },
+      "verified": false,
+      "instantiable": false,
+      "verification": {
+        "sourcePresent": false,
+        "dependenciesValidated": false,
+        "buildVerified": false,
+        "runtimeTested": false,
+        "playwrightTested": false,
+        "solohostPackageValidated": false,
+        "productionReady": false
+      },
+      "compatibility": {
+        "solohost": false,
+        "solohostStatus": "not-validated"
+      },
+      "deploymentReady": false
+    },
+    {
+      "id": "drawio",
+      "name": "draw.io",
+      "version": "0.0.0-catalog",
+      "description": "draw.io — javascript, docker, diagrams, productivity-pm",
+      "category": "productivity-pm",
+      "kind": "package",
+      "tags": [
+        "javascript",
+        "docker",
+        "diagrams",
+        "productivity-pm"
+      ],
+      "license": "Apache-2.0",
+      "homepage": "https://github.com/jgraph/drawio",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/jgraph/drawio"
+      },
+      "verified": false,
+      "instantiable": false,
+      "verification": {
+        "sourcePresent": false,
+        "dependenciesValidated": false,
+        "buildVerified": false,
+        "runtimeTested": false,
+        "playwrightTested": false,
+        "solohostPackageValidated": false,
+        "productionReady": false
+      },
+      "compatibility": {
+        "solohost": false,
+        "solohostStatus": "not-validated"
+      },
+      "deploymentReady": false
+    },
+    {
+      "id": "standardnotes",
+      "name": "Standard Notes",
+      "version": "0.0.0-catalog",
+      "description": "Standard Notes — notes, productivity-pm, typescript, encryption",
+      "category": "productivity-pm",
+      "kind": "reference",
+      "tags": [
+        "notes",
+        "productivity-pm",
+        "typescript",
+        "encryption"
+      ],
+      "license": "AGPL-3.0",
+      "homepage": "https://github.com/standardnotes/app",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/standardnotes/app"
+      },
+      "verified": false,
+      "instantiable": false,
+      "verification": {
+        "sourcePresent": false,
+        "dependenciesValidated": false,
+        "buildVerified": false,
+        "runtimeTested": false,
+        "playwrightTested": false,
+        "solohostPackageValidated": false,
+        "productionReady": false
+      },
+      "compatibility": {
+        "solohost": false,
+        "solohostStatus": "not-validated"
+      },
+      "deploymentReady": false
+    },
+    {
+      "id": "joplin-server",
+      "name": "Joplin Server",
+      "version": "0.0.0-catalog",
+      "description": "Joplin Server — productivity-pm, docker, notes, sync",
+      "category": "productivity-pm",
+      "kind": "package",
+      "tags": [
+        "productivity-pm",
+        "docker",
+        "notes",
+        "sync",
+        "typescript"
+      ],
+      "license": "MIT",
+      "homepage": "https://github.com/laurent22/joplin",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/laurent22/joplin"
+      },
+      "verified": false,
+      "instantiable": false,
+      "verification": {
+        "sourcePresent": false,
+        "dependenciesValidated": false,
+        "buildVerified": false,
+        "runtimeTested": false,
+        "playwrightTested": false,
+        "solohostPackageValidated": false,
+        "productionReady": false
+      },
+      "compatibility": {
+        "solohost": false,
+        "solohostStatus": "not-validated"
+      },
+      "deploymentReady": false
+    },
+    {
+      "id": "trilium",
+      "name": "Trilium Notes",
+      "version": "0.0.0-catalog",
+      "description": "Trilium Notes — docker, education-knowledge, notes, knowledge-tree",
+      "category": "education-knowledge",
+      "kind": "package",
+      "tags": [
+        "docker",
+        "education-knowledge",
+        "notes",
+        "knowledge-tree",
+        "typescript"
+      ],
+      "license": "AGPL-3.0",
+      "homepage": "https://github.com/TriliumNext/Notes",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/TriliumNext/Notes"
+      },
+      "verified": false,
+      "instantiable": false,
+      "verification": {
+        "sourcePresent": false,
+        "dependenciesValidated": false,
+        "buildVerified": false,
+        "runtimeTested": false,
+        "playwrightTested": false,
+        "solohostPackageValidated": false,
+        "productionReady": false
+      },
+      "compatibility": {
+        "solohost": false,
+        "solohostStatus": "not-validated"
+      },
+      "deploymentReady": false
+    },
+    {
+      "id": "logseq",
+      "name": "Logseq",
+      "version": "0.0.0-catalog",
+      "description": "Logseq — knowledge-graph, education-knowledge, notes, clojure",
+      "category": "education-knowledge",
+      "kind": "reference",
+      "tags": [
+        "knowledge-graph",
+        "education-knowledge",
+        "notes",
+        "clojure",
+        "typescript"
+      ],
+      "license": "AGPL-3.0",
+      "homepage": "https://github.com/logseq/logseq",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/logseq/logseq"
+      },
+      "verified": false,
+      "instantiable": false,
+      "verification": {
+        "sourcePresent": false,
+        "dependenciesValidated": false,
+        "buildVerified": false,
+        "runtimeTested": false,
+        "playwrightTested": false,
+        "solohostPackageValidated": false,
+        "productionReady": false
+      },
+      "compatibility": {
+        "solohost": false,
+        "solohostStatus": "not-validated"
+      },
+      "deploymentReady": false
+    },
+    {
+      "id": "siyuan",
+      "name": "SiYuan",
+      "version": "0.0.0-catalog",
+      "description": "SiYuan — go, docker, education-knowledge, notes",
+      "category": "education-knowledge",
+      "kind": "package",
+      "tags": [
+        "go",
+        "docker",
+        "education-knowledge",
+        "notes",
+        "typescript",
+        "block-editor"
+      ],
+      "license": "AGPL-3.0",
+      "homepage": "https://github.com/siyuan-note/siyuan",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/siyuan-note/siyuan"
+      },
+      "verified": false,
+      "instantiable": false,
+      "verification": {
+        "sourcePresent": false,
+        "dependenciesValidated": false,
+        "buildVerified": false,
+        "runtimeTested": false,
+        "playwrightTested": false,
+        "solohostPackageValidated": false,
+        "productionReady": false
+      },
+      "compatibility": {
+        "solohost": false,
+        "solohostStatus": "not-validated"
+      },
+      "deploymentReady": false
+    },
+    {
+      "id": "hello-ai-app",
+      "name": "Hello AI App",
+      "version": "1.0.0",
+      "description": "Hello AI App — ai-agents, http, starter, health",
+      "category": "ai-agents",
+      "kind": "source",
+      "tags": [
+        "ai-agents",
+        "http",
+        "starter",
+        "health",
+        "node"
+      ],
+      "license": "MIT",
+      "homepage": null,
+      "source": {
+        "type": "local",
+        "path": "hello-ai-app"
+      },
+      "verified": false,
+      "instantiable": true,
+      "verification": {
+        "sourcePresent": true,
+        "dependenciesValidated": false,
+        "buildVerified": false,
+        "runtimeTested": false,
+        "playwrightTested": false,
+        "solohostPackageValidated": false,
+        "productionReady": false
+      },
+      "compatibility": {
+        "solohost": false,
+        "solohostStatus": "source-unverified"
+      },
+      "deploymentReady": false
+    },
+    {
+      "id": "sandbox-benchmark",
+      "name": "Sandbox Benchmark",
+      "version": "1.0.0",
+      "description": "Internal sandbox probe used for Builder verification; not a user app starter.",
+      "category": "developer-api",
+      "kind": "source",
+      "tags": [
+        "preview",
+        "developer-api",
+        "benchmark",
+        "node"
+      ],
+      "license": "MIT",
+      "homepage": null,
+      "source": {
+        "type": "local",
+        "path": "sandbox-benchmark"
+      },
+      "verified": false,
+      "instantiable": true,
+      "verification": {
+        "sourcePresent": true,
+        "dependenciesValidated": false,
+        "buildVerified": false,
+        "runtimeTested": false,
+        "playwrightTested": false,
+        "solohostPackageValidated": false,
+        "productionReady": false
+      },
+      "compatibility": {
+        "solohost": false,
+        "solohostStatus": "source-unverified"
+      },
+      "deploymentReady": false,
+      "internalOnly": true
+    }
+  ]
+}

@@ -1,0 +1,60 @@
+{
+  "schemaVersion": 1,
+  "id": "homepage",
+  "version": "v0.10.9",
+  "name": "Homepage",
+  "description": "Full upstream Homepage dashboard (pinned). Thin SoloHost overlay; source fetched on create.",
+  "category": "developer-api",
+  "kind": "source",
+  "tags": [
+    "homepage",
+    "solohost",
+    "fetch-upstream",
+    "thin-overlay",
+    "developer-api"
+  ],
+  "capabilities": [
+    "upstream-full",
+    "solohost-overlay"
+  ],
+  "features": [
+    "homepage"
+  ],
+  "tech": [],
+  "license": "Apache-2.0",
+  "source": {
+    "type": "github",
+    "path": "homepage",
+    "url": "https://github.com/gethomepage/homepage",
+    "ref": "v0.10.9"
+  },
+  "fetch": {
+    "type": "github",
+    "owner": "gethomepage",
+    "repo": "homepage",
+    "ref": "v0.10.9"
+  },
+  "overlay": {
+    "path": "overlay"
+  },
+  "compatibility": {
+    "solohost": true,
+    "solohostStatus": "overlay-ready-fetch-on-create",
+    "builder": ">=1.8.37",
+    "privilegedForbidden": true,
+    "dockerSocketForbidden": true
+  },
+  "verified": false,
+  "verification": {
+    "sourcePresent": false,
+    "dependenciesValidated": false,
+    "buildVerified": false,
+    "runtimeTested": false,
+    "playwrightTested": false,
+    "solohostPackageValidated": false,
+    "productionReady": false
+  },
+  "instantiable": true,
+  "thinOverlay": true,
+  "attribution": "Upstream https://github.com/gethomepage/homepage @ v0.10.9. License Apache-2.0. Builder ships SoloHost overlay only; full source is fetched at create time."
+}

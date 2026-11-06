@@ -1,0 +1,83 @@
+{
+  "schemaVersion": 1,
+  "id": "std-business-crm",
+  "version": "1.0.0",
+  "name": "CRM Starter",
+  "description": "Customer and pipeline SoloHost starter — standardized SoloHost Pi Network source template (no upstream app branding). Full SoloHost-ready application skeleton (health API, static UI, Dockerfile, compose, config_options) — not a stub demo.",
+  "category": "business-crm",
+  "kind": "source",
+  "tags": [
+    "business-crm",
+    "solohost",
+    "standard",
+    "crm",
+    "contacts",
+    "pipeline",
+    "professional",
+    "usable-first-run"
+  ],
+  "capabilities": [
+    "crm",
+    "contacts",
+    "pipeline"
+  ],
+  "features": [
+    "crm",
+    "contacts",
+    "pipeline"
+  ],
+  "tech": [
+    "node"
+  ],
+  "license": "MIT",
+  "variables": [
+    {
+      "name": "APP_NAME",
+      "default": "CRM Starter",
+      "description": "Display name"
+    },
+    {
+      "name": "APP_SLUG",
+      "default": "std-business-crm",
+      "description": "Slug"
+    },
+    {
+      "name": "APP_SUMMARY",
+      "default": "Customer and pipeline SoloHost starter",
+      "description": "Summary"
+    },
+    {
+      "name": "APP_IDEA",
+      "default": "",
+      "description": "User idea"
+    }
+  ],
+  "source": {
+    "type": "local",
+    "path": "std-business-crm"
+  },
+  "compatibility": {
+    "solohost": true,
+    "solohostStatus": "source-standard",
+    "privilegedForbidden": true,
+    "dockerSocketForbidden": true,
+    "node": ">=22",
+    "builder": ">=1.8.33"
+  },
+  "verified": true,
+  "verification": {
+    "sourcePresent": true,
+    "dependenciesValidated": true,
+    "buildVerified": false,
+    "runtimeTested": false,
+    "playwrightTested": false,
+    "solohostPackageValidated": false,
+    "productionReady": false
+  },
+  "entry": "src/server.js",
+  "instantiable": true,
+  "attribution": "Standard SoloHost starter shipped with App Builder (not a fork of a third-party product).",
+  "demo": false,
+  "completeSoloHostApp": true,
+  "qualityBaseline": "professional-interactive-v2"
+}

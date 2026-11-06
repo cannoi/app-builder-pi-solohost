@@ -1,0 +1,14 @@
+title: "Media Starter"
+eyebrow: SoloHost App
+description: "Media gallery SoloHost starter"
+footer_hint: "Only enter values you need. Leave the rest default."
+output_file: .env
+fixed_values:
+  - name: PORT
+    value: "8080"
+fields:
+  - name: APP_NAME
+    label: App name
+    type: text
+    default: "Media Starter"
+    help: "Display name shown in the app."

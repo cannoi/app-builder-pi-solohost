@@ -1,0 +1,14 @@
+title: "Gitea"
+eyebrow: SoloHost App
+description: "Full upstream Gitea (pinned). Thin SoloHost overlay; source fetched on create."
+footer_hint: "Only enter values you need. Leave the rest default."
+output_file: .env
+fixed_values:
+  - name: PORT
+    value: "3000"
+fields:
+  - name: APP_NAME
+    label: App name
+    type: text
+    default: "Gitea"
+    help: "Display name for this installation."

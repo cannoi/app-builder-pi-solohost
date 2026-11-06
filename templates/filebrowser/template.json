@@ -1,0 +1,60 @@
+{
+  "schemaVersion": 1,
+  "id": "filebrowser",
+  "version": "v2.31.2",
+  "name": "File Browser",
+  "description": "Full upstream File Browser (pinned). Thin SoloHost overlay; source fetched on create.",
+  "category": "storage-files",
+  "kind": "source",
+  "tags": [
+    "filebrowser",
+    "solohost",
+    "fetch-upstream",
+    "thin-overlay",
+    "storage-files"
+  ],
+  "capabilities": [
+    "upstream-full",
+    "solohost-overlay"
+  ],
+  "features": [
+    "filebrowser"
+  ],
+  "tech": [],
+  "license": "Apache-2.0",
+  "source": {
+    "type": "github",
+    "path": "filebrowser",
+    "url": "https://github.com/filebrowser/filebrowser",
+    "ref": "v2.31.2"
+  },
+  "fetch": {
+    "type": "github",
+    "owner": "filebrowser",
+    "repo": "filebrowser",
+    "ref": "v2.31.2"
+  },
+  "overlay": {
+    "path": "overlay"
+  },
+  "compatibility": {
+    "solohost": true,
+    "solohostStatus": "overlay-ready-fetch-on-create",
+    "builder": ">=1.8.37",
+    "privilegedForbidden": true,
+    "dockerSocketForbidden": true
+  },
+  "verified": false,
+  "verification": {
+    "sourcePresent": false,
+    "dependenciesValidated": false,
+    "buildVerified": false,
+    "runtimeTested": false,
+    "playwrightTested": false,
+    "solohostPackageValidated": false,
+    "productionReady": false
+  },
+  "instantiable": true,
+  "thinOverlay": true,
+  "attribution": "Upstream https://github.com/filebrowser/filebrowser @ v2.31.2. License Apache-2.0. Builder ships SoloHost overlay only; full source is fetched at create time."
+}

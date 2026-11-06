@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "id": "hello-ai-app",
+  "version": "1.0.0",
+  "name": "hello-ai-app",
+  "kind": "source",
+  "source": {
+    "type": "local",
+    "path": "hello-ai-app"
+  },
+  "demo": true,
+  "tags": [
+    "demo"
+  ],
+  "description": "hello-ai-app (demo/sandbox — blocked when Templates ON)"
+}

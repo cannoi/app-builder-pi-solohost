@@ -1,0 +1,80 @@
+{
+  "schemaVersion": 1,
+  "id": "std-finance-payment",
+  "version": "1.0.0",
+  "name": "Finance Starter",
+  "description": "Invoices list SoloHost starter — standardized SoloHost Pi Network source template (no upstream app branding). Full SoloHost-ready application skeleton (health API, static UI, Dockerfile, compose, config_options) — not a stub demo.",
+  "category": "finance-payment",
+  "kind": "source",
+  "tags": [
+    "finance-payment",
+    "solohost",
+    "standard",
+    "invoice",
+    "finance",
+    "professional",
+    "usable-first-run"
+  ],
+  "capabilities": [
+    "invoice",
+    "finance"
+  ],
+  "features": [
+    "invoice",
+    "finance"
+  ],
+  "tech": [
+    "node"
+  ],
+  "license": "MIT",
+  "variables": [
+    {
+      "name": "APP_NAME",
+      "default": "Finance Starter",
+      "description": "Display name"
+    },
+    {
+      "name": "APP_SLUG",
+      "default": "std-finance-payment",
+      "description": "Slug"
+    },
+    {
+      "name": "APP_SUMMARY",
+      "default": "Invoices list SoloHost starter",
+      "description": "Summary"
+    },
+    {
+      "name": "APP_IDEA",
+      "default": "",
+      "description": "User idea"
+    }
+  ],
+  "source": {
+    "type": "local",
+    "path": "std-finance-payment"
+  },
+  "compatibility": {
+    "solohost": true,
+    "solohostStatus": "source-standard",
+    "privilegedForbidden": true,
+    "dockerSocketForbidden": true,
+    "node": ">=22",
+    "builder": ">=1.8.33"
+  },
+  "verified": true,
+  "verification": {
+    "sourcePresent": true,
+    "dependenciesValidated": true,
+    "buildVerified": false,
+    "runtimeTested": false,
+    "playwrightTested": false,
+    "solohostPackageValidated": false,
+    "productionReady": false
+  },
+  "entry": "src/server.js",
+  "instantiable": true,
+  "attribution": "Standard SoloHost starter shipped with App Builder (not a fork of a third-party product).",
+  "demo": false,
+  "completeSoloHostApp": true,
+  "qualityBaseline": "professional-interactive-v2"
+}

@@ -1,0 +1,16 @@
+# SoloHost install — Uptime Kuma
+# Upstream: https://github.com/louislam/uptime-kuma @ 1.23.16
+# License: MIT
+# No privileged mode. No docker.sock. Host bind is loopback only.
+services:
+  app:
+    image: ghcr.io/OWNER/uptime-kuma:latest
+    pull_policy: always
+    restart: unless-stopped
+    labels:
+      pi.ui.primary: "true"
+    ports:
+      - "127.0.0.1:3001:3001"
+    environment:
+      PORT: "3001"
+      HOST: "0.0.0.0"

@@ -1,0 +1,14 @@
+title: "CRM Starter"
+eyebrow: SoloHost App
+description: "Customer and pipeline SoloHost starter"
+footer_hint: "Only enter values you need. Leave the rest default."
+output_file: .env
+fixed_values:
+  - name: PORT
+    value: "8080"
+fields:
+  - name: APP_NAME
+    label: App name
+    type: text
+    default: "CRM Starter"
+    help: "Display name shown in the app."

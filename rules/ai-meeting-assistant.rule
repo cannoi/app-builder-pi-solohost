@@ -1,0 +1,27 @@
+RULE_VERSION: 1.0
+RULE_NAME: AI_MEETING_ASSISTANT
+APP_TYPE: AI / PRODUCTIVITY
+TARGET: PI_SOLOHOST
+GOAL: Make https://github.com/cannoi/ai-meeting-assistant a usable meeting assistant, not a demo shell.
+
+REQUIRED CAPABILITIES:
+- Create meeting
+- Meeting notes
+- AI summarization
+- Action items
+- Meeting history
+- Persistent storage
+- Root UI on /
+- Health route
+- SoloHost runtime compatibility
+
+FUNCTIONAL ACCEPTANCE:
+- Opening / shows the meeting UI, not Cannot GET /
+- Notes can be saved
+- Summary is generated when a provider key exists
+- Data survives restart
+- Container stays up on 0.0.0.0
+
+STOP CONDITIONS:
+- Required AI key missing
+- High-risk architecture change

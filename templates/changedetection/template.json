@@ -1,0 +1,60 @@
+{
+  "schemaVersion": 1,
+  "id": "changedetection",
+  "version": "0.47.5",
+  "name": "changedetection.io",
+  "description": "Full upstream changedetection.io (pinned). Thin SoloHost overlay; source fetched on create.",
+  "category": "monitoring-analytics",
+  "kind": "source",
+  "tags": [
+    "changedetection",
+    "solohost",
+    "fetch-upstream",
+    "thin-overlay",
+    "monitoring-analytics"
+  ],
+  "capabilities": [
+    "upstream-full",
+    "solohost-overlay"
+  ],
+  "features": [
+    "changedetection"
+  ],
+  "tech": [],
+  "license": "Apache-2.0",
+  "source": {
+    "type": "github",
+    "path": "changedetection",
+    "url": "https://github.com/dgtlmoon/changedetection.io",
+    "ref": "0.47.5"
+  },
+  "fetch": {
+    "type": "github",
+    "owner": "dgtlmoon",
+    "repo": "changedetection.io",
+    "ref": "0.47.5"
+  },
+  "overlay": {
+    "path": "overlay"
+  },
+  "compatibility": {
+    "solohost": true,
+    "solohostStatus": "overlay-ready-fetch-on-create",
+    "builder": ">=1.8.37",
+    "privilegedForbidden": true,
+    "dockerSocketForbidden": true
+  },
+  "verified": false,
+  "verification": {
+    "sourcePresent": false,
+    "dependenciesValidated": false,
+    "buildVerified": false,
+    "runtimeTested": false,
+    "playwrightTested": false,
+    "solohostPackageValidated": false,
+    "productionReady": false
+  },
+  "instantiable": true,
+  "thinOverlay": true,
+  "attribution": "Upstream https://github.com/dgtlmoon/changedetection.io @ 0.47.5. License Apache-2.0. Builder ships SoloHost overlay only; full source is fetched at create time."
+}

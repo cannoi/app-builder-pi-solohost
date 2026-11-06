@@ -1,0 +1,80 @@
+{
+  "schemaVersion": 1,
+  "id": "std-cms-publishing",
+  "version": "1.0.0",
+  "name": "CMS Starter",
+  "description": "Pages and posts SoloHost starter — standardized SoloHost Pi Network source template (no upstream app branding). Full SoloHost-ready application skeleton (health API, static UI, Dockerfile, compose, config_options) — not a stub demo.",
+  "category": "cms-publishing",
+  "kind": "source",
+  "tags": [
+    "cms-publishing",
+    "solohost",
+    "standard",
+    "cms",
+    "blog",
+    "professional",
+    "usable-first-run"
+  ],
+  "capabilities": [
+    "cms",
+    "blog"
+  ],
+  "features": [
+    "cms",
+    "blog"
+  ],
+  "tech": [
+    "node"
+  ],
+  "license": "MIT",
+  "variables": [
+    {
+      "name": "APP_NAME",
+      "default": "CMS Starter",
+      "description": "Display name"
+    },
+    {
+      "name": "APP_SLUG",
+      "default": "std-cms-publishing",
+      "description": "Slug"
+    },
+    {
+      "name": "APP_SUMMARY",
+      "default": "Pages and posts SoloHost starter",
+      "description": "Summary"
+    },
+    {
+      "name": "APP_IDEA",
+      "default": "",
+      "description": "User idea"
+    }
+  ],
+  "source": {
+    "type": "local",
+    "path": "std-cms-publishing"
+  },
+  "compatibility": {
+    "solohost": true,
+    "solohostStatus": "source-standard",
+    "privilegedForbidden": true,
+    "dockerSocketForbidden": true,
+    "node": ">=22",
+    "builder": ">=1.8.33"
+  },
+  "verified": true,
+  "verification": {
+    "sourcePresent": true,
+    "dependenciesValidated": true,
+    "buildVerified": false,
+    "runtimeTested": false,
+    "playwrightTested": false,
+    "solohostPackageValidated": false,
+    "productionReady": false
+  },
+  "entry": "src/server.js",
+  "instantiable": true,
+  "attribution": "Standard SoloHost starter shipped with App Builder (not a fork of a third-party product).",
+  "demo": false,
+  "completeSoloHostApp": true,
+  "qualityBaseline": "professional-interactive-v2"
+}

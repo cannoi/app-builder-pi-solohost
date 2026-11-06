@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>{{APP_NAME}}</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      --bg: #0b1220; --panel: #121a2b; --line: #24304a; --text: #e8eefc; --muted: #9eb0cc;
+      --accent: #3b82f6; --accent2: #22c55e; --danger: #ef4444;
+      font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: radial-gradient(1200px 600px at 10% -10%, #15233d 0%, var(--bg) 55%); color: var(--text); min-height: 100vh; }
+    header { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: 1rem 1.25rem; border-bottom: 1px solid var(--line); backdrop-filter: blur(8px); position: sticky; top: 0; background: rgba(11,18,32,.85); }
+    header .brand { display: flex; align-items: center; gap: .65rem; font-weight: 700; }
+    header .brand span { width: 2rem; height: 2rem; border-radius: 10px; background: linear-gradient(135deg, var(--accent), #8b5cf6); display: grid; place-items: center; font-size: .9rem; }
+    header .status { font-size: .8rem; color: var(--muted); }
+    header .status strong { color: var(--accent2); font-weight: 600; }
+    main { max-width: 920px; margin: 0 auto; padding: 1.25rem 1.1rem 3rem; }
+    h1 { font-size: 1.55rem; margin: 0 0 .35rem; letter-spacing: -0.02em; }
+    .lead { color: var(--muted); line-height: 1.5; margin: 0 0 1.1rem; }
+    .grid { display: grid; gap: 1rem; grid-template-columns: 1.1fr 1fr; }
+    @media (max-width: 800px) { .grid { grid-template-columns: 1fr; } }
+    .card { background: var(--panel); border: 1px solid var(--line); border-radius: 16px; padding: 1rem 1.1rem 1.15rem; box-shadow: 0 10px 30px rgba(0,0,0,.18); }
+    .card h2 { margin: 0 0 .75rem; font-size: 1.05rem; }
+    .field { display: block; margin: 0 0 .65rem; }
+    .field span { display: block; font-size: .78rem; color: var(--muted); margin-bottom: .28rem; text-transform: capitalize; }
+    input { width: 100%; padding: .62rem .7rem; border-radius: 11px; border: 1px solid var(--line); background: #0e1626; color: inherit; font: inherit; }
+    input:focus { outline: 2px solid rgba(59,130,246,.45); border-color: #3b82f6; }
+    button { font: inherit; border: 0; border-radius: 11px; padding: .62rem 1rem; background: var(--accent); color: #fff; font-weight: 650; cursor: pointer; }
+    button:hover { filter: brightness(1.08); }
+    button:disabled { opacity: .55; cursor: not-allowed; }
+    ul { list-style: none; margin: 0; padding: 0; max-height: 22rem; overflow: auto; }
+    li { padding: .7rem .55rem; border-bottom: 1px solid var(--line); display: flex; justify-content: space-between; gap: .5rem; align-items: flex-start; }
+    li:last-child { border-bottom: 0; }
+    .item-main { font-weight: 600; }
+    .item-sub { color: var(--muted); font-size: .82rem; margin-top: .15rem; }
+    .empty { color: var(--muted); padding: .6rem .2rem; }
+    footer { margin-top: 1.25rem; color: var(--muted); font-size: .8rem; }
+    code { background: #1a2438; padding: .12rem .35rem; border-radius: 6px; }
+    .toast { position: fixed; right: 1rem; bottom: 1rem; background: #0f1b31; border: 1px solid var(--line); padding: .65rem .9rem; border-radius: 12px; display: none; }
+    .toast.show { display: block; }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="brand"><span>◆</span><div>{{APP_NAME}}</div></div>
+    <div class="status">Live · <strong id="health">…</strong></div>
+  </header>
+  <main>
+    <h1>API items</h1>
+    <p class="lead">{{APP_SUMMARY}}</p>
+    <div class="grid">
+      <section class="card">
+        <h2>Add item</h2>
+        <form id="mainForm">
+          <label class="field"><span>name</span><input name="name" required autocomplete="off" placeholder="name"/></label>
+          <label class="field"><span>value</span><input name="value" required autocomplete="off" placeholder="value"/></label>
+          <button type="submit" id="submitBtn">Add item</button>
+        </form>
+      </section>
+      <section class="card">
+        <h2>Item list</h2>
+        <ul id="list"><li class="empty">Loading…</li></ul>
+      </section>
+    </div>
+    <footer>SoloHost · <code>/health</code> · <code>/api/items</code> · template <code>std-developer-api</code></footer>
+  </main>
+  <div class="toast" id="toast"></div>
+  <script>
+    const api = "/api/items";
+    const toast = (msg) => {
+      const el = document.getElementById('toast');
+      el.textContent = msg; el.classList.add('show');
+      setTimeout(() => el.classList.remove('show'), 1800);
+    };
+    async function refresh() {
+      const r = await fetch(api);
+      const data = await r.json();
+      const items = data.items || [];
+      const el = document.getElementById('list');
+      if (!items.length) { el.innerHTML = '<li class="empty">No items yet — use the form.</li>'; return; }
+      el.innerHTML = items.map(it => {
+        const vals = Object.entries(it).filter(([k]) => k !== 'id' && k !== 'createdAt');
+        const main = vals[0] ? vals[0][1] : it.id;
+        const sub = vals.slice(1).map(([k,v]) => k + ': ' + v).join(' · ');
+        return '<li><div><div class="item-main">' + String(main) + '</div><div class="item-sub">' + sub + '</div></div></li>';
+      }).join('');
+    }
+    document.getElementById('mainForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const btn = document.getElementById('submitBtn');
+      btn.disabled = true;
+      try {
+        const body = Object.fromEntries(new FormData(e.target).entries());
+        const r = await fetch(api, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+        if (!r.ok) throw new Error('Save failed');
+        e.target.reset();
+        toast('Saved');
+        await refresh();
+      } catch (err) {
+        toast(String(err.message || err));
+      } finally {
+        btn.disabled = false;
+      }
+    });
+    fetch('/health').then(r => r.json()).then(j => {
+      document.getElementById('health').textContent = j.ok ? 'OK' : 'Degraded';
+    }).catch(() => { document.getElementById('health').textContent = 'Offline'; });
+    refresh().catch(() => {
+      document.getElementById('list').innerHTML = '<li class="empty">Could not load list.</li>';
+    });
+  </script>
+</body>
+</html>
