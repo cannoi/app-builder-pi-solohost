@@ -1,0 +1,16 @@
+# SoloHost install — changedetection.io
+# Upstream: https://github.com/dgtlmoon/changedetection.io @ 0.47.5
+# License: Apache-2.0
+# No privileged mode. No docker.sock. Host bind is loopback only.
+services:
+  app:
+    image: ghcr.io/OWNER/changedetection:latest
+    pull_policy: always
+    restart: unless-stopped
+    labels:
+      pi.ui.primary: "true"
+    ports:
+      - "127.0.0.1:5000:5000"
+    environment:
+      PORT: "5000"
+      HOST: "0.0.0.0"

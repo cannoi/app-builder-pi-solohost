@@ -1,0 +1,80 @@
+{
+  "schemaVersion": 1,
+  "id": "std-storage-files",
+  "version": "1.0.0",
+  "name": "Files Starter",
+  "description": "File list SoloHost starter — standardized SoloHost Pi Network source template (no upstream app branding). Full SoloHost-ready application skeleton (health API, static UI, Dockerfile, compose, config_options) — not a stub demo.",
+  "category": "storage-files",
+  "kind": "source",
+  "tags": [
+    "storage-files",
+    "solohost",
+    "standard",
+    "files",
+    "storage",
+    "professional",
+    "usable-first-run"
+  ],
+  "capabilities": [
+    "files",
+    "storage"
+  ],
+  "features": [
+    "files",
+    "storage"
+  ],
+  "tech": [
+    "node"
+  ],
+  "license": "MIT",
+  "variables": [
+    {
+      "name": "APP_NAME",
+      "default": "Files Starter",
+      "description": "Display name"
+    },
+    {
+      "name": "APP_SLUG",
+      "default": "std-storage-files",
+      "description": "Slug"
+    },
+    {
+      "name": "APP_SUMMARY",
+      "default": "File list SoloHost starter",
+      "description": "Summary"
+    },
+    {
+      "name": "APP_IDEA",
+      "default": "",
+      "description": "User idea"
+    }
+  ],
+  "source": {
+    "type": "local",
+    "path": "std-storage-files"
+  },
+  "compatibility": {
+    "solohost": true,
+    "solohostStatus": "source-standard",
+    "privilegedForbidden": true,
+    "dockerSocketForbidden": true,
+    "node": ">=22",
+    "builder": ">=1.8.33"
+  },
+  "verified": true,
+  "verification": {
+    "sourcePresent": true,
+    "dependenciesValidated": true,
+    "buildVerified": false,
+    "runtimeTested": false,
+    "playwrightTested": false,
+    "solohostPackageValidated": false,
+    "productionReady": false
+  },
+  "entry": "src/server.js",
+  "instantiable": true,
+  "attribution": "Standard SoloHost starter shipped with App Builder (not a fork of a third-party product).",
+  "demo": false,
+  "completeSoloHostApp": true,
+  "qualityBaseline": "professional-interactive-v2"
+}

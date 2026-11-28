@@ -1,0 +1,80 @@
+{
+  "schemaVersion": 1,
+  "id": "std-developer-api",
+  "version": "1.0.0",
+  "name": "API Starter",
+  "description": "JSON API SoloHost starter — standardized SoloHost Pi Network source template (no upstream app branding). Full SoloHost-ready application skeleton (health API, static UI, Dockerfile, compose, config_options) — not a stub demo.",
+  "category": "developer-api",
+  "kind": "source",
+  "tags": [
+    "developer-api",
+    "solohost",
+    "standard",
+    "api",
+    "devtools",
+    "professional",
+    "usable-first-run"
+  ],
+  "capabilities": [
+    "api",
+    "devtools"
+  ],
+  "features": [
+    "api",
+    "devtools"
+  ],
+  "tech": [
+    "node"
+  ],
+  "license": "MIT",
+  "variables": [
+    {
+      "name": "APP_NAME",
+      "default": "API Starter",
+      "description": "Display name"
+    },
+    {
+      "name": "APP_SLUG",
+      "default": "std-developer-api",
+      "description": "Slug"
+    },
+    {
+      "name": "APP_SUMMARY",
+      "default": "JSON API SoloHost starter",
+      "description": "Summary"
+    },
+    {
+      "name": "APP_IDEA",
+      "default": "",
+      "description": "User idea"
+    }
+  ],
+  "source": {
+    "type": "local",
+    "path": "std-developer-api"
+  },
+  "compatibility": {
+    "solohost": true,
+    "solohostStatus": "source-standard",
+    "privilegedForbidden": true,
+    "dockerSocketForbidden": true,
+    "node": ">=22",
+    "builder": ">=1.8.33"
+  },
+  "verified": true,
+  "verification": {
+    "sourcePresent": true,
+    "dependenciesValidated": true,
+    "buildVerified": false,
+    "runtimeTested": false,
+    "playwrightTested": false,
+    "solohostPackageValidated": false,
+    "productionReady": false
+  },
+  "entry": "src/server.js",
+  "instantiable": true,
+  "attribution": "Standard SoloHost starter shipped with App Builder (not a fork of a third-party product).",
+  "demo": false,
+  "completeSoloHostApp": true,
+  "qualityBaseline": "professional-interactive-v2"
+}

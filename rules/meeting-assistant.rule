@@ -1,0 +1,25 @@
+RULE_VERSION: 1.0
+RULE_NAME: AI_MEETING_ASSISTANT
+APP_TYPE: AI
+TARGET: PI_SOLOHOST
+GOAL: A meeting assistant that turns notes into summary and action items.
+
+REQUIRED CAPABILITIES:
+- Meeting notes
+- AI summarization
+- Action items
+- Meeting history
+EXECUTION:
+  MAX_CYCLES: 10
+  MAX_TASKS: 20
+  MAX_RETRIES_PER_TASK: 1
+  AUTO_APPLY: true
+  VERIFY_EACH_TASK: true
+  STOP_ON_USER_ACTION: true
+
+DEFINITION_OF_DONE:
+- Meeting notes can be created
+- AI summary works with configured provider
+- Action items are generated
+- Meeting history persists
+- SoloHost runtime starts successfully

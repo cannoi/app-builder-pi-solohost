@@ -1,0 +1,60 @@
+{
+  "schemaVersion": 1,
+  "id": "uptime-kuma",
+  "version": "1.23.16",
+  "name": "Uptime Kuma",
+  "description": "Full upstream Uptime Kuma (pinned). SoloHost overlay only in Builder; source fetched on create.",
+  "category": "monitoring-analytics",
+  "kind": "source",
+  "tags": [
+    "uptime-kuma",
+    "solohost",
+    "fetch-upstream",
+    "thin-overlay",
+    "monitoring-analytics"
+  ],
+  "capabilities": [
+    "upstream-full",
+    "solohost-overlay"
+  ],
+  "features": [
+    "uptime-kuma"
+  ],
+  "tech": [],
+  "license": "MIT",
+  "source": {
+    "type": "github",
+    "path": "uptime-kuma",
+    "url": "https://github.com/louislam/uptime-kuma",
+    "ref": "1.23.16"
+  },
+  "fetch": {
+    "type": "github",
+    "owner": "louislam",
+    "repo": "uptime-kuma",
+    "ref": "1.23.16"
+  },
+  "overlay": {
+    "path": "overlay"
+  },
+  "compatibility": {
+    "solohost": true,
+    "solohostStatus": "overlay-ready-fetch-on-create",
+    "builder": ">=1.8.37",
+    "privilegedForbidden": true,
+    "dockerSocketForbidden": true
+  },
+  "verified": false,
+  "verification": {
+    "sourcePresent": false,
+    "dependenciesValidated": false,
+    "buildVerified": false,
+    "runtimeTested": false,
+    "playwrightTested": false,
+    "solohostPackageValidated": false,
+    "productionReady": false
+  },
+  "instantiable": true,
+  "thinOverlay": true,
+  "attribution": "Upstream https://github.com/louislam/uptime-kuma @ 1.23.16. License MIT. Builder ships SoloHost overlay only; full source is fetched at create time."
+}

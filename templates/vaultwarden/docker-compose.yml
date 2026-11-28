@@ -1,0 +1,16 @@
+# SoloHost install — Vaultwarden
+# Upstream: https://github.com/dani-garcia/vaultwarden @ 1.32.5
+# License: GPL-3.0
+# No privileged mode. No docker.sock. Host bind is loopback only.
+services:
+  app:
+    image: ghcr.io/OWNER/vaultwarden:latest
+    pull_policy: always
+    restart: unless-stopped
+    labels:
+      pi.ui.primary: "true"
+    ports:
+      - "127.0.0.1:8080:80"
+    environment:
+      PORT: "80"
+      HOST: "0.0.0.0"

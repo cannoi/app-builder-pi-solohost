@@ -1,0 +1,60 @@
+{
+  "schemaVersion": 1,
+  "id": "vaultwarden",
+  "version": "1.32.5",
+  "name": "Vaultwarden",
+  "description": "Full upstream Vaultwarden (pinned). Thin SoloHost overlay; source fetched on create.",
+  "category": "storage-files",
+  "kind": "source",
+  "tags": [
+    "vaultwarden",
+    "solohost",
+    "fetch-upstream",
+    "thin-overlay",
+    "storage-files"
+  ],
+  "capabilities": [
+    "upstream-full",
+    "solohost-overlay"
+  ],
+  "features": [
+    "vaultwarden"
+  ],
+  "tech": [],
+  "license": "GPL-3.0",
+  "source": {
+    "type": "github",
+    "path": "vaultwarden",
+    "url": "https://github.com/dani-garcia/vaultwarden",
+    "ref": "1.32.5"
+  },
+  "fetch": {
+    "type": "github",
+    "owner": "dani-garcia",
+    "repo": "vaultwarden",
+    "ref": "1.32.5"
+  },
+  "overlay": {
+    "path": "overlay"
+  },
+  "compatibility": {
+    "solohost": true,
+    "solohostStatus": "overlay-ready-fetch-on-create",
+    "builder": ">=1.8.37",
+    "privilegedForbidden": true,
+    "dockerSocketForbidden": true
+  },
+  "verified": false,
+  "verification": {
+    "sourcePresent": false,
+    "dependenciesValidated": false,
+    "buildVerified": false,
+    "runtimeTested": false,
+    "playwrightTested": false,
+    "solohostPackageValidated": false,
+    "productionReady": false
+  },
+  "instantiable": true,
+  "thinOverlay": true,
+  "attribution": "Upstream https://github.com/dani-garcia/vaultwarden @ 1.32.5. License GPL-3.0. Builder ships SoloHost overlay only; full source is fetched at create time."
+}

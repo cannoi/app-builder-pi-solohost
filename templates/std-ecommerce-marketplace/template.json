@@ -1,0 +1,83 @@
+{
+  "schemaVersion": 1,
+  "id": "std-ecommerce-marketplace",
+  "version": "1.0.0",
+  "name": "Shop Starter",
+  "description": "Simple storefront SoloHost starter — standardized SoloHost Pi Network source template (no upstream app branding). Full SoloHost-ready application skeleton (health API, static UI, Dockerfile, compose, config_options) — not a stub demo.",
+  "category": "ecommerce-marketplace",
+  "kind": "source",
+  "tags": [
+    "ecommerce-marketplace",
+    "solohost",
+    "standard",
+    "shop",
+    "cart",
+    "orders",
+    "professional",
+    "usable-first-run"
+  ],
+  "capabilities": [
+    "shop",
+    "cart",
+    "orders"
+  ],
+  "features": [
+    "shop",
+    "cart",
+    "orders"
+  ],
+  "tech": [
+    "node"
+  ],
+  "license": "MIT",
+  "variables": [
+    {
+      "name": "APP_NAME",
+      "default": "Shop Starter",
+      "description": "Display name"
+    },
+    {
+      "name": "APP_SLUG",
+      "default": "std-ecommerce-marketplace",
+      "description": "Slug"
+    },
+    {
+      "name": "APP_SUMMARY",
+      "default": "Simple storefront SoloHost starter",
+      "description": "Summary"
+    },
+    {
+      "name": "APP_IDEA",
+      "default": "",
+      "description": "User idea"
+    }
+  ],
+  "source": {
+    "type": "local",
+    "path": "std-ecommerce-marketplace"
+  },
+  "compatibility": {
+    "solohost": true,
+    "solohostStatus": "source-standard",
+    "privilegedForbidden": true,
+    "dockerSocketForbidden": true,
+    "node": ">=22",
+    "builder": ">=1.8.33"
+  },
+  "verified": true,
+  "verification": {
+    "sourcePresent": true,
+    "dependenciesValidated": true,
+    "buildVerified": false,
+    "runtimeTested": false,
+    "playwrightTested": false,
+    "solohostPackageValidated": false,
+    "productionReady": false
+  },
+  "entry": "src/server.js",
+  "instantiable": true,
+  "attribution": "Standard SoloHost starter shipped with App Builder (not a fork of a third-party product).",
+  "demo": false,
+  "completeSoloHostApp": true,
+  "qualityBaseline": "professional-interactive-v2"
+}

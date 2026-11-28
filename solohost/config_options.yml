@@ -1,0 +1,17 @@
+title: "app-builder-pi-solohost"
+eyebrow: SoloHost App
+description: "Upgrade existing GitHub app: cannoi/app-builder-pi-solohost"
+footer_hint: "Only enter required secrets (at most 2). Other settings use safe defaults."
+output_file: .env
+after_save: "Settings saved. Start the app from SoloHost."
+fields:
+  - name: ACCESS_PASSWORD
+    label: Access Password
+    type: password
+    preserve_if_blank: true
+    help: "Required only if this app uses an admin login. Leave blank to use the app default."
+  - name: APP_PASSWORD
+    label: App Password
+    type: password
+    preserve_if_blank: true
+    help: "Required only if this app uses an admin login. Leave blank to use the app default."

@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "id": "sandbox-benchmark",
+  "version": "1.0.0",
+  "name": "sandbox-benchmark",
+  "kind": "source",
+  "source": {
+    "type": "local",
+    "path": "sandbox-benchmark"
+  },
+  "demo": true,
+  "tags": [
+    "demo"
+  ],
+  "description": "sandbox-benchmark (demo/sandbox — blocked when Templates ON)"
+}

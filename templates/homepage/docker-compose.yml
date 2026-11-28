@@ -1,0 +1,16 @@
+# SoloHost install — Homepage
+# Upstream: https://github.com/gethomepage/homepage @ v0.10.9
+# License: Apache-2.0
+# No privileged mode. No docker.sock. Host bind is loopback only.
+services:
+  app:
+    image: ghcr.io/OWNER/homepage:latest
+    pull_policy: always
+    restart: unless-stopped
+    labels:
+      pi.ui.primary: "true"
+    ports:
+      - "127.0.0.1:3000:3000"
+    environment:
+      PORT: "3000"
+      HOST: "0.0.0.0"

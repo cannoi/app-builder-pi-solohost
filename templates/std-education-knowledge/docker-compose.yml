@@ -1,0 +1,14 @@
+# SoloHost install — standard template std-education-knowledge
+services:
+  app:
+    image: ghcr.io/OWNER/std-education-knowledge:latest
+    pull_policy: always
+    restart: unless-stopped
+    labels:
+      pi.ui.primary: "true"
+    ports:
+      - "127.0.0.1:18123:8080"
+    environment:
+      PORT: "8080"
+      HOST: "0.0.0.0"
+      APP_NAME: "${APP_NAME:-Knowledge Starter}"

@@ -1,0 +1,186 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import { execFileSync } from 'node:child_process';
+
+test('SoloHost knowledge is embedded in the Builder prompts', async () => {
+  const p = await import('../src/ai/prompts.js');
+  assert.match(p.SYSTEM, /pi\.ui\.primary/);
+  assert.match(p.SYSTEM, /127\.0\.0\.1:HOST:CONTAINER/);
+  assert.match(p.SYSTEM, /config_options\.yml/);
+});
+
+test('SoloHost package generator emits the two required files', async () => {
+  const { writeSoloHostPackage } = await import('../src/release/solohost.js');
+  const root = '/tmp/paf-solohost-test';
+  fs.rmSync(root, { recursive: true, force: true }); fs.mkdirSync(root, { recursive: true });
+  const project = { name: 'Test App', idea: 'A test app' };
+  const result = await writeSoloHostPackage({ project, sourceDir: root, image: 'ghcr.io/test/app:1.0.0', hostPort: 18123 });
+  assert.equal(result.files.includes('docker-compose.yml'), true);
+  assert.equal(result.files.includes('config_options.yml'), true);
+  const compose = fs.readFileSync(`${root}/solohost/docker-compose.yml`, 'utf8');
+  assert.match(compose, /pi\.ui\.primary: "true"/);
+  assert.match(compose, /127\.0\.0\.1:18123:8080/);
+  assert.equal(fs.existsSync(`${root}/docker-compose.yml`), true);
+  assert.equal(fs.existsSync(`${root}/config_options.yml`), true);
+});
+
+
+test('SoloHost release kit includes beginner metadata and exact image address', async () => {
+  const { writeSoloHostPackage } = await import('../src/release/solohost.js');
+  const root = '/tmp/paf-solohost-kit-test';
+  fs.rmSync(root, { recursive: true, force: true }); fs.mkdirSync(root, { recursive: true });
+  const result = await writeSoloHostPackage({ project: { name: 'Demo App', idea: 'A demo app' }, sourceDir: root, image: 'ghcr.io/demo/demo-app:1.2.3', hostPort: 18124 });
+  assert.deepEqual(result.files.sort(), ['APP_INFO.md', 'INSTALL.md', 'LOGO_PROMPT.txt', 'README.md', 'config_options.yml', 'docker-compose.yml'].sort());
+  assert.match(fs.readFileSync(`${root}/solohost/APP_INFO.md`, 'utf8'), /ghcr\.io\/demo\/demo-app:1\.2\.3/);
+  assert.match(fs.readFileSync(`${root}/solohost/LOGO_PROMPT.txt`, 'utf8'), /logo/i);
+});
+
+
+test('project exporter creates source and SoloHost ZIPs without secrets', async () => {
+  const { createProjectZip } = await import('../src/projects/exporter.js');
+  const root = '/tmp/paf-export-test';
+  fs.rmSync(root, { recursive: true, force: true });
+  fs.mkdirSync(`${root}/source/solohost`, { recursive: true });
+  fs.writeFileSync(`${root}/source/index.html`, '<h1>Demo</h1>');
+  fs.writeFileSync(`${root}/source/.env`, 'SECRET=do-not-export');
+  fs.writeFileSync(`${root}/source/solohost/docker-compose.yml`, 'services: {}');
+  fs.writeFileSync(`${root}/source/solohost/config_options.yml`, 'title: Demo');
+  const source = await createProjectZip({ sourceDir: `${root}/source`, outputDir: `${root}/artifacts`, slug: 'demo', kind: 'project' });
+  const install = await createProjectZip({ sourceDir: `${root}/source`, outputDir: `${root}/artifacts`, slug: 'demo', kind: 'solohost' });
+  assert.equal(fs.existsSync(source.path), true);
+  assert.equal(fs.existsSync(install.path), true);
+  const listSource = execFileSync('unzip', ['-l', source.path], { encoding: 'utf8' });
+  const listInstall = execFileSync('unzip', ['-l', install.path], { encoding: 'utf8' });
+  assert.match(listSource, /index\.html/);
+  assert.doesNotMatch(listSource, /\.env\s/);
+  assert.match(listInstall, /docker-compose\.yml/);
+  assert.doesNotMatch(listInstall, /index\.html/);
+});
+
+test('top-level Builder compose keeps SoloHost-compatible runtime environment', async () => {
+  const fs = await import('node:fs/promises');
+  const yml = await fs.readFile(new URL('../docker-compose.yml', import.meta.url), 'utf8');
+  const cfg = await fs.readFile(new URL('../config_options.yml', import.meta.url), 'utf8');
+  const pkg = JSON.parse(await fs.readFile(new URL('../package.json', import.meta.url), 'utf8'));
+  const escaped = pkg.version.replace(/\./g, '\\.');
+  assert.match(yml, new RegExp(`image:\\s*ghcr\\.io\\/cannoi\\/app-builder-pi-solohost:${escaped}`));
+  assert.match(yml, /127\.0\.0\.1:\d{4,5}:8080/); // loopback-only host port (SoloHost contract); the number itself is a product choice
+  assert.match(yml, /builder_data:\/app\/data/);
+  assert.doesNotMatch(yml, /PREVIEW_REQUIRE_INTERNET/);
+  assert.doesNotMatch(yml, /PREVIEW_REQUIRE_BROWSER_TEST/);
+  assert.doesNotMatch(cfg, /PODMAN_API_URL/);
+  // "Nothing to enter here": the Builder form asks for no keys (Feedback Hub and AI keys are handled inside the app).
+  assert.match(cfg, /fields:\s*\[\]/);
+});
+
+test('SoloHost install kit contains only the compose/config contract files', async () => {
+  const fs = await import('node:fs/promises');
+  const path = await import('node:path');
+  const os = await import('node:os');
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'paf-kit-'));
+  const { writeSoloHostPackage } = await import('../src/release/solohost.js');
+  const r = await writeSoloHostPackage({ project: { name: 'Demo', idea: 'Simple app' }, sourceDir: dir, image: 'ghcr.io/demo/demo:1.0.0' });
+  assert.deepEqual(r.files.sort(), ['APP_INFO.md','INSTALL.md','LOGO_PROMPT.txt','README.md','config_options.yml','docker-compose.yml'].sort());
+  assert.match(await fs.readFile(path.join(dir, 'solohost', 'docker-compose.yml'), 'utf8'), /image:\s*ghcr\.io\/demo\/demo:1\.0\.0/);
+  assert.doesNotMatch(await fs.readFile(path.join(dir, 'solohost', 'docker-compose.yml'), 'utf8'), /\bbuild:/);
+});
+
+test('SoloHost package generation does not assume container port 8080 when app listens on PORT or exposes another port', async () => {
+  const fs = await import('node:fs/promises');
+  const os = await import('node:os');
+  const path = await import('node:path');
+  const { writeSoloHostPackage } = await import('../src/release/solohost.js');
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'paf-solohost-port-'));
+  const project = { name: 'Radio', idea: 'Radio', slug: 'radio' };
+  await fs.writeFile(path.join(root, 'server.js'), 'const PORT = process.env.PORT || 3000;');
+  await fs.writeFile(path.join(root, 'Dockerfile'), 'EXPOSE 3000\n');
+  const result = await writeSoloHostPackage({ project, sourceDir: root, image: 'ghcr.io/cannoi/radio:0.1.0', hostPort: 18273 });
+  const compose = await fs.readFile(path.join(root, 'solohost', 'docker-compose.yml'), 'utf8');
+  assert.equal(result.containerPort, 3000);
+  assert.match(compose, /18273:3000/);
+  assert.doesNotMatch(compose, /18273:8080/);
+  await fs.rm(root, { recursive: true, force: true });
+});
+
+
+test('SoloHost package synchronization discovers new runtime environment variables', async () => {
+  const fs = await import('node:fs/promises');
+  const os = await import('node:os');
+  const path = await import('node:path');
+  const { writeSoloHostPackage } = await import('../src/release/solohost.js');
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'paf-solohost-sync-'));
+  await fs.writeFile(path.join(root, 'server.js'), 'const port = process.env.PORT || 3000; const model = process.env.AI_MODEL; const search = process.env.ENABLE_SEARCH;');
+  await fs.writeFile(path.join(root, 'Dockerfile'), 'EXPOSE 3000\n');
+  await fs.writeFile(path.join(root, 'docker-compose.yml'), `services:
+  app:
+    build: .
+    environment:
+      PORT: 3000
+      API_KEY: \${API_KEY}
+      AI_MODEL: \${AI_MODEL}
+      ENABLE_SEARCH: \${ENABLE_SEARCH}
+`);
+  await fs.writeFile(path.join(root, 'config_options.yml'), `title: "Demo"
+output_file: .env
+fields:
+  - name: API_KEY
+    label: API key
+    type: password
+`);
+  const result = await writeSoloHostPackage({ project: { name: 'Demo', idea: 'Demo', slug: 'demo' }, sourceDir: root, image: 'ghcr.io/demo/demo:2.0.0', hostPort: 18280 });
+  const compose = await fs.readFile(path.join(root, 'solohost/docker-compose.yml'), 'utf8');
+  const config = await fs.readFile(path.join(root, 'solohost/config_options.yml'), 'utf8');
+  assert.match(compose, /image:\s*ghcr\.io\/demo\/demo:2\.0\.0/);
+  assert.match(compose, /127\.0\.0\.1:18280:3000/);
+  assert.doesNotMatch(compose, /^\s{4}build:/m);
+  assert.match(config, /name:\s*AI_MODEL/);
+  assert.match(config, /name:\s*ENABLE_SEARCH/);
+  assert.match(result.synchronization.envVars.join(','), /AI_MODEL/);
+  await fs.rm(root, { recursive: true, force: true });
+});
+
+test('SoloHost package synchronization is idempotent for unchanged source', async () => {
+  const fs = await import('node:fs/promises');
+  const os = await import('node:os');
+  const path = await import('node:path');
+  const { writeSoloHostPackage } = await import('../src/release/solohost.js');
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'paf-solohost-idempotent-'));
+  await fs.writeFile(path.join(root, 'server.js'), 'const PORT = process.env.PORT || 8080;');
+  const args = { project: { name: 'Demo', idea: 'Demo', slug: 'demo' }, sourceDir: root, image: 'ghcr.io/demo/demo:1.0.0', hostPort: 18281 };
+  await writeSoloHostPackage(args);
+  const firstCompose = await fs.readFile(path.join(root, 'solohost/docker-compose.yml'), 'utf8');
+  const firstConfig = await fs.readFile(path.join(root, 'solohost/config_options.yml'), 'utf8');
+  await writeSoloHostPackage(args);
+  assert.equal(await fs.readFile(path.join(root, 'solohost/docker-compose.yml'), 'utf8'), firstCompose);
+  assert.equal(await fs.readFile(path.join(root, 'solohost/config_options.yml'), 'utf8'), firstConfig);
+  await fs.rm(root, { recursive: true, force: true });
+});
+
+test('SoloHost package generator recovers malformed source Compose and config YAML with a valid fallback', async () => {
+  const fs = await import('node:fs/promises');
+  const os = await import('node:os');
+  const path = await import('node:path');
+  const { writeSoloHostPackage } = await import('../src/release/solohost.js');
+  const { lintPackage } = await import('../src/release/solohost-lint.js');
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'paf-yaml-fallback-'));
+  await fs.writeFile(path.join(dir, 'docker-compose.yml'), 'services:\n  app:\n    image: [broken\n    ports:\n      - "bad\n');
+  await fs.writeFile(path.join(dir, 'config_options.yml'), 'title: [broken\nfields:\n  - name: BROKEN\n    type: [text\n');
+  await fs.writeFile(path.join(dir, 'server.js'), 'const key = process.env.DEMO_API_KEY; const PORT = process.env.PORT || 8080;');
+  const result = await writeSoloHostPackage({
+    project: { name: 'Fallback Demo', idea: 'Malformed YAML recovery', slug: 'fallback-demo' },
+    sourceDir: dir,
+    image: 'ghcr.io/demo/fallback-demo:1.0.0',
+    hostPort: 18292,
+  });
+  const compose = await fs.readFile(path.join(dir, 'solohost', 'docker-compose.yml'), 'utf8');
+  const config = await fs.readFile(path.join(dir, 'solohost', 'config_options.yml'), 'utf8');
+  assert.equal(result.fallbackUsed, true);
+  assert.equal(result.ok, true, JSON.stringify(result.lint.errors));
+  assert.deepEqual(lintPackage({ composeText: compose, configText: config }).errors, []);
+  assert.match(compose, /ghcr\.io\/demo\/fallback-demo:1\.0\.0/);
+  assert.match(config, /name: DEMO_API_KEY/);
+  assert.equal(await fs.readFile(path.join(dir, 'docker-compose.yml'), 'utf8'), compose);
+  assert.equal(await fs.readFile(path.join(dir, 'config_options.yml'), 'utf8'), config);
+  await fs.rm(dir, { recursive: true, force: true });
+});

@@ -1,0 +1,83 @@
+{
+  "schemaVersion": 1,
+  "id": "std-ai-agents",
+  "version": "1.0.0",
+  "name": "AI Starter",
+  "description": "AI chat-ready SoloHost starter — standardized SoloHost Pi Network source template (no upstream app branding). Full SoloHost-ready application skeleton (health API, static UI, Dockerfile, compose, config_options) — not a stub demo.",
+  "category": "ai-agents",
+  "kind": "source",
+  "tags": [
+    "ai-agents",
+    "solohost",
+    "standard",
+    "ai",
+    "chat",
+    "rag",
+    "professional",
+    "usable-first-run"
+  ],
+  "capabilities": [
+    "ai",
+    "chat",
+    "rag"
+  ],
+  "features": [
+    "ai",
+    "chat",
+    "rag"
+  ],
+  "tech": [
+    "node"
+  ],
+  "license": "MIT",
+  "variables": [
+    {
+      "name": "APP_NAME",
+      "default": "AI Starter",
+      "description": "Display name"
+    },
+    {
+      "name": "APP_SLUG",
+      "default": "std-ai-agents",
+      "description": "Slug"
+    },
+    {
+      "name": "APP_SUMMARY",
+      "default": "AI chat-ready SoloHost starter",
+      "description": "Summary"
+    },
+    {
+      "name": "APP_IDEA",
+      "default": "",
+      "description": "User idea"
+    }
+  ],
+  "source": {
+    "type": "local",
+    "path": "std-ai-agents"
+  },
+  "compatibility": {
+    "solohost": true,
+    "solohostStatus": "source-standard",
+    "privilegedForbidden": true,
+    "dockerSocketForbidden": true,
+    "node": ">=22",
+    "builder": ">=1.8.33"
+  },
+  "verified": true,
+  "verification": {
+    "sourcePresent": true,
+    "dependenciesValidated": true,
+    "buildVerified": false,
+    "runtimeTested": false,
+    "playwrightTested": false,
+    "solohostPackageValidated": false,
+    "productionReady": false
+  },
+  "entry": "src/server.js",
+  "instantiable": true,
+  "attribution": "Standard SoloHost starter shipped with App Builder (not a fork of a third-party product).",
+  "demo": false,
+  "completeSoloHostApp": true,
+  "qualityBaseline": "professional-interactive-v2"
+}

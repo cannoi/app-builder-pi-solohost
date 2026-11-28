@@ -1,0 +1,6 @@
+{
+  "name": "App Builder — Pi SoloHost",
+  "description": "Build, test, repair, and publish simple SoloHost apps with AI.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
